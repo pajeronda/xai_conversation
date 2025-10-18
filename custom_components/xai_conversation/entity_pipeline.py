@@ -311,7 +311,16 @@ class IntelligentPipeline:
                 ):
                     pass
                 return
-            await self._handle_single_command(command_text, chat_log)
+            # Get result from single command and add to chat_log
+            result = await self._handle_single_command(command_text, chat_log)
+            if result:
+                async for _ in chat_log.async_add_assistant_content(
+                    ha_conversation.AssistantContent(
+                        agent_id=self.entity.entity_id,
+                        content=result,
+                    )
+                ):
+                    pass
         else:
             LOGGER.error("pipeline: payload missing 'text' or 'commands' field")
             async for _ in chat_log.async_add_assistant_content(
@@ -338,13 +347,17 @@ class IntelligentPipeline:
         total = len(commands)
         LOGGER.info("pipeline: processing %d commands | sequential=%s", total, sequential)
 
+        results = []
+
         if sequential:
             # Sequential execution: await each command one by one
             for idx, cmd in enumerate(commands, 1):
                 command_text = str(cmd.get("text", "")).strip()
                 if command_text:
                     LOGGER.debug("pipeline: [%d/%d] executing command: '%s'", idx, total, command_text[:50])
-                    await self._handle_single_command(command_text, chat_log, command_index=idx, total_commands=total)
+                    result = await self._handle_single_command(command_text, chat_log, command_index=idx, total_commands=total)
+                    if result:
+                        results.append(result)
                 else:
                     LOGGER.warning("pipeline: [%d/%d] skipping empty command", idx, total)
         else:
@@ -360,10 +373,25 @@ class IntelligentPipeline:
 
             # Execute all in parallel
             if tasks:
-                await asyncio.gather(*tasks, return_exceptions=True)
+                task_results = await asyncio.gather(*tasks, return_exceptions=True)
+                # Filter out exceptions and None values
+                for result in task_results:
+                    if result and not isinstance(result, Exception):
+                        results.append(result)
 
-    async def _handle_single_command(self, command_text: str, chat_log, command_index: Optional[int] = None, total_commands: Optional[int] = None) -> None:
-        """Process a single command: call conversation.process, handle fallback, emit response."""
+        # Combine all results and add to chat_log once
+        if results:
+            combined_response = "\n".join(results)
+            async for _ in chat_log.async_add_assistant_content(
+                ha_conversation.AssistantContent(
+                    agent_id=self.entity.entity_id,
+                    content=combined_response,
+                )
+            ):
+                pass
+
+    async def _handle_single_command(self, command_text: str, chat_log, command_index: Optional[int] = None, total_commands: Optional[int] = None) -> Optional[str]:
+        """Process a single command: call conversation.process, handle fallback, return response."""
         # Logging prefix for multi-command context
         prefix = f"[{command_index}/{total_commands}] " if command_index else ""
         LOGGER.debug("pipeline: %sprocessing command='%s'", prefix, command_text[:50])
@@ -412,18 +440,10 @@ class IntelligentPipeline:
                 LOGGER.info("pipeline: %sconversation.process returned error, triggering fallback", prefix)
                 trigger_tools_fallback = True
 
-            # Only add response to chat_log if NOT triggering fallback
+            # Return response if NOT triggering fallback
             if not trigger_tools_fallback:
                 speech = (result or {}).get("response", {}).get("speech", {}).get("plain", {}).get("speech")
-
-                # Add the response to the chat log
-                async for _ in chat_log.async_add_assistant_content(
-                    ha_conversation.AssistantContent(
-                        agent_id=self.entity.entity_id,
-                        content=speech or "Done.",
-                    )
-                ):
-                    pass
+                return speech or "Done."
 
         except Exception as err:
             LOGGER.debug("pipeline: %sconversation.process fallback triggered: error_type=%s error=%s",
@@ -476,8 +496,19 @@ class IntelligentPipeline:
                     fallback_input, chat_log, None, force_tools=True
                 )
 
+                # Extract the assistant response from chat_log before restoring
+                fallback_response = ""
+                for item in chat_log.content:
+                    # Check if it's an AssistantContent
+                    if hasattr(item, '__class__') and 'AssistantContent' in item.__class__.__name__:
+                        if hasattr(item, 'content') and isinstance(item.content, str):
+                            fallback_response = item.content
+                            break
+
                 # Restore the original content so that the full history is logged
                 chat_log.content = original_content + chat_log.content
+
+                return fallback_response or "Done."
 
     def _extract_payload_json(self, buffer: str) -> Optional[str]:
         """Extract JSON payload from [[HA_LOCAL: {...}]] tag."""
