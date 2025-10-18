@@ -1,0 +1,229 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "xAI Grok 配置",
+        "description": "为 Home Assistant 配置 xAI Grok 集成。",
+        "data": {
+          "api_key": "API 密钥",
+          "api_host": "API 主机（默认：'api.x.ai'、'us-east-1.api.x.ai' 或 'eu-west-1.api.x.ai'）",
+          "assistant_name": "助手名称",
+          "live_search": "实时搜索模式"
+        },
+        "data_description": {
+          "api_key": "您的 xAI API 密钥（以 'xai-' 开头）。",
+          "api_host": "API 端点主机名。使用 'api.x.ai' 进行全局路由并自动重定向到区域主机，或直接指定区域主机。",
+          "assistant_name": "助手用于标识自己的名称（例如 'Jarvis'、'Alexa'、'HAL'）。",
+          "live_search": "启用网络搜索功能：'off'（禁用）、'auto'（模型决定）、'on'（始终启用）"
+        }
+      }
+    },
+    "error": {
+      "invalid_api_key": "无效的 API 密钥。必须以 'xai-' 开头。",
+      "missing_dependency": "未安装所需依赖项 'xai_sdk'。",
+      "unknown": "发生意外错误。请重试。"
+    },
+    "create_entry": {
+      "default": "xAI Grok 集成配置成功！"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "xAI 内存配置",
+        "description": "配置用户和语音助手设备的内存参数。集成会自动检测请求来自用户（智能手机/PC/平板电脑）还是设备（语音卫星）并应用相应的设置。",
+        "data": {
+          "memory_user_ttl_hours": "用户内存持续时间（小时）",
+          "memory_user_max_turns": "用户内存最大轮次",
+          "memory_device_ttl_hours": "设备内存持续时间（小时）",
+          "memory_device_max_turns": "设备内存最大轮次",
+          "memory_cleanup_interval_hours": "内存清理间隔（小时）"
+        },
+        "data_description": {
+          "memory_user_ttl_hours": "用户对话的持续时间（智能手机、PC、平板电脑）。默认：720 小时（30 天）",
+          "memory_user_max_turns": "为用户存储的最大对话轮次。默认：1000 轮",
+          "memory_device_ttl_hours": "设备对话的持续时间（语音助手卫星）。默认：168 小时（7 天）",
+          "memory_device_max_turns": "为设备存储的最大对话轮次。默认：100 轮",
+          "memory_cleanup_interval_hours": "清理过期内存条目的频率。默认：24 小时"
+        }
+      }
+    }
+  },
+  "config_subentries": {
+    "conversation": {
+      "initiate_flow": {
+        "user": "添加对话代理",
+        "reconfigure": "重新配置对话代理"
+      },
+      "entry_type": "conversation",
+      "step": {
+        "init": {
+          "title": "xAI Conversation",
+          "data": {
+            "name": "名称",
+            "assistant_name": "助手名称",
+            "api_host": "API 主机（'api.x.ai'、'us-east-1.api.x.ai' 或 'eu-west-1.api.x.ai'）",
+            "chat_model": "模型",
+            "max_tokens": "最大令牌数",
+            "temperature": "温度",
+            "top_p": "Top P",
+            "use_intelligent_pipeline": "启用智能管道",
+            "prompt": "提示词",
+            "pipeline_prompt": "管道指令（添加到默认指令）",
+            "allow_smart_home_control": "允许智能家居控制",
+            "live_search": "实时搜索模式",
+            "store_messages": "存储消息",
+            "reasoning_effort": "推理级别"
+          },
+          "data_description": {
+            "assistant_name": "助手用于标识自己的名称（例如 'Jarvis'、'Alexa'、'HAL'）。更改此值将开始新对话，之前的历史记录将无法访问。",
+            "api_host": "API 端点主机名。使用 'api.x.ai' 进行全局路由并自动重定向到区域主机，或直接指定区域主机。",
+            "chat_model": "选择要使用的 Grok 模型。",
+            "max_tokens": "要生成的最大令牌数。",
+            "temperature": "控制响应的随机性（0.0 = 确定性，2.0 = 非常有创意）。",
+            "top_p": "通过核采样控制响应的多样性（grok-4 不支持）。",
+            "use_intelligent_pipeline": "启用智能模式，自动将命令路由到 Home Assistant 或提供对话响应。如果禁用，则使用 Home Assistant 的标准 LLM API 进行工具调用。",
+            "pipeline_prompt": "添加到默认管道提示词的可选文本。对自定义规则或本地意图有用。",
+            "allow_smart_home_control": "如果启用，助手可以执行智能家居命令。如果禁用，仅以对话方式响应。更改此设置将开始新对话。",
+            "store_messages": "使用 xAI 的服务器端内存，以减少每个请求需要发送的令牌。内存参数（持续时间、轮次数）在集成级别配置。",
+            "live_search": "启用网络搜索功能：'off'（禁用）、'auto'（模型决定）、'on'（始终启用）。适用于管道和工具模式。",
+            "prompt": "代理的自定义指令（仅工具模式）。",
+            "reasoning_effort": "支持此功能的模型的推理级别（低、中、高、最大）。仅适用于 grok-4 和 grok-4-fast 模型。"
+          }
+        }
+      },
+      "abort": {
+        "reconfigure_successful": "配置更新成功！"
+      }
+    },
+    "sensors": {
+      "initiate_flow": {
+        "user": "添加令牌传感器",
+        "reconfigure": "重新配置令牌传感器"
+      },
+      "entry_type": "sensor",
+      "step": {
+        "init": {
+          "title": "xAI 令牌传感器",
+          "data": {
+            "name": "名称",
+            "grok_4_input_price": "grok-4 输入价格每 100 万令牌（美元）",
+            "grok_4_cached_input_price": "grok-4 缓存输入价格每 100 万令牌（美元）",
+            "grok_4_output_price": "grok-4 输出价格每 100 万令牌（美元）",
+            "grok_4_fast_input_price": "grok-4-fast 输入价格每 100 万令牌（美元）",
+            "grok_4_fast_cached_input_price": "grok-4-fast 缓存输入价格每 100 万令牌（美元）",
+            "grok_4_fast_output_price": "grok-4-fast 输出价格每 100 万令牌（美元）",
+            "grok_4_fast_non_reasoning_input_price": "grok-4-fast-non-reasoning 输入价格每 100 万令牌（美元）",
+            "grok_4_fast_non_reasoning_cached_input_price": "grok-4-fast-non-reasoning 缓存输入价格每 100 万令牌（美元）",
+            "grok_4_fast_non_reasoning_output_price": "grok-4-fast-non-reasoning 输出价格每 100 万令牌（美元）",
+            "grok_3_input_price": "grok-3 输入价格每 100 万令牌（美元）",
+            "grok_3_cached_input_price": "grok-3 缓存输入价格每 100 万令牌（美元）",
+            "grok_3_output_price": "grok-3 输出价格每 100 万令牌（美元）",
+            "grok_3_mini_input_price": "grok-3-mini 输入价格每 100 万令牌（美元）",
+            "grok_3_mini_cached_input_price": "grok-3-mini 缓存输入价格每 100 万令牌（美元）",
+            "grok_3_mini_output_price": "grok-3-mini 输出价格每 100 万令牌（美元）",
+            "grok_code_fast_1_input_price": "grok-code-fast-1 输入价格每 100 万令牌（美元）",
+            "grok_code_fast_1_cached_input_price": "grok-code-fast-1 缓存输入价格每 100 万令牌（美元）",
+            "grok_code_fast_1_output_price": "grok-code-fast-1 输出价格每 100 万令牌（美元）"
+          },
+          "data_description": {
+            "name": "令牌传感器的描述性名称。",
+            "grok_4_input_price": "grok-4 每 100 万输入令牌的成本。保留默认值以使用官方价格。",
+            "grok_4_cached_input_price": "grok-4 每 100 万缓存输入令牌的成本。保留默认值以使用官方价格。",
+            "grok_4_output_price": "grok-4 每 100 万输出令牌的成本。保留默认值以使用官方价格。",
+            "grok_4_fast_input_price": "grok-4-fast 每 100 万输入令牌的成本。保留默认值以使用官方价格。",
+            "grok_4_fast_cached_input_price": "grok-4-fast 每 100 万缓存输入令牌的成本。保留默认值以使用官方价格。",
+            "grok_4_fast_output_price": "grok-4-fast 每 100 万输出令牌的成本。保留默认值以使用官方价格。",
+            "grok_4_fast_non_reasoning_input_price": "grok-4-fast-non-reasoning 每 100 万输入令牌的成本。保留默认值以使用官方价格。",
+            "grok_4_fast_non_reasoning_cached_input_price": "grok-4-fast-non-reasoning 每 100 万缓存输入令牌的成本。保留默认值以使用官方价格。",
+            "grok_4_fast_non_reasoning_output_price": "grok-4-fast-non-reasoning 每 100 万输出令牌的成本。保留默认值以使用官方价格。",
+            "grok_3_input_price": "grok-3 每 100 万输入令牌的成本。保留默认值以使用官方价格。",
+            "grok_3_cached_input_price": "grok-3 每 100 万缓存输入令牌的成本。保留默认值以使用官方价格。",
+            "grok_3_output_price": "grok-3 每 100 万输出令牌的成本。保留默认值以使用官方价格。",
+            "grok_3_mini_input_price": "grok-3-mini 每 100 万输入令牌的成本。保留默认值以使用官方价格。",
+            "grok_3_mini_cached_input_price": "grok-3-mini 每 100 万缓存输入令牌的成本。保留默认值以使用官方价格。",
+            "grok_3_mini_output_price": "grok-3-mini 每 100 万输出令牌的成本。保留默认值以使用官方价格。",
+            "grok_code_fast_1_input_price": "grok-code-fast-1 每 100 万输入令牌的成本。保留默认值以使用官方价格。",
+            "grok_code_fast_1_cached_input_price": "grok-code-fast-1 每 100 万缓存输入令牌的成本。保留默认值以使用官方价格。",
+            "grok_code_fast_1_output_price": "grok-code-fast-1 每 100 万输出令牌的成本。保留默认值以使用官方价格。"
+          }
+        }
+      },
+      "abort": {
+        "reconfigure_successful": "配置更新成功！"
+      }
+    },
+    "ai_task_data": {
+      "initiate_flow": {
+        "user": "添加 AI 任务",
+        "reconfigure": "重新配置 AI 任务"
+      },
+      "entry_type": "ai_task",
+      "step": {
+        "init": {
+          "title": "xAI Task",
+          "data": {
+            "name": "名称",
+            "prompt": "提示词",
+            "api_host": "API 主机（'api.x.ai'、'us-east-1.api.x.ai' 或 'eu-west-1.api.x.ai'）",
+            "chat_model": "模型",
+            "max_tokens": "最大令牌数",
+            "temperature": "温度",
+            "top_p": "Top P"
+          },
+          "data_description": {
+            "name": "此 AI 任务的描述性名称。",
+            "prompt": "AI 任务的完整系统提示词。替换默认值。请谨慎编辑，因为它定义了模型的行为（例如 JSON 输出格式）。",
+            "api_host": "API 端点主机名。使用 'api.x.ai' 进行全局路由并自动重定向到区域主机，或直接指定区域主机。",
+            "chat_model": "选择要使用的 Grok 模型。",
+            "max_tokens": "要生成的最大令牌数。",
+            "temperature": "控制响应的随机性（0.0 = 确定性，2.0 = 非常有创意）。",
+            "top_p": "通过核采样控制响应的多样性（grok-4 不支持）。"
+          }
+        }
+      },
+      "abort": {
+        "reconfigure_successful": "配置更新成功！"
+      }
+    },
+    "code_task": {
+      "initiate_flow": {
+        "user": "添加 Grok Code Fast",
+        "reconfigure": "重新配置 Grok Code Fast"
+      },
+      "entry_type": "code_task",
+      "step": {
+        "init": {
+          "title": "Grok Code Fast",
+          "data": {
+            "name": "名称",
+            "prompt": "提示词",
+            "api_host": "API 主机（'api.x.ai'、'us-east-1.api.x.ai' 或 'eu-west-1.api.x.ai'）",
+            "chat_model": "模型",
+            "max_tokens": "最大令牌数",
+            "temperature": "温度",
+            "top_p": "Top P",
+            "live_search": "实时搜索模式",
+            "store_messages": "存储消息",
+            "reasoning_effort": "推理级别"
+          },
+          "data_description": {
+            "name": "此 Grok Code Fast 任务的描述性名称。",
+            "prompt": "代码任务的完整系统提示词。替换默认值。请谨慎编辑，因为它定义了助手的专业知识和输出格式。",
+            "api_host": "API 端点主机名。使用 'api.x.ai' 进行全局路由并自动重定向到区域主机，或直接指定区域主机。",
+            "chat_model": "选择要使用的 Grok 模型。",
+            "max_tokens": "要生成的最大令牌数。",
+            "temperature": "控制响应的随机性（0.0 = 确定性，2.0 = 非常有创意）。",
+            "top_p": "通过核采样控制响应的多样性（grok-4 不支持）。",
+            "live_search": "启用网络搜索功能：'off'（禁用）、'auto'（模型决定）、'on'（始终启用）",
+            "store_messages": "使用 xAI 的服务器端内存来维护对话上下文。内存参数（持续时间、轮次数）在集成级别配置，并自动检测来自用户或设备的请求。",
+            "reasoning_effort": "支持此功能的模型的推理级别（低、中、高）"
+          }
+        }
+      },
+      "abort": {
+        "reconfigure_successful": "配置更新成功！"
+      }
+    }
+  }
+}

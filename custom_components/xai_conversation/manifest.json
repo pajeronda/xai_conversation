@@ -1,0 +1,15 @@
+{
+  "name": "xAI Grok Conversation",
+  "version": "1.0.0",
+  "domain": "xai_conversation",
+  "dependencies": ["conversation"],
+  "after_dependencies": ["assist_pipeline", "intent"],
+  "integration_type": "service",
+  "iot_class": "cloud_polling",
+  "config_flow": true,
+  "requirements": ["xai_sdk"],
+  "documentation": "https://www.github.com/pajeronda/xai_conversation",
+  "issue_tracker": "https://github.com/pajeronda/xai_conversation/issues",
+  "codeowners": ["@pajeronda"],
+  "quality_scale": "bronze"
+}

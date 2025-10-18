@@ -1,0 +1,38 @@
+# Services for xAI Conversation integration
+clear_memory:
+  name: Clear Conversation Memory
+  description: >
+    Delete conversation memory for selected users/satellites, or physically delete entire storage file.
+    NOTE: This will clear ALL conversation histories for the selected users/satellites,
+    including conversations with different assistant names, custom prompts, and control modes.
+  fields:
+    delete_storage_file:
+      name: Delete Storage File
+      description: Physically delete the entire memory storage file (IRREVERSIBLE - deletes ALL conversations permanently)
+      required: false
+      default: false
+      selector:
+        boolean:
+    user_id:
+      name: Users
+      description: Select specific users to clear memory for
+      required: false
+      selector:
+        entity:
+          multiple: true
+          filter:
+            - domain: person
+    satellite_id:
+      name: Assist Satellites
+      description: Select specific voice assistant satellites to clear memory for
+      required: false
+      selector:
+        entity:
+          multiple: true
+          filter:
+            - domain: assist_satellite
+
+reset_token_stats:
+  name: Reset Token Statistics
+  description: Reset all 10 token sensors (6 per-service + 4 aggregated) to zero for the entire xAI Conversation integration. This resets conversation, ai_task, code_fast, and aggregated sensors. Useful when you reload credits on xAI and want to track consumption from that point.
+

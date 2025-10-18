@@ -1,0 +1,229 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "xAI Grok Konfiguration",
+        "description": "Konfigurieren Sie die xAI Grok Integration für Home Assistant.",
+        "data": {
+          "api_key": "API-Schlüssel",
+          "api_host": "API-Host (Standard: 'api.x.ai', 'us-east-1.api.x.ai' oder 'eu-west-1.api.x.ai')",
+          "assistant_name": "Assistenten-Name",
+          "live_search": "Live-Suchmodus"
+        },
+        "data_description": {
+          "api_key": "Ihr xAI API-Schlüssel (beginnt mit 'xai-').",
+          "api_host": "API-Endpunkt Hostname. Verwenden Sie 'api.x.ai' für globales Routing mit automatischer Umleitung zu einem regionalen Host oder geben Sie direkt einen regionalen Host an.",
+          "assistant_name": "Der Name, mit dem sich der Assistent identifiziert (z.B. 'Jarvis', 'Alexa', 'HAL').",
+          "live_search": "Web-Suchfunktionen aktivieren: 'off' (deaktiviert), 'auto' (Modell entscheidet), 'on' (immer aktiviert)"
+        }
+      }
+    },
+    "error": {
+      "invalid_api_key": "Ungültiger API-Schlüssel. Muss mit 'xai-' beginnen.",
+      "missing_dependency": "Erforderliche Abhängigkeit 'xai_sdk' ist nicht installiert.",
+      "unknown": "Ein unerwarteter Fehler ist aufgetreten. Bitte versuchen Sie es erneut."
+    },
+    "create_entry": {
+      "default": "xAI Grok Integration erfolgreich konfiguriert!"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "xAI Speicherkonfiguration",
+        "description": "Konfigurieren Sie Speicherparameter für Benutzer und Sprachassistenten-Geräte. Die Integration erkennt automatisch, ob eine Anfrage von einem Benutzer (Smartphone/PC/Tablet) oder einem Gerät (Sprachsatellit) stammt und wendet die entsprechenden Einstellungen an.",
+        "data": {
+          "memory_user_ttl_hours": "Benutzerspeicher-Dauer (Stunden)",
+          "memory_user_max_turns": "Maximale Gesprächsrunden Benutzerspeicher",
+          "memory_device_ttl_hours": "Gerätespeicher-Dauer (Stunden)",
+          "memory_device_max_turns": "Maximale Gesprächsrunden Gerätespeicher",
+          "memory_cleanup_interval_hours": "Speicherbereinigungsintervall (Stunden)"
+        },
+        "data_description": {
+          "memory_user_ttl_hours": "Dauer der Benutzerkonversationen (Smartphone, PC, Tablet). Standard: 720 Stunden (30 Tage)",
+          "memory_user_max_turns": "Maximale Anzahl gespeicherter Gesprächsrunden für Benutzer. Standard: 1000 Runden",
+          "memory_device_ttl_hours": "Dauer der Gerätekonversationen (Sprachassistenten-Satelliten). Standard: 168 Stunden (7 Tage)",
+          "memory_device_max_turns": "Maximale Anzahl gespeicherter Gesprächsrunden für Geräte. Standard: 100 Runden",
+          "memory_cleanup_interval_hours": "Häufigkeit, mit der abgelaufene Speichereinträge bereinigt werden. Standard: 24 Stunden"
+        }
+      }
+    }
+  },
+  "config_subentries": {
+    "conversation": {
+      "initiate_flow": {
+        "user": "Konversationsagent hinzufügen",
+        "reconfigure": "Konversationsagent neu konfigurieren"
+      },
+      "entry_type": "conversation",
+      "step": {
+        "init": {
+          "title": "xAI Conversation",
+          "data": {
+            "name": "Name",
+            "assistant_name": "Assistenten-Name",
+            "api_host": "API-Host ('api.x.ai', 'us-east-1.api.x.ai' oder 'eu-west-1.api.x.ai')",
+            "chat_model": "Modell",
+            "max_tokens": "Maximale Tokens",
+            "temperature": "Temperatur",
+            "top_p": "Top P",
+            "use_intelligent_pipeline": "Intelligente Pipeline aktivieren",
+            "prompt": "Prompt",
+            "pipeline_prompt": "Pipeline-Anweisungen (zu den Standardanweisungen hinzugefügt)",
+            "allow_smart_home_control": "Smart-Home-Steuerung erlauben",
+            "live_search": "Live-Suchmodus",
+            "store_messages": "Nachrichten speichern",
+            "reasoning_effort": "Denkaufwand"
+          },
+          "data_description": {
+            "assistant_name": "Der Name, mit dem sich der Assistent identifiziert (z.B. 'Jarvis', 'Alexa', 'HAL'). Das Ändern dieses Werts startet eine neue Konversation und die vorherige Historie wird nicht mehr zugänglich sein.",
+            "api_host": "API-Endpunkt Hostname. Verwenden Sie 'api.x.ai' für globales Routing mit automatischer Umleitung zu einem regionalen Host oder geben Sie direkt einen regionalen Host an.",
+            "chat_model": "Wählen Sie das zu verwendende Grok-Modell.",
+            "max_tokens": "Maximale Anzahl zu generierender Tokens.",
+            "temperature": "Steuert die Zufälligkeit der Antworten (0.0 = deterministisch, 2.0 = sehr kreativ).",
+            "top_p": "Steuert die Vielfalt der Antworten über Nucleus Sampling (nicht unterstützt von grok-4).",
+            "use_intelligent_pipeline": "Aktiviert einen intelligenten Modus, der Befehle automatisch an Home Assistant weiterleitet oder Gesprächsantworten liefert. Wenn deaktiviert, verwendet die Standard-LLM-API von Home Assistant für Tools.",
+            "pipeline_prompt": "Optionaler Text, der zum Standard-Pipeline-Prompt hinzugefügt wird. Nützlich für benutzerdefinierte Regeln oder lokale Intents.",
+            "allow_smart_home_control": "Wenn aktiviert, kann der Assistent Smart-Home-Befehle ausführen. Wenn deaktiviert, antwortet er nur im Gesprächsmodus. Das Ändern dieser Einstellung startet eine neue Konversation.",
+            "store_messages": "Verwenden Sie den serverseitigen Speicher von xAI, um die zu sendenden Tokens pro Anfrage zu reduzieren. Die Speicherparameter (Dauer, Anzahl der Runden) werden auf Integrationsebene konfiguriert.",
+            "live_search": "Web-Suchfunktionen aktivieren: 'off' (deaktiviert), 'auto' (Modell entscheidet), 'on' (immer aktiviert). Gilt sowohl für Pipeline- als auch für Tools-Modus.",
+            "prompt": "Benutzerdefinierte Anweisungen für den Agenten (nur Tools-Modus).",
+            "reasoning_effort": "Denkaufwand für Modelle, die dies unterstützen (niedrig, mittel, hoch, maximal). Nur verfügbar für grok-4 und grok-4-fast Modelle."
+          }
+        }
+      },
+      "abort": {
+        "reconfigure_successful": "Konfiguration erfolgreich aktualisiert!"
+      }
+    },
+    "sensors": {
+      "initiate_flow": {
+        "user": "Token-Sensoren hinzufügen",
+        "reconfigure": "Token-Sensoren neu konfigurieren"
+      },
+      "entry_type": "sensor",
+      "step": {
+        "init": {
+          "title": "xAI Token-Sensoren",
+          "data": {
+            "name": "Name",
+            "grok_4_input_price": "grok-4 Eingabepreis pro 1M Tokens (USD)",
+            "grok_4_cached_input_price": "grok-4 Cache-Eingabepreis pro 1M Tokens (USD)",
+            "grok_4_output_price": "grok-4 Ausgabepreis pro 1M Tokens (USD)",
+            "grok_4_fast_input_price": "grok-4-fast Eingabepreis pro 1M Tokens (USD)",
+            "grok_4_fast_cached_input_price": "grok-4-fast Cache-Eingabepreis pro 1M Tokens (USD)",
+            "grok_4_fast_output_price": "grok-4-fast Ausgabepreis pro 1M Tokens (USD)",
+            "grok_4_fast_non_reasoning_input_price": "grok-4-fast-non-reasoning Eingabepreis pro 1M Tokens (USD)",
+            "grok_4_fast_non_reasoning_cached_input_price": "grok-4-fast-non-reasoning Cache-Eingabepreis pro 1M Tokens (USD)",
+            "grok_4_fast_non_reasoning_output_price": "grok-4-fast-non-reasoning Ausgabepreis pro 1M Tokens (USD)",
+            "grok_3_input_price": "grok-3 Eingabepreis pro 1M Tokens (USD)",
+            "grok_3_cached_input_price": "grok-3 Cache-Eingabepreis pro 1M Tokens (USD)",
+            "grok_3_output_price": "grok-3 Ausgabepreis pro 1M Tokens (USD)",
+            "grok_3_mini_input_price": "grok-3-mini Eingabepreis pro 1M Tokens (USD)",
+            "grok_3_mini_cached_input_price": "grok-3-mini Cache-Eingabepreis pro 1M Tokens (USD)",
+            "grok_3_mini_output_price": "grok-3-mini Ausgabepreis pro 1M Tokens (USD)",
+            "grok_code_fast_1_input_price": "grok-code-fast-1 Eingabepreis pro 1M Tokens (USD)",
+            "grok_code_fast_1_cached_input_price": "grok-code-fast-1 Cache-Eingabepreis pro 1M Tokens (USD)",
+            "grok_code_fast_1_output_price": "grok-code-fast-1 Ausgabepreis pro 1M Tokens (USD)"
+          },
+          "data_description": {
+            "name": "Beschreibender Name für die Token-Sensoren.",
+            "grok_4_input_price": "Kosten pro 1M Eingabe-Tokens für grok-4. Lassen Sie den Standardwert für den offiziellen Preis.",
+            "grok_4_cached_input_price": "Kosten pro 1M zwischengespeicherte Eingabe-Tokens für grok-4. Lassen Sie den Standardwert für den offiziellen Preis.",
+            "grok_4_output_price": "Kosten pro 1M Ausgabe-Tokens für grok-4. Lassen Sie den Standardwert für den offiziellen Preis.",
+            "grok_4_fast_input_price": "Kosten pro 1M Eingabe-Tokens für grok-4-fast. Lassen Sie den Standardwert für den offiziellen Preis.",
+            "grok_4_fast_cached_input_price": "Kosten pro 1M Cache-Eingabe-Tokens für grok-4-fast. Lassen Sie den Standardwert für den offiziellen Preis.",
+            "grok_4_fast_output_price": "Kosten pro 1M Ausgabe-Tokens für grok-4-fast. Lassen Sie den Standardwert für den offiziellen Preis.",
+            "grok_4_fast_non_reasoning_input_price": "Kosten pro 1M Eingabe-Tokens für grok-4-fast-non-reasoning. Lassen Sie den Standardwert für den offiziellen Preis.",
+            "grok_4_fast_non_reasoning_cached_input_price": "Kosten pro 1M Cache-Eingabe-Tokens für grok-4-fast-non-reasoning. Lassen Sie den Standardwert für den offiziellen Preis.",
+            "grok_4_fast_non_reasoning_output_price": "Kosten pro 1M Ausgabe-Tokens für grok-4-fast-non-reasoning. Lassen Sie den Standardwert für den offiziellen Preis.",
+            "grok_3_input_price": "Kosten pro 1M Eingabe-Tokens für grok-3. Lassen Sie den Standardwert für den offiziellen Preis.",
+            "grok_3_cached_input_price": "Kosten pro 1M Cache-Eingabe-Tokens für grok-3. Lassen Sie den Standardwert für den offiziellen Preis.",
+            "grok_3_output_price": "Kosten pro 1M Ausgabe-Tokens für grok-3. Lassen Sie den Standardwert für den offiziellen Preis.",
+            "grok_3_mini_input_price": "Kosten pro 1M Eingabe-Tokens für grok-3-mini. Lassen Sie den Standardwert für den offiziellen Preis.",
+            "grok_3_mini_cached_input_price": "Kosten pro 1M Cache-Eingabe-Tokens für grok-3-mini. Lassen Sie den Standardwert für den offiziellen Preis.",
+            "grok_3_mini_output_price": "Kosten pro 1M Ausgabe-Tokens für grok-3-mini. Lassen Sie den Standardwert für den offiziellen Preis.",
+            "grok_code_fast_1_input_price": "Kosten pro 1M Eingabe-Tokens für grok-code-fast-1. Lassen Sie den Standardwert für den offiziellen Preis.",
+            "grok_code_fast_1_cached_input_price": "Kosten pro 1M Cache-Eingabe-Tokens für grok-code-fast-1. Lassen Sie den Standardwert für den offiziellen Preis.",
+            "grok_code_fast_1_output_price": "Kosten pro 1M Ausgabe-Tokens für grok-code-fast-1. Lassen Sie den Standardwert für den offiziellen Preis."
+          }
+        }
+      },
+      "abort": {
+        "reconfigure_successful": "Konfiguration erfolgreich aktualisiert!"
+      }
+    },
+    "ai_task_data": {
+      "initiate_flow": {
+        "user": "KI-Aufgabe hinzufügen",
+        "reconfigure": "KI-Aufgabe neu konfigurieren"
+      },
+      "entry_type": "ai_task",
+      "step": {
+        "init": {
+          "title": "xAI Task",
+          "data": {
+            "name": "Name",
+            "prompt": "Prompt",
+            "api_host": "API-Host ('api.x.ai', 'us-east-1.api.x.ai' oder 'eu-west-1.api.x.ai')",
+            "chat_model": "Modell",
+            "max_tokens": "Maximale Tokens",
+            "temperature": "Temperatur",
+            "top_p": "Top P"
+          },
+          "data_description": {
+            "name": "Beschreibender Name für diese KI-Aufgabe.",
+            "prompt": "Vollständiger System-Prompt für die KI-Aufgabe. Ersetzt den Standard. Bearbeiten Sie mit Vorsicht, da es das Modellverhalten definiert (z.B. JSON-Ausgabeformat).",
+            "api_host": "API-Endpunkt Hostname. Verwenden Sie 'api.x.ai' für globales Routing mit automatischer Umleitung zu einem regionalen Host oder geben Sie direkt einen regionalen Host an.",
+            "chat_model": "Wählen Sie das zu verwendende Grok-Modell.",
+            "max_tokens": "Maximale Anzahl zu generierender Tokens.",
+            "temperature": "Steuert die Zufälligkeit der Antworten (0.0 = deterministisch, 2.0 = sehr kreativ).",
+            "top_p": "Steuert die Vielfalt der Antworten über Nucleus Sampling (nicht unterstützt von grok-4)."
+          }
+        }
+      },
+      "abort": {
+        "reconfigure_successful": "Konfiguration erfolgreich aktualisiert!"
+      }
+    },
+    "code_task": {
+      "initiate_flow": {
+        "user": "Grok Code Fast hinzufügen",
+        "reconfigure": "Grok Code Fast neu konfigurieren"
+      },
+      "entry_type": "code_task",
+      "step": {
+        "init": {
+          "title": "Grok Code Fast",
+          "data": {
+            "name": "Name",
+            "prompt": "Prompt",
+            "api_host": "API-Host ('api.x.ai', 'us-east-1.api.x.ai' oder 'eu-west-1.api.x.ai')",
+            "chat_model": "Modell",
+            "max_tokens": "Maximale Tokens",
+            "temperature": "Temperatur",
+            "top_p": "Top P",
+            "live_search": "Live-Suchmodus",
+            "store_messages": "Nachrichten speichern",
+            "reasoning_effort": "Denkaufwand"
+          },
+          "data_description": {
+            "name": "Beschreibender Name für diese Grok Code Fast Aufgabe.",
+            "prompt": "Vollständiger System-Prompt für die Code-Aufgabe. Ersetzt den Standard. Bearbeiten Sie mit Vorsicht, da es die Expertise des Assistenten und das Ausgabeformat definiert.",
+            "api_host": "API-Endpunkt Hostname. Verwenden Sie 'api.x.ai' für globales Routing mit automatischer Umleitung zu einem regionalen Host oder geben Sie direkt einen regionalen Host an.",
+            "chat_model": "Wählen Sie das zu verwendende Grok-Modell.",
+            "max_tokens": "Maximale Anzahl zu generierender Tokens.",
+            "temperature": "Steuert die Zufälligkeit der Antworten (0.0 = deterministisch, 2.0 = sehr kreativ).",
+            "top_p": "Steuert die Vielfalt der Antworten über Nucleus Sampling (nicht unterstützt von grok-4).",
+            "live_search": "Web-Suchfunktionen aktivieren: 'off' (deaktiviert), 'auto' (Modell entscheidet), 'on' (immer aktiviert)",
+            "store_messages": "Verwenden Sie den serverseitigen Speicher von xAI, um den Konversationskontext beizubehalten. Die Speicherparameter (Dauer, Anzahl der Runden) werden auf Integrationsebene konfiguriert und erkennen automatisch Anfragen von Benutzern oder Geräten.",
+            "reasoning_effort": "Denkaufwand für Modelle, die dies unterstützen (niedrig, mittel, hoch)"
+          }
+        }
+      },
+      "abort": {
+        "reconfigure_successful": "Konfiguration erfolgreich aktualisiert!"
+      }
+    }
+  }
+}

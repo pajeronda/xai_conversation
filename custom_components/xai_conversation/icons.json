@@ -1,0 +1,10 @@
+{
+  "services": {
+    "reset_token_stats": {
+      "service": "mdi:delete-sweep"
+    },
+    "clear_memory": {
+      "service": "mdi:chat-remove"
+    }
+  }
+}
