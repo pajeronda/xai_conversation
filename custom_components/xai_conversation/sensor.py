@@ -233,9 +233,17 @@ class XAITokenSensorBase(RestoreEntity, SensorEntity):
         self._tokens_by_model = {}
         self._last_model = None
         self._last_timestamp = None
+        # Reset last message data (fixes UI display)
+        self._last_completion_tokens = 0
+        self._last_prompt_tokens = 0
+        self._last_cached_tokens = 0
+        self._last_reasoning_tokens = 0
 
         # Store reset timestamp
         self._reset_timestamp = dt_util.now()
+
+        # Trigger UI update
+        self.async_write_ha_state()
 
         LOGGER.info("sensor: reset token statistics for %s at %s",
                    self.entity_id, self._reset_timestamp)
@@ -363,6 +371,15 @@ class XAIServiceLastTokensSensor(XAITokenSensorBase):
         if self._reset_timestamp:
             attrs["reset_timestamp"] = self._reset_timestamp.isoformat()
         return attrs
+
+    @callback
+    def reset_statistics(self) -> None:
+        """Reset statistics including service-specific fields."""
+        super().reset_statistics()
+        # Reset service-specific fields (conversation only)
+        if self._service_type == "conversation":
+            self._last_mode = None
+            self._last_store_messages = None
 
 
 class XAIServiceCacheRatioSensor(XAITokenSensorBase):
@@ -509,6 +526,17 @@ class XAIServiceCacheRatioSensor(XAITokenSensorBase):
         if self._reset_timestamp:
             attrs["reset_timestamp"] = self._reset_timestamp.isoformat()
         return attrs
+
+    @callback
+    def reset_statistics(self) -> None:
+        """Reset statistics including service-specific storage buckets."""
+        super().reset_statistics()
+        # Reset service-specific storage (conversation only)
+        if self._service_type == "conversation":
+            self._tokens_pipeline_server = {"prompt": 0, "cached": 0, "count": 0}
+            self._tokens_pipeline_client = {"prompt": 0, "cached": 0, "count": 0}
+            self._tokens_tools_server = {"prompt": 0, "cached": 0, "count": 0}
+            self._tokens_tools_client = {"prompt": 0, "cached": 0, "count": 0}
 
 
 # ==============================================================================
