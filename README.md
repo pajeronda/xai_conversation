@@ -20,7 +20,10 @@ A custom Home Assistant integration that brings xAI Grok AI to your smart home.
   - **Conversation Style**: Grok follows your conversation style
   - **Conversation Continuity**: Chat continues seamlessly across any device configured with your user account (Smartphone, Tablet, PC, etc.)
 <p align="center">
-  <img width="490" height="490" alt="immagine" src="https://github.com/user-attachments/assets/6aa4677e-80c1-42f9-8461-a7694104fff7" />
+  <img width="400" height="400" alt="immagine chat Assist 1" src="https://github.com/user-attachments/assets/6aa4677e-80c1-42f9-8461-a7694104fff7" />
+
+  <img width="400" height="400" alt="immagine chat Assist 2" src="https://github.com/user-attachments/assets/83b79a58-be34-4d6f-8967-0eae90d65cc7" />
+
 </p>
 
 ### 💬 Conversation Memory Management
