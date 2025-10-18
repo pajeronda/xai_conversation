@@ -11,6 +11,7 @@ A custom Home Assistant integration that brings xAI Grok AI to your smart home.
 [![hacs](https://img.shields.io/badge/HACS-Custom-orange.svg?style=flat-square)](https://github.com/hacs/integration)
 
 ## Key Features
+  - **xAI SDK**: This version uses [xAI Python SDK](https://github.com/xai-org/xai-sdk-python)
 
 ### 🤖 Intelligent Conversation Agent
 - **Two Operating Modes**:
