@@ -114,10 +114,8 @@ class XAIToolsProcessor:
         # Create PromptManager for tools mode
         tools_prompt_mgr = PromptManager(self._entity.subentry.data, "tools")
 
-        # Get memory key using PromptManager
-        # Automatically detect scope based on device_id presence
-        memory_scope = "device" if is_device_request(user_input) else "user"
-        conv_key = tools_prompt_mgr.get_memory_key(user_input, memory_scope)
+        # Get memory key and previous_response_id using PromptManager (centralizes memory_scope logic)
+        conv_key, prev_id_from_memory = await tools_prompt_mgr.get_conv_key_and_prev_id(self._entity, user_input)
 
         max_iterations = 5  # Safety break to prevent infinite loops
 
@@ -125,11 +123,14 @@ class XAIToolsProcessor:
             LOGGER.debug("tools_loop: iteration %d/%d", i + 1, max_iterations)
 
             # Get the latest previous_response_id for this iteration
-            # First iteration: use provided previous_response_id if available, else fetch from memory
+            # First iteration: use provided previous_response_id if available, else use prev_id_from_memory
             # Subsequent iterations: always fetch from memory (updated after each API call)
             if i == 0 and previous_response_id is not None:
                 current_prev_id = previous_response_id
                 LOGGER.debug("tools_loop: using provided prev_id=%s", current_prev_id[:8] if current_prev_id else None)
+            elif i == 0:
+                current_prev_id = prev_id_from_memory
+                LOGGER.debug("tools_loop: using memory prev_id=%s", current_prev_id[:8] if current_prev_id else None)
             else:
                 current_prev_id = await self._entity._memory_get_prev_id(conv_key)
 
