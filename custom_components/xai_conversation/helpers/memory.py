@@ -140,7 +140,7 @@ class ConversationMemory:
         return valid_responses, expired_ids
 
     async def get_response_id(self, user_id: str, mode: str, suffix: str = "") -> str | None:
-        """Get last response ID for user and mode with TTL/max_turns validation.
+        """Get last response ID for user and mode.
 
         Args:
             user_id: User ID (UUID from Home Assistant)
@@ -161,35 +161,19 @@ class ConversationMemory:
         if not responses:
             return None
 
-        # Validate TTL and max_turns
-        now = time.time()
-        ttl_hours, max_turns = self._get_memory_params(conv_key)
-        valid_responses, expired_ids = self._filter_valid_responses(responses, ttl_hours, max_turns, now)
-
-        if not valid_responses:
-            self._memory.pop(conv_key, None)
-            await self._store.async_save(self._memory)
-            return None
-
-        # Update if responses were filtered
-        if len(valid_responses) != len(responses):
-            memory_entry["responses"] = valid_responses
-            self._memory[conv_key] = memory_entry
-            await self._store.async_save(self._memory)
-
-        return valid_responses[-1]["id"] if valid_responses else None
+        return responses[-1]["id"] if responses else None
 
     async def get_response_id_by_key(self, conv_key: str) -> str | None:
         """Get last response_id using full conversation key.
 
         This method accepts a full key like "user:{user_id}:mode:{mode}:an:{hash}"
-        and retrieves the last response_id with TTL/max_turns validation.
+        and retrieves the last response_id.
 
         Args:
             conv_key: Full conversation key (e.g., "user:{id}:mode:pipeline:an:abc123")
 
         Returns:
-            Last response_id or None if not found/expired
+            Last response_id or None if not found
         """
         await self._ensure_loaded()
 
@@ -201,23 +185,7 @@ class ConversationMemory:
         if not responses:
             return None
 
-        # Validate TTL and max_turns
-        now = time.time()
-        ttl_hours, max_turns = self._get_memory_params(conv_key)
-        valid_responses, expired_ids = self._filter_valid_responses(responses, ttl_hours, max_turns, now)
-
-        if not valid_responses:
-            self._memory.pop(conv_key, None)
-            await self._store.async_save(self._memory)
-            return None
-
-        # Update if responses were filtered
-        if len(valid_responses) != len(responses):
-            memory_entry["responses"] = valid_responses
-            self._memory[conv_key] = memory_entry
-            await self._store.async_save(self._memory)
-
-        return valid_responses[-1]["id"] if valid_responses else None
+        return responses[-1]["id"] if responses else None
 
     async def save_response_id_by_key(self, conv_key: str, response_id: str):
         """Save response ID using full conversation key.
@@ -365,3 +333,73 @@ class ConversationMemory:
             raise
 
         return response_ids
+
+    async def async_cleanup_expired(self) -> dict:
+        """Periodic cleanup task: remove expired response IDs based on TTL and max_turns.
+
+        This method should be called periodically (e.g., every 24 hours) to clean up
+        old response IDs without doing it on every get_response_id() call.
+
+        Returns:
+            Dict with cleanup statistics: {
+                "keys_cleaned": int,
+                "keys_removed": int,
+                "responses_removed": int
+            }
+        """
+        await self._ensure_loaded()
+
+        if not self._memory:
+            return {"keys_cleaned": 0, "keys_removed": 0, "responses_removed": 0}
+
+        now = time.time()
+        keys_cleaned = 0
+        keys_removed = 0
+        responses_removed = 0
+        keys_to_delete = []
+
+        for conv_key, memory_entry in list(self._memory.items()):
+            if not isinstance(memory_entry, dict):
+                continue
+
+            responses = memory_entry.get("responses", [])
+            if not responses:
+                keys_to_delete.append(conv_key)
+                continue
+
+            # Get TTL and max_turns for this key
+            ttl_hours, max_turns = self._get_memory_params(conv_key)
+            valid_responses, expired_ids = self._filter_valid_responses(responses, ttl_hours, max_turns, now)
+
+            if not valid_responses:
+                # All responses expired, mark key for deletion
+                keys_to_delete.append(conv_key)
+                responses_removed += len(responses)
+                keys_removed += 1
+            elif len(valid_responses) != len(responses):
+                # Some responses expired, update entry
+                memory_entry["responses"] = valid_responses
+                self._memory[conv_key] = memory_entry
+                responses_removed += len(responses) - len(valid_responses)
+                keys_cleaned += 1
+
+        # Delete empty keys
+        for key in keys_to_delete:
+            self._memory.pop(key, None)
+
+        # Save if anything changed
+        if keys_cleaned > 0 or keys_removed > 0:
+            try:
+                await self._store.async_save(self._memory)
+                LOGGER.info(
+                    "Memory cleanup completed: %d keys cleaned, %d keys removed, %d responses removed",
+                    keys_cleaned, keys_removed, responses_removed
+                )
+            except Exception as err:
+                LOGGER.error(f"Failed to save memory after cleanup: {err}")
+
+        return {
+            "keys_cleaned": keys_cleaned,
+            "keys_removed": keys_removed,
+            "responses_removed": responses_removed
+        }
