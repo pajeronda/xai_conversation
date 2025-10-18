@@ -11,9 +11,6 @@ A custom Home Assistant integration that brings xAI Grok AI to your smart home.
 [![hacs](https://img.shields.io/badge/HACS-Custom-orange.svg?style=flat-square)](https://github.com/hacs/integration)
 
 ## Key Features
-<p align="center">
-  <img width="490" height="490" alt="immagine" src="https://github.com/user-attachments/assets/6aa4677e-80c1-42f9-8461-a7694104fff7" />
-</p>
 
 ### 🤖 Intelligent Conversation Agent
 - **Two Operating Modes**:
@@ -21,6 +18,9 @@ A custom Home Assistant integration that brings xAI Grok AI to your smart home.
   - **Tools Mode**: Direct access to HA tools via tool calling (Home Assistant's standard LLM API)
   - **Conversation Style**: Grok follows your conversation style
   - **Conversation Continuity**: Chat continues seamlessly across any device configured with your user account (Smartphone, Tablet, PC, etc.)
+<p align="center">
+  <img width="490" height="490" alt="immagine" src="https://github.com/user-attachments/assets/6aa4677e-80c1-42f9-8461-a7694104fff7" />
+</p>
 
 ### 💬 Conversation Memory Management
 - **Server-side**: Persistent conversations managed by xAI (saves tokens and costs)
