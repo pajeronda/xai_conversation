@@ -12,7 +12,7 @@ A custom Home Assistant integration that brings xAI Grok AI to your smart home.
 
 ## Key Features
 <p align="center">
-  <img width="494" height="494" alt="immagine" src="https://github.com/user-attachments/assets/c4834a9b-f300-4fc1-b8c7-fe67dd53c8ff" />
+  <img width="490" height="490" alt="immagine" src="https://github.com/user-attachments/assets/6aa4677e-80c1-42f9-8461-a7694104fff7" />
 </p>
 
 ### 🤖 Intelligent Conversation Agent
