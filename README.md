@@ -67,7 +67,7 @@ Detailed sensors that track:
 
 ### Via HACS (Recommended)
 
-Click this link to install **xAI Conversation** via **HACS**
+Click this badge to install **xAI Conversation** via **HACS**
 
 [![Install via your HACS instance.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Pajeronda&repository=xai_conversation&category=integration)
 
@@ -96,9 +96,9 @@ The `grok-code-fast-card` custom card offers:
 
 ### Via HACS (Recommended)
 
-Click this link to install **Grok code fast card** via **HACS** (recommended)
+Click this badge to install **Grok code fast card** via **HACS** (recommended)
 
-[![Install via your HACS instance.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Pajeronda&repository=grok-code-fast-card&category=dashboard)
+[![Install via your HACS instance.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Pajeronda&repository=grok-code-fast-card&category=plugin)
 
 **Manual**
 - Follow the instructions on the GitHub page [Grok code fast card](https://github.com/pajeronda/grok-code-fast-card/)
