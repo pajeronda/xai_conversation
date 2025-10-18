@@ -3,6 +3,7 @@ from __future__ import annotations
 
 # Standard library imports
 import importlib
+from datetime import timedelta
 from pathlib import Path
 from types import MappingProxyType
 
@@ -52,6 +53,7 @@ from homeassistant.helpers import (
     llm as ha_llm,
     selector,
 )
+from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.entity import Entity as HA_Entity
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback as HA_AddConfigEntryEntitiesCallback
 from homeassistant.helpers.httpx_client import get_async_client
@@ -209,6 +211,26 @@ async def async_setup_entry(hass: HA_HomeAssistant, entry: XAIConfigEntry) -> bo
     hass.data[DOMAIN]["chat_history"] = ChatHistoryService(hass, chat_history_path, entry)
     LOGGER.debug("Created global ConversationMemory instance at %s", memory_path)
     LOGGER.debug("Created global ChatHistoryService instance at %s", chat_history_path)
+
+    # Set up periodic cleanup task for ConversationMemory
+    cleanup_interval_hours = entry.data.get(CONF_MEMORY_CLEANUP_INTERVAL_HOURS, RECOMMENDED_MEMORY_CLEANUP_INTERVAL_HOURS)
+    cleanup_interval = timedelta(hours=cleanup_interval_hours)
+
+    async def periodic_cleanup(_now):
+        """Periodic cleanup task for conversation memory."""
+        memory = hass.data[DOMAIN]["conversation_memory"]
+        LOGGER.debug("Running periodic memory cleanup (interval: %s hours)", cleanup_interval_hours)
+        stats = await memory.async_cleanup_expired()
+        if stats["keys_removed"] > 0 or stats["keys_cleaned"] > 0:
+            LOGGER.info(
+                "Memory cleanup: cleaned %d keys, removed %d keys, deleted %d responses",
+                stats["keys_cleaned"], stats["keys_removed"], stats["responses_removed"]
+            )
+
+    # Start periodic cleanup and register unload callback
+    cleanup_unsub = async_track_time_interval(hass, periodic_cleanup, cleanup_interval)
+    entry.async_on_unload(cleanup_unsub)
+    LOGGER.debug("Started periodic memory cleanup task (interval: %s hours)", cleanup_interval_hours)
 
     # Set up platforms
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
