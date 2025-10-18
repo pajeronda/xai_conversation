@@ -26,7 +26,7 @@ A custom Home Assistant integration that brings xAI Grok AI to your smart home.
 ### 💬 Conversation Memory Management
 - **Server-side**: Persistent conversations managed by xAI (saves tokens and costs)
 - **Client-side**: Conversations managed with local history (Home Assistant standard, more expensive)
-- **Separate Configuration** for users and **Assist** satellite devices
+- **Separate Configuration** for **users** and **Assist** satellite devices
 - **Chat History** synchronizable across user devices in the **grok-code-fast-card** service
 
 <p align="center">
