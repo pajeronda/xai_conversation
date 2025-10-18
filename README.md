@@ -1,10 +1,10 @@
-# xAI Grok Conversation for Home Assistant
+# xAI Conversation for Home Assistant
 
 <p align="center">
   <img src="images/logo.svg" alt="xAI Grok Conversation Logo" width="300">
 </p>
 
-A custom Home Assistant integration that brings xAI Grok artificial intelligence to your smart home.
+A custom Home Assistant integration that brings xAI Grok AI to your smart home.
 
 [![GitHub Release](https://img.shields.io/github/release/pajeronda/xai_conversation.svg?style=flat-square)](https://github.com/pajeronda/xai_conversation/releases)
 [![License](https://img.shields.io/github/license/pajeronda/xai_conversation.svg?style=flat-square)](LICENSE)
