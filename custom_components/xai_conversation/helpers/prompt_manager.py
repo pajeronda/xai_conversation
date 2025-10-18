@@ -254,8 +254,15 @@ class PromptManager:
         Returns:
             A tuple containing (conversation_key, previous_response_id or None)
         """
-        # Automatically detect scope based on device_id presence
-        memory_scope = "device" if is_device_request(user_input) else "user"
+        # Memory scope logic (applies to both pipeline and tools modes):
+        # - If user_id is available: use "user" scope to share conversation across all user's devices
+        # - If no user_id (e.g., voice satellites without user context): use "device" scope for device-specific memory
+        user_id = extract_user_id(user_input)
+        if user_id:
+            memory_scope = "user"
+        else:
+            # Fallback to device scope for voice satellites or other devices without user context
+            memory_scope = "device"
 
         conv_key = self.get_memory_key(user_input, memory_scope)
         prev_id = await entity._memory_get_prev_id(conv_key)
