@@ -420,24 +420,6 @@ class XAIBaseLLMEntity(HA_Entity):
 
         return client.chat.create(**chat_args)
 
-    def _get_conversation_key(self, user_input) -> str:
-        """Generate the base key for storing conversation memory.
-
-        Automatically detects if the request comes from:
-        - A device (voice assistant satellite) → device:{device_id}
-        - A user (smartphone/PC/tablet) → user:{user_id}
-
-        This determines which memory parameters (TTL, max_turns) are used.
-        """
-        # Detect if request is from device or user
-        if is_device_request(user_input):
-            device_id = extract_device_id(user_input)
-            return f"device:{device_id}"
-
-        # User request (smartphone, PC, tablet)
-        user_id = extract_user_id(user_input)
-        return f"user:{user_id or 'unknown'}"
-
     def _get_xai_user_id(self, user_input) -> str | None:
         """Get the xAI user ID from Home Assistant user ID."""
         ha_user_id = extract_user_id(user_input)
