@@ -1,20 +1,16 @@
-# xAI Conversation
+<div align="center">
+  <h1>xAI Conversation</h1>
 
-<p align="center">
   <img src="images/logo.svg" alt="xAI Grok Conversation Logo" width="300">
-</p>
-
-<p align="center">
+  
   <b>A custom Home Assistant integration that brings xAI Grok AI to your smart home.</b>
-</p>
 
----
+  [![GitHub Release](https://img.shields.io/github/release/pajeronda/xai_conversation.svg?style=flat-square)](https://github.com/pajeronda/xai_conversation/releases)
+  [![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2025.10%2B-green)](https://www.home-assistant.io/blog/categories/core/)
+  [![License](https://img.shields.io/github/license/pajeronda/xai_conversation.svg?style=flat-square)](LICENSE)
+  [![hacs](https://img.shields.io/badge/HACS-Custom-orange.svg?style=flat-square)](https://github.com/hacs/integration)
 
-[![GitHub Release](https://img.shields.io/github/release/pajeronda/xai_conversation.svg?style=flat-square)](https://github.com/pajeronda/xai_conversation/releases)
-[![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2025.10%2B-green)](https://www.home-assistant.io/blog/categories/core/)
-[![License](https://img.shields.io/github/license/pajeronda/xai_conversation.svg?style=flat-square)](LICENSE)
-[![hacs](https://img.shields.io/badge/HACS-Custom-orange.svg?style=flat-square)](https://github.com/hacs/integration)
-
+</div>
 
 ## Key Features
 ### ⚙️ xAI Python SDK: 
