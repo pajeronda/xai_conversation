@@ -37,7 +37,7 @@ from homeassistant.config_entries import (
     ConfigSubentryFlow,
     SubentryFlowResult,
 )
-from homeassistant.const import CONF_API_KEY, CONF_LLM_HASS_API, Platform
+from homeassistant.const import CONF_API_KEY, Platform
 from homeassistant.core import (
     HomeAssistant as HA_HomeAssistant,
     ServiceCall as HA_ServiceCall,
@@ -50,7 +50,6 @@ from homeassistant.helpers import (
     config_validation as cv,
     device_registry as ha_device_registry,
     entity_registry as ha_entity_registry,
-    llm as ha_llm,
     selector,
 )
 from homeassistant.helpers.event import async_track_time_interval
@@ -72,6 +71,7 @@ from .exceptions import (
 
 from .const import (
     CONF_CHAT_MODEL,
+    CONF_LLM_HASS_API,
     CONF_MAX_TOKENS,
     CONF_MEMORY_CLEANUP_INTERVAL_HOURS,
     CONF_MEMORY_DEVICE_MAX_TURNS,
@@ -108,6 +108,7 @@ from .const import (
     SUBENTRY_TYPE_CODE_TASK,
     SUBENTRY_TYPE_CONVERSATION,
     SUBENTRY_TYPE_SENSORS,
+    llm as ha_llm,
 )
 
 
