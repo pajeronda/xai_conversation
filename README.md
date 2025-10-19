@@ -77,6 +77,11 @@ Click this badge to install **xAI Conversation** via **HACS**
 
 [![Install via your HACS instance.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Pajeronda&repository=xai_conversation&category=integration)
 
+Click this badge afther restart Home Assistant to configure **xAI Conversation**
+
+[![Open your Home Assistant instance and start setting up the integration.](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=xai_conversation)
+
+
 **Manual HACS**
 1. Open **HACS** in Home Assistant
 2. Go to **Integrations** → **Menu (⋮)** → **Custom repositories**
