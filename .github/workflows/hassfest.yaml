@@ -1,0 +1,25 @@
+name: Validazione con hassfest
+
+on:
+  # Esegui il workflow su ogni push al ramo principale (main)
+  push:
+    branches: [ main ]
+  # Esegui il workflow su ogni Pull Request aperta o aggiornata
+  pull_request:
+  # Permetti l'esecuzione manuale dalla sezione "Actions" di GitHub
+  workflow_dispatch:
+  # Esegui il workflow ogni giorno a mezzanotte (opzionale)
+  schedule:
+    - cron: '0 0 * * *'
+
+jobs:
+  validate:
+    runs-on: "ubuntu-latest"
+    steps:
+      # 1. Checkout del codice
+      - uses: "actions/checkout@v4"
+      
+      # 2. Esegui hassfest per la validazione
+      # Questo usa l'azione ufficiale di Home Assistant per controllare i file
+      # manifest, i file di traduzione e la struttura del componente.
+      - uses: "home-assistant/actions/hassfest@master"
