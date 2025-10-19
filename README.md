@@ -14,7 +14,7 @@
 
 ## Key Features
 ### ⚙️ xAI Python SDK: 
-- This version uses [xAI Python SDK](https://github.com/xai-org/xai-sdk-python)
+- This component uses [xAI Python SDK](https://github.com/xai-org/xai-sdk-python)
 
 ### 💬 Intelligent Conversation Agent
 - **Two Operating Modes**:
