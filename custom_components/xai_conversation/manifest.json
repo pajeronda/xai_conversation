@@ -1,6 +1,6 @@
 {
   "name": "xAI Conversation",
-  "version": "1.0.0",
+  "version": "1.0.3",
   "domain": "xai_conversation",
   "dependencies": ["conversation"],
   "after_dependencies": ["assist_pipeline", "intent"],
