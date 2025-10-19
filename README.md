@@ -1,19 +1,26 @@
-# xAI Conversation for Home Assistant
+# xAI Conversation
 
 <p align="center">
   <img src="images/logo.svg" alt="xAI Grok Conversation Logo" width="300">
 </p>
 
-A custom Home Assistant integration that brings xAI Grok AI to your smart home.
+<p align="center">
+  <b>A custom Home Assistant integration that brings xAI Grok AI to your smart home.</b>
+</p>
+
+---
 
 [![GitHub Release](https://img.shields.io/github/release/pajeronda/xai_conversation.svg?style=flat-square)](https://github.com/pajeronda/xai_conversation/releases)
+[![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2025.10%2B-green)](https://www.home-assistant.io/blog/categories/core/)
 [![License](https://img.shields.io/github/license/pajeronda/xai_conversation.svg?style=flat-square)](LICENSE)
 [![hacs](https://img.shields.io/badge/HACS-Custom-orange.svg?style=flat-square)](https://github.com/hacs/integration)
 
-## Key Features
-  - **xAI SDK**: This version uses [xAI Python SDK](https://github.com/xai-org/xai-sdk-python)
 
-### 🤖 Intelligent Conversation Agent
+## Key Features
+### ⚙️ xAI Python SDK: 
+- This version uses [xAI Python SDK](https://github.com/xai-org/xai-sdk-python)
+
+### 💬 Intelligent Conversation Agent
 - **Two Operating Modes**:
   - **Intelligent Pipeline**: Grok delegates device commands using Home Assistant's **conversation/process** service
   - **Tools Mode**: Direct access to HA tools via tool calling (Home Assistant's standard LLM API)
@@ -23,7 +30,6 @@ A custom Home Assistant integration that brings xAI Grok AI to your smart home.
   <img width="400" height="400" alt="immagine chat Assist 1" src="https://github.com/user-attachments/assets/6aa4677e-80c1-42f9-8461-a7694104fff7" />
 
   <img width="400" height="400" alt="immagine chat Assist 2" src="https://github.com/user-attachments/assets/83b79a58-be34-4d6f-8967-0eae90d65cc7" />
-
 </p>
 
 ### 💬 Conversation Memory Management
