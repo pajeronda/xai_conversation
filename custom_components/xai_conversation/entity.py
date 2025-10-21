@@ -9,13 +9,12 @@ import time
 from typing import TYPE_CHECKING
 
 # Home Assistant imports
-from homeassistant.helpers.storage import Store
 
 # Home Assistant imports (re-exported from __init__)
 from .__init__ import (
     XAI_CLIENT_CLASS, xai_user, xai_system, xai_assistant, xai_image, xai_search_parameters, XAI_SDK_AVAILABLE,
-    HA_ConfigSubentry, HA_HomeAssistantError, HA_Entity,
-    ha_conversation, ha_device_registry, ha_llm
+    HA_ConfigSubentry, HA_Entity,
+    ha_conversation, ha_device_registry
 )
 
 # Local imports
@@ -24,30 +23,18 @@ from .const import (
     CONF_CHAT_MODEL,
     CONF_LIVE_SEARCH,
     CONF_MAX_TOKENS,
-    CONF_MEMORY_CLEANUP_INTERVAL_HOURS,
-    CONF_MEMORY_DEVICE_MAX_TURNS,
-    CONF_MEMORY_DEVICE_TTL_HOURS,
-    CONF_MEMORY_USER_MAX_TURNS,
-    CONF_MEMORY_USER_TTL_HOURS,
     CONF_PROMPT,
-    CONF_PROMPT_PIPELINE,
     CONF_REASONING_EFFORT,
     CONF_STORE_MESSAGES,
     CONF_TEMPERATURE,
     CONF_TIMEOUT,
     CONF_USE_INTELLIGENT_PIPELINE,
-    DEFAULT_CONVERSATION_NAME,
     DOMAIN,
     LOGGER,
     REASONING_EFFORT_MODELS,
     RECOMMENDED_CHAT_MODEL,
     RECOMMENDED_LIVE_SEARCH,
     RECOMMENDED_MAX_TOKENS,
-    RECOMMENDED_MEMORY_CLEANUP_INTERVAL_HOURS,
-    RECOMMENDED_MEMORY_DEVICE_MAX_TURNS,
-    RECOMMENDED_MEMORY_DEVICE_TTL_HOURS,
-    RECOMMENDED_MEMORY_USER_MAX_TURNS,
-    RECOMMENDED_MEMORY_USER_TTL_HOURS,
     RECOMMENDED_REASONING_EFFORT,
     RECOMMENDED_STORE_MESSAGES,
     RECOMMENDED_TEMPERATURE,
@@ -58,15 +45,10 @@ from .entity_tools import XAIToolsProcessor
 from .helpers import (
     validate_xai_configuration,
     get_last_user_message,
-    prompt_hash,
     extract_user_id,
     extract_device_id,
-    is_device_request,
 )
 from .exceptions import (
-    XAIConnectionError,
-    XAIToolConversionError,
-    XAIConfigurationError,
     raise_generic_error,
     raise_validation_error,
     handle_api_error,

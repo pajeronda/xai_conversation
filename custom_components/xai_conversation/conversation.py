@@ -9,31 +9,20 @@ from homeassistant.const import MATCH_ALL
 
 # Local application imports
 from .__init__ import (
-    CONF_LLM_HASS_API,
     HA_AddConfigEntryEntitiesCallback,
     HA_ConfigSubentry,
     HA_HomeAssistant,
-    HA_HomeAssistantError,
     ha_conversation,
     ha_device_registry,
-    ha_llm,
 )
 from .const import (
     CONF_ALLOW_SMART_HOME_CONTROL,
     CONF_CHAT_MODEL,
-    CONF_MAX_TOKENS,
-    CONF_PROMPT,
-    CONF_PROMPT_PIPELINE,
-    CONF_STORE_MESSAGES,
-    CONF_TEMPERATURE,
     CONF_USE_INTELLIGENT_PIPELINE,
     DEFAULT_MANUFACTURER,
     DOMAIN,
     LOGGER,
     RECOMMENDED_CHAT_MODEL,
-    RECOMMENDED_MAX_TOKENS,
-    RECOMMENDED_TEMPERATURE,
-    RECOMMENDED_TOOLS_OPTIONS,
     SUBENTRY_TYPE_CONVERSATION,
 )
 from .helpers import PromptManager

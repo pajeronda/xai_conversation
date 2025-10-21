@@ -4,11 +4,9 @@ from __future__ import annotations
 
 # Standard library imports
 from dataclasses import dataclass
-import grpc
 from datetime import datetime
 import json
 import time
-import yaml
 from typing import TYPE_CHECKING, Any
 
 # Home Assistant imports (re-exported from __init__)
@@ -21,8 +19,6 @@ from .__init__ import (
 # Local imports
 from .const import (
     CONF_ALLOW_SMART_HOME_CONTROL,
-    CONF_LLM_HASS_API,
-    CONF_PROMPT,
     CONF_STORE_MESSAGES,
     DOMAIN,
     LOGGER,
@@ -34,11 +30,9 @@ from .helpers import (
     extract_device_id,
     format_tools_for_xai,
     get_last_user_message,
-    is_device_request,
     PromptManager,
 )
 from .exceptions import (
-    raise_tool_error,
     raise_generic_error,
     handle_api_error,
 )

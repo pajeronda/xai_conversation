@@ -4,7 +4,6 @@ from __future__ import annotations
 import asyncio
 import re
 from datetime import datetime
-import time
 from typing import Optional
 
 # Home Assistant imports
@@ -12,30 +11,38 @@ from homeassistant.components.conversation import ConversationInput
 from homeassistant.core import Context
 
 # Home Assistant imports (re-exported from __init__)
-from .__init__ import ha_conversation, ha_json_loads, ha_llm, xai_system, xai_user
+from .__init__ import ha_conversation, xai_system, xai_user
 
 # Local application imports
 from .const import (
-    CONF_ALLOW_SMART_HOME_CONTROL,
-    CONF_PROMPT,
-    CONF_PROMPT_PIPELINE,
-    CONF_STORE_MESSAGES,
-    DOMAIN,
-    LOGGER,
-    RECOMMENDED_HISTORY_LIMIT_TURNS,
-    RECOMMENDED_STORE_MESSAGES,
+    LOGGER
 )
-from .exceptions import raise_generic_error
 from .helpers import (
     extract_device_id,
     get_last_user_message,
     parse_ha_local_payload,
-    prompt_hash,
     PromptManager,
 )
 
 
 HA_LOCAL_TAG_PATTERN = re.compile(r"\[\[HA_LOCAL\s*:\s*({.*?})\]\]", re.DOTALL)
+
+
+class MinimalChatLog:
+    """Minimal chat_log object for fallback mode.
+
+    Simulates ChatLog with only the methods needed by async_process_with_loop:
+    - .content: list of messages
+    - async_add_assistant_content(): to receive the response from tools mode
+    """
+    def __init__(self, content):
+        self.content = content
+
+    async def async_add_assistant_content(self, assistant_content):
+        """Add assistant content to the chat log (simulates HA ChatLog behavior)."""
+        self.content.append(assistant_content)
+        # HA's async_add_assistant_content is an async generator that yields once
+        yield None
 
 
 class IntelligentPipeline:
@@ -53,8 +60,6 @@ class IntelligentPipeline:
         self.hass = hass
         self.entity = entity
         self.user_input = user_input
-        # Lock to protect chat_log during fallback operations in multi-command scenarios
-        self._chat_log_lock = asyncio.Lock()
 
     async def run(self, chat_log, previous_response_id: str | None) -> None:
         """Execute pipeline using chat_log prepared by conversation.py"""
@@ -141,13 +146,11 @@ class IntelligentPipeline:
                 )
 
     async def _stream_and_route(self, chat, chat_log, conv_key: str) -> None:
-        """Stream from xAI SDK with native streaming and early detection.
-        Uses official SDK pattern: for response, chunk in chat.stream()
-        Implements real-time early detection of [[HA_LOCAL]] commands during streaming.
+        """
+        Stream from xAI SDK, buffer the complete response, and then route it.
+        This approach robustly handles responses that mix dialogue and commands.
         """
         buffer: str = ""
-        decided = False
-        is_command = False
         queue: asyncio.Queue = asyncio.Queue()
         response_id_holder = {"id": None, "usage": None}
 
@@ -163,84 +166,64 @@ class IntelligentPipeline:
                             loop.call_soon_threadsafe(queue.put_nowait, str(part))
                         except Exception:
                             pass
-                # capture final accumulated response id and usage
-                try:
-                    response_id_holder["id"] = getattr(response, "id", None)
-                    response_id_holder["usage"] = getattr(response, "usage", None)
-                except Exception:
-                    response_id_holder["id"] = None
-                    response_id_holder["usage"] = None
+            # capture final accumulated response id and usage
             except Exception:
                 pass
             finally:
+                try:
+                    response_id_holder["id"] = response.id
+                    response_id_holder["usage"] = response.usage
+                except Exception:
+                    response_id_holder["id"] = None
+                    response_id_holder["usage"] = None
                 try:
                     loop.call_soon_threadsafe(queue.put_nowait, "__END__")
                 except Exception:
                     pass
 
         loop = asyncio.get_running_loop()
-        # Start background producer in a thread managed by HA
         producer_task = self.hass.async_create_background_task(
             asyncio.to_thread(_producer, loop),
             "xai_pipeline_stream_producer"
         )
 
-        # Create async generator that processes the queue and yields conversation content
-        async def _conversation_stream():
-            nonlocal buffer, decided, is_command
-            chunk_count = 0
-            while True:
-                piece = await queue.get()
-                if piece == "__END__":
-                    break
+        # Step 1: Consume the entire stream into a single buffer.
+        while True:
+            piece = await queue.get()
+            if piece == "__END__":
+                break
+            buffer += piece
 
-                if not decided:
-                    buffer += piece
-                    stripped = buffer.lstrip()
-                    if stripped.startswith("[["):
-                        is_command = True
-                        decided = True
-                        # Continue consuming queue for command buffer, but don't yield
-                        while True:
-                            piece = await queue.get()
-                            if piece == "__END__":
-                                break
-                            buffer += piece
-                        break  # Exit generator
-                    elif stripped and not stripped.startswith("["):
-                        decided = True
-                        # Yield buffered content immediately in HA format
-                        yield {"content": buffer}
-                    # else: keep buffering until decision
-                else:
-                    # Must be conversation since we handle commands above
-                    chunk_count += 1
-                    yield {"content": piece}
-
-        # Stream conversation content using HA streaming API
-        # The generator handles both decision making and queue consumption
-        async for content in chat_log.async_add_delta_content_stream(
-            self.entity.entity_id, _conversation_stream()
-        ):
-            pass  # Content already processed by generator
-
-        # If it was a command, handle it now (buffer is already filled by generator)
-        if is_command:
-            await self._handle_command_buffer(buffer, chat_log)
-
-        try:  # Wait for producer task completion to ensure proper cleanup
+        # Wait for producer task to finish to ensure response_id is captured
+        try:
             await producer_task
         except Exception:
             pass
 
-        # Store response id for server-side chaining if available
+        # Step 2: Decide how to route the complete response.
+        match = HA_LOCAL_TAG_PATTERN.search(buffer)
+
+        if match:
+            # Response contains a command (and maybe dialogue).
+            await self._handle_mixed_response(buffer, chat_log)
+        else:
+            # Response is purely conversational.
+            if buffer:
+                async for _ in chat_log.async_add_assistant_content(
+                    ha_conversation.AssistantContent(
+                        agent_id=self.entity.entity_id,
+                        content=buffer,
+                    )
+                ):
+                    pass
+
+        # Step 3: Store response ID and update token sensors.
         if response_id_holder["id"]:
             try:
                 await self.entity._save_response_chain(conv_key, response_id_holder["id"], "pipeline")
             except Exception as err:
                 LOGGER.error("MEMORY_DEBUG: entity_pipeline.py - failed to store response_id: %s", err)
 
-        # Update token sensors with usage data
         if response_id_holder["usage"]:
             self.entity._update_token_sensors(
                 response_id_holder["usage"],
@@ -252,25 +235,30 @@ class IntelligentPipeline:
 
     async def _route_final_text(self, content: str, chat_log) -> None:
         """Route a complete non-streamed response."""
-        stripped = content.lstrip()
-        if stripped.startswith("[["):
-            await self._handle_command_buffer(content, chat_log)
+        match = HA_LOCAL_TAG_PATTERN.search(content)
+        if match:
+            # Response contains a command (and maybe dialogue).
+            await self._handle_mixed_response(content, chat_log)
         else:
-            async for _ in chat_log.async_add_assistant_content(
-                ha_conversation.AssistantContent(
-                    agent_id=self.entity.entity_id,
-                    content=content,
-                )
-            ):
-                pass
+            # Response is purely conversational.
+            if content:
+                async for _ in chat_log.async_add_assistant_content(
+                    ha_conversation.AssistantContent(
+                        agent_id=self.entity.entity_id,
+                        content=content,
+                    )
+                ):
+                    pass
 
-    async def _handle_command_buffer(self, buffer: str, chat_log) -> None:
-        """Extract HA_LOCAL payload and route to single/multi command handlers."""
-        LOGGER.debug("pipeline: [[HA_LOCAL]] detected | buffer_length=%d first_100_chars='%s'",
-                    len(buffer), buffer[:100])
-        payload_json = self._extract_payload_json(buffer)
-        if not payload_json:
-            LOGGER.debug("pipeline: no valid JSON payload found, emitting raw buffer")
+    async def _handle_mixed_response(self, buffer: str, chat_log) -> None:
+        """
+        Handles a response containing both dialogue and a command.
+        Combines the dialogue and command result into a single response to prevent
+        dialogue from being lost during command execution.
+        """
+        match = HA_LOCAL_TAG_PATTERN.search(buffer)
+        if not match:
+            # Fallback for safety, should not be reached
             async for _ in chat_log.async_add_assistant_content(
                 ha_conversation.AssistantContent(
                     agent_id=self.entity.entity_id,
@@ -280,69 +268,81 @@ class IntelligentPipeline:
                 pass
             return
 
-        LOGGER.debug("pipeline: extracted JSON payload: '%s'", payload_json[:100])
+        command_tag = match.group(0)
+        dialogue = buffer.replace(command_tag, "").strip()
+        LOGGER.debug("pipeline: [[HA_LOCAL]] detected | dialogue=%d chars, dialogue='%s'", len(dialogue), dialogue)
+
+        # Execute the command and get result
+        command_result = await self._handle_command_buffer(command_tag, chat_log)
+
+        # Combine dialogue + command result
+        combined_parts = []
+        if dialogue:
+            combined_parts.append(dialogue)
+        if command_result:
+            combined_parts.append(command_result)
+
+        combined_response = "\n".join(combined_parts) if combined_parts else "Done."
+
+        # Add combined response to chat_log in single call
+        async for _ in chat_log.async_add_assistant_content(
+            ha_conversation.AssistantContent(
+                agent_id=self.entity.entity_id,
+                content=combined_response,
+            )
+        ):
+            pass
+
+    async def _handle_command_buffer(self, buffer: str, chat_log) -> Optional[str]:
+        """Extract HA_LOCAL payload and route to single/multi command handlers.
+
+        Returns the command result instead of adding to chat_log.
+        """
+        LOGGER.debug("pipeline: [[HA_LOCAL]] detected | buffer_length=%d, buffer='%s'", len(buffer), buffer)
+        payload_json = self._extract_payload_json(buffer)
+        if not payload_json:
+            LOGGER.debug("pipeline: no valid JSON payload found, returning raw buffer")
+            return buffer
+
+        LOGGER.debug("pipeline: extracted JSON payload: '%s'", payload_json[:200])
 
         # Parse payload to detect single vs multi-command (with fallback for malformed JSON)
         payload_data = parse_ha_local_payload(payload_json)
         if not payload_data:
             LOGGER.error("pipeline: failed to parse JSON payload | raw='%s'", payload_json[:200])
-            async for _ in chat_log.async_add_assistant_content(
-                ha_conversation.AssistantContent(
-                    agent_id=self.entity.entity_id,
-                    content="I could not parse the command.",
-                )
-            ):
-                pass
-            return
+            return "I could not parse the command."
 
         # Check if multi-command format
         if "commands" in payload_data:
             # Multi-command: route to handler
-            await self._handle_multi_commands(payload_data, chat_log)
+            return await self._handle_multi_commands(payload_data, chat_log)
         elif "text" in payload_data:
             # Single command: extract text and process
             command_text = str(payload_data.get("text", "")).strip()
             if not command_text:
-                async for _ in chat_log.async_add_assistant_content(
-                    ha_conversation.AssistantContent(
-                        agent_id=self.entity.entity_id,
-                        content="I could not parse the command.",
-                    )
-                ):
-                    pass
-                return
-            # Get result from single command and add to chat_log
-            result = await self._handle_single_command(command_text, chat_log)
-            if result:
-                async for _ in chat_log.async_add_assistant_content(
-                    ha_conversation.AssistantContent(
-                        agent_id=self.entity.entity_id,
-                        content=result,
-                    )
-                ):
-                    pass
+                return "I could not parse the command."
+            # Get result from single command
+            return await self._handle_single_command(command_text, chat_log)
         else:
             LOGGER.error("pipeline: payload missing 'text' or 'commands' field")
-            async for _ in chat_log.async_add_assistant_content(
-                ha_conversation.AssistantContent(
-                    agent_id=self.entity.entity_id,
-                    content="Invalid command format.",
-                )
-            ):
-                pass
+            return "Invalid command format."
 
-    async def _handle_multi_commands(self, payload_data: dict, chat_log) -> None:
-        """Process multiple commands from payload, respecting sequential flag."""
+    async def _handle_multi_commands(self, payload_data: dict, chat_log) -> Optional[str]:
+        """Process multiple commands from payload, respecting sequential flag.
+
+        Collects all results and returns combined response.
+        """
         commands = payload_data.get("commands", [])
+        # Default to parallel execution (False)
         sequential = payload_data.get("sequential", False)
 
         if not commands:
             LOGGER.warning("pipeline: multi-command payload has empty commands array")
-            return
+            return None
 
         if not isinstance(commands, list):
             LOGGER.error("pipeline: 'commands' field is not a list. Got %s", type(commands).__name__)
-            return
+            return None
 
         total = len(commands)
         LOGGER.info("pipeline: processing %d commands | sequential=%s", total, sequential)
@@ -379,16 +379,10 @@ class IntelligentPipeline:
                     if result and not isinstance(result, Exception):
                         results.append(result)
 
-        # Combine all results and add to chat_log once
+        # Return combined results
         if results:
-            combined_response = "\n".join(results)
-            async for _ in chat_log.async_add_assistant_content(
-                ha_conversation.AssistantContent(
-                    agent_id=self.entity.entity_id,
-                    content=combined_response,
-                )
-            ):
-                pass
+            return "\n".join(results)
+        return None
 
     async def _handle_single_command(self, command_text: str, chat_log, command_index: Optional[int] = None, total_commands: Optional[int] = None) -> Optional[str]:
         """Process a single command: call conversation.process, handle fallback, return response."""
@@ -476,39 +470,37 @@ class IntelligentPipeline:
 
             LOGGER.debug("Fallback: %susing tools mode prev_id=%s", prefix, tools_prev_id[:8] if tools_prev_id else None)
 
-            # Protect chat_log manipulation with lock to prevent race conditions in parallel execution
-            async with self._chat_log_lock:
-                # Create a new, clean chat_log for the fallback to avoid context contamination.
-                # The tools processor needs a chat_log object to add the final response to.
-                # We will temporarily replace the content of the existing chat_log.
-                original_content = chat_log.content
-
-                chat_log.content = [
+            # Create a minimal chat_log containing ONLY the fallback command
+            # This is used by async_process_with_loop to extract the user message
+            fallback_chat_log = MinimalChatLog(
+                content=[
                     ha_conversation.UserContent(
                         content=fallback_text,
                     )
                 ]
+            )
 
-                # Execute tools processor with the clean chat_log.
-                # The tools processor will use this chat_log for its loop and for the final output.
-                # Pass None for prev_id to ensure the system prompt with tool definitions is sent.
-                await self.entity._tools_processor.async_process_with_loop(
-                    fallback_input, chat_log, None, force_tools=True
-                )
+            # Execute tools processor with MinimalChatLog
+            # This executes the full tool loop and adds the response to fallback_chat_log
+            # Pass None for prev_id to ensure system prompt with tools is sent
+            await self.entity._tools_processor.async_process_with_loop(
+                fallback_input,
+                fallback_chat_log,
+                previous_response_id=None,
+                force_tools=True
+            )
 
-                # Extract the assistant response from chat_log before restoring
-                fallback_response = ""
-                for item in chat_log.content:
-                    # Check if it's an AssistantContent
-                    if hasattr(item, '__class__') and 'AssistantContent' in item.__class__.__name__:
-                        if hasattr(item, 'content') and isinstance(item.content, str):
-                            fallback_response = item.content
-                            break
+            # Extract the assistant response from the MinimalChatLog
+            fallback_response = ""
+            for item in fallback_chat_log.content:
+                if hasattr(item, '__class__') and 'AssistantContent' in item.__class__.__name__:
+                    if hasattr(item, 'content') and isinstance(item.content, str):
+                        fallback_response = item.content
+                        break
 
-                # Restore the original content so that the full history is logged
-                chat_log.content = original_content + chat_log.content
-
-                return fallback_response or "Done."
+            # Return the response (caller will add it to the REAL chat_log)
+            # TRUE parallelism - no locks, no manipulation of original chat_log!
+            return fallback_response or "Done."
 
     def _extract_payload_json(self, buffer: str) -> Optional[str]:
         """Extract JSON payload from [[HA_LOCAL: {...}]] tag."""

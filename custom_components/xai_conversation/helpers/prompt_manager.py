@@ -1,11 +1,10 @@
 """Prompt management for xAI conversation."""
 from __future__ import annotations
 
-from .conversation import extract_device_id, extract_user_id, is_device_request, prompt_hash
+from .conversation import extract_device_id, extract_user_id, prompt_hash
 from ..const import (
     CONF_ALLOW_SMART_HOME_CONTROL,
     CONF_ASSISTANT_NAME,
-    CONF_LLM_HASS_API,
     CONF_PROMPT,
     CONF_PROMPT_PIPELINE,
     CONF_STORE_MESSAGES,

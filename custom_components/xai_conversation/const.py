@@ -116,7 +116,7 @@ DEFAULT_MODEL_PRICING = {
 # -----------------------------------------------------------------------------
 # 1. IDENTITY BLOCK (always present)
 # -----------------------------------------------------------------------------
-PROMPT_IDENTITY = """You are {assistant_name}, an intelligent voice assistant for Home Assistant."""
+PROMPT_IDENTITY = """You are {assistant_name}, a powerfull assistant for Home Assistant."""
 
 # -----------------------------------------------------------------------------
 # 2. ROLE BASE BLOCK (always present)
@@ -145,15 +145,16 @@ PROMPT_PIPELINE_DECISION_LOGIC = """Action Decision:
 - General Questions (non-HA related): answer concisely and truthfully.
 
 Priority Rules:
+- Eventual, present the actions of commands in a natural way
 - Smart Home commands/queries → [[HA_LOCAL]]
-- General knowledge questions → Answer directly
+- General knowledge questions → Answer directly 
 - When in doubt about device state/control → PRIORITIZE SMART HOME CONTROL"""
 
 PROMPT_PIPELINE_EXAMPLES = """Examples:
 - "when did I last turn on the light?" → "You turned on the living room light on October 6th at 2:32 PM"
-- "turn on the living room light" → [[HA_LOCAL: {"text": "turn on the living room light"}]]
-- "(any text)  what's the temperature in the kitchen (other words)?" → [[HA_LOCAL: {"text": "what's the temperature in the kitchen?"}]]
-- "turn off lights in living room and turn on tv" → [[HA_LOCAL: {"commands": [{"text": "turn off lights in living room"}, {"text": "turn on tv"}]}]]
+- "turn on the living room light" → "[[HA_LOCAL: {"text": "turn on the living room light"}]]"
+- "(any text)  what's the temperature in the kitchen (other words)?" → [[HA_LOCAL: {"text": "what's the temperature in the kitchen?"}]]"
+- "turn off lights in living room and turn on tv" → [[HA_LOCAL: {"commands": [{"text": "turn off lights in living room"}, {"text": "turn on tv"}]}]]"
 - "first close the blinds, then turn off the lights" → [[HA_LOCAL: {"commands": [{"text": "close the blinds"}, {"text": "turn off the lights"}], "sequential": true}]]"""
 
 # -----------------------------------------------------------------------------
@@ -249,7 +250,7 @@ RECOMMENDED_TOOLS_OPTIONS = {
 RECOMMENDED_AI_TASK_OPTIONS = {
     CONF_CHAT_MODEL: RECOMMENDED_AI_TASK_MODEL,
     CONF_LLM_HASS_API: [],
-    CONF_MAX_TOKENS: 4000,
+    CONF_MAX_TOKENS: 5000,
     CONF_TEMPERATURE: 0.1,
     CONF_PROMPT: GROK_AI_TASK_PROMPT,
     CONF_TOP_P: RECOMMENDED_TOP_P,
@@ -260,7 +261,7 @@ RECOMMENDED_AI_TASK_OPTIONS = {
 # Default options for the Grok Code Fast service
 RECOMMENDED_GROK_CODE_FAST_OPTIONS = {
     CONF_CHAT_MODEL: RECOMMENDED_GROK_CODE_FAST_MODEL,
-    CONF_MAX_TOKENS: 4000,
+    CONF_MAX_TOKENS: 5000,
     CONF_TEMPERATURE: 0.1,
     CONF_PROMPT: GROK_CODE_FAST_PROMPT,
     CONF_TOP_P: RECOMMENDED_TOP_P,
