@@ -162,26 +162,8 @@ class XAIToolsProcessor:
                     pass
                 break  # Exit the loop
 
-            # Convert xAI tool calls to HA format
+            # Convert xAI tool calls to HA format and execute them
             llm_context = self._build_llm_context(user_input)
-            ha_tool_calls = []
-            for tool_call in response.tool_calls:
-                ha_tool_input = convert_xai_to_ha_tool(self._entity.hass, tool_call)
-                ha_tool_calls.append(ha_tool_input)
-
-            # Only add tool_calls to chat_log if not in force_tools mode
-            # (pipeline chat_log doesn't support tool_calls - no LLM API configured)
-            if not force_tools:
-                async for _ in chat_log.async_add_assistant_content(
-                    ha_conversation.AssistantContent(
-                        agent_id=self._entity.entity_id,
-                        content=response.content or "",
-                        tool_calls=ha_tool_calls,
-                    )
-                ):
-                    pass
-
-            # Execute the tools
             tool_results = []
 
             for tool_call in response.tool_calls:
@@ -218,7 +200,7 @@ class XAIToolsProcessor:
                     tool_time = time.time() - tool_start
                     LOGGER.debug("tool_exec: name=%s duration=%.2fs success=False error=%s params=%s",
                                 tool_call.function.name, tool_time, str(err)[:100],
-                                str(tool_call.function.arguments)[:200])
+                                str(tool_call.function.arguments)[:100])
                     # Use ToolOutput for error reporting
                     tool_results.append(ToolOutput(
                         tool_name=tool_call.function.name,
@@ -226,8 +208,8 @@ class XAIToolsProcessor:
                         is_error=True,
                     ))
 
-            # Get the final answer from Grok by sending only the tool results
-            final_answer = await self._get_final_answer_after_tools(tool_results, response.id, conv_key)
+            # Get the final answer from Grok by sending tool results (and full context if memory disabled)
+            final_answer = await self._get_final_answer_after_tools(tool_results, response.id, conv_key, user_input, chat_log)
             async for _ in chat_log.async_add_assistant_content(
                 ha_conversation.AssistantContent(
                     agent_id=self._entity.entity_id,
@@ -246,8 +228,20 @@ class XAIToolsProcessor:
         total_time = time.time() - start_time
         LOGGER.debug("tools_loop_end: duration=%.2fs", total_time)
 
-    async def _get_final_answer_after_tools(self, tool_results: list[ToolOutput], previous_response_id: str, conv_key: str) -> str:
-        """Call Grok with tool results to get the final natural language answer."""
+    async def _get_final_answer_after_tools(
+        self,
+        tool_results: list[ToolOutput],
+        previous_response_id: str,
+        conv_key: str,
+        user_input,
+        chat_log
+    ) -> str:
+        """Call Grok with tool results to get the final natural language answer.
+
+        When store_messages is disabled, reconstructs the full conversation context
+        (system prompt + conversation history + tool results) for the API call.
+        When store_messages is enabled, uses previous_response_id and sends only tool results.
+        """
         # If store_messages is disabled, don't use previous_response_id (server won't have it)
         store_messages = self._entity._get_option(CONF_STORE_MESSAGES, True)
         response_id = previous_response_id if store_messages else None
@@ -255,7 +249,49 @@ class XAIToolsProcessor:
         client = self._entity._create_client()
         chat = self._entity._create_chat(client, tools=None, previous_response_id=response_id)
 
-        # Append tool results as user messages containing the tool output
+        # When memory is disabled, rebuild the full context for this API call
+        if not store_messages:
+            LOGGER.debug("_get_final_answer: store_messages=False, rebuilding full context")
+
+            # 1. Add system prompt (same as in call_xai_api_with_tools)
+            if self._cached_static_prompt:
+                session_start = datetime.now()
+                context_info = (
+                    f"\n\nSession Context:"
+                    f"\n- Started at: {session_start.strftime('%Y-%m-%d %H:%M:%S %Z')}"
+                    f"\n- Timezone: {self._entity.hass.config.time_zone}"
+                    f"\n- Country: {self._entity.hass.config.country}"
+                )
+                system_prompt_with_context = self._cached_static_prompt + context_info
+                chat.append(xai_system(system_prompt_with_context))
+                LOGGER.debug("_get_final_answer: added system prompt (%d chars)", len(system_prompt_with_context))
+            else:
+                LOGGER.warning("_get_final_answer: no cached static prompt available!")
+
+            # 2. Add conversation history from chat_log
+            # Get last N turns from chat_log (same logic as call_xai_api_with_tools)
+            limit = RECOMMENDED_HISTORY_LIMIT_TURNS * 2
+            all_messages = []
+            for content in chat_log.content:
+                if isinstance(content, ha_conversation.UserContent):
+                    all_messages.append({"role": "user", "content": content.content or ""})
+                elif isinstance(content, ha_conversation.AssistantContent):
+                    all_messages.append({"role": "assistant", "content": content.content or ""})
+
+            history_messages = all_messages[-limit:] if len(all_messages) > limit else all_messages
+
+            for msg in history_messages:
+                if msg["role"] == "user":
+                    chat.append(xai_user(msg["content"]))
+                elif msg["role"] == "assistant":
+                    chat.append(xai_assistant(msg["content"]))
+
+            LOGGER.debug("_get_final_answer: added %d history messages", len(history_messages))
+        else:
+            LOGGER.debug("_get_final_answer: store_messages=True, using previous_response_id=%s",
+                        response_id[:8] if response_id else None)
+
+        # 3. Append tool results as user messages (always, for both modes)
         # xAI SDK expects tool results to be sent as regular messages, not special tool objects
         for result in tool_results:
             tool_output_content = result.tool_result if not result.is_error else f"Error: {result.tool_result}"

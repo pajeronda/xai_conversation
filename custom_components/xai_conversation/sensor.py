@@ -215,8 +215,8 @@ class XAITokenSensorBase(RestoreEntity, SensorEntity):
         self._cumulative_reasoning_tokens += reasoning
         self._message_count += 1
 
-        LOGGER.debug("sensor: updated %s (model=%s): completion=%d prompt=%d cached=%d reasoning=%d",
-                    self.entity_id, model, completion, prompt, cached, reasoning)
+        # LOGGER.debug("sensor: updated %s (model=%s): completion=%d prompt=%d cached=%d reasoning=%d",
+        #             self.entity_id, model, completion, prompt, cached, reasoning)
 
         # Trigger state update
         self.async_write_ha_state()
@@ -336,8 +336,8 @@ class XAIServiceLastTokensSensor(XAITokenSensorBase):
         self._cumulative_reasoning_tokens += reasoning
         self._message_count += 1
 
-        LOGGER.debug("sensor: updated %s (model=%s, mode=%s, fallback=%s, store=%s): completion=%d prompt=%d cached=%d",
-                    self.entity_id, model, mode, is_fallback, store_messages, completion, prompt, cached)
+        # LOGGER.debug("sensor: updated %s (model=%s, mode=%s, fallback=%s, store=%s): completion=%d prompt=%d cached=%d",
+        #             self.entity_id, model, mode, is_fallback, store_messages, completion, prompt, cached)
 
         # Trigger state update
         self.async_write_ha_state()
@@ -474,8 +474,8 @@ class XAIServiceCacheRatioSensor(XAITokenSensorBase):
         self._cumulative_reasoning_tokens += reasoning
         self._message_count += 1
 
-        LOGGER.debug("sensor: updated %s (model=%s, mode=%s, fallback=%s, store=%s): cached=%d ratio=%.1f%%",
-                    self.entity_id, model, mode, is_fallback, store_messages, cached, self.native_value)
+        # LOGGER.debug("sensor: updated %s (model=%s, mode=%s, fallback=%s, store=%s): cached=%d ratio=%.1f%%",
+        #             self.entity_id, model, mode, is_fallback, store_messages, cached, self.native_value)
 
         # Trigger state update
         self.async_write_ha_state()
@@ -685,8 +685,8 @@ class XAICostSensor(XAITokenSensorBase):
             model_cost = prompt_cost + cached_cost + completion_cost + reasoning_cost
             total_cost += model_cost
 
-            LOGGER.debug("sensor: cost for model %s = $%.4f (prompt=$%.4f, cached=$%.4f, completion=$%.4f, reasoning=$%.4f)",
-                        model, model_cost, prompt_cost, cached_cost, completion_cost, reasoning_cost)
+            # LOGGER.debug("sensor: cost for model %s = $%.4f (prompt=$%.4f, cached=$%.4f, completion=$%.4f, reasoning=$%.4f)",
+            #             model, model_cost, prompt_cost, cached_cost, completion_cost, reasoning_cost)
 
         return round(total_cost, 4)
 

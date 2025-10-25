@@ -549,6 +549,9 @@ async def _register_services(hass: HA_HomeAssistant, entry: XAIConfigEntry) -> N
             # 3. Create xAI client and chat
             start_time = time.time()
 
+            memory_status = "with_memory" if store_messages else "no_memory"
+            LOGGER.info("chat_start: service=code_fast mode=stateless memory=%s", memory_status)
+
             # Get API configuration from main entry
             api_key = entry.data.get(CONF_API_KEY)
             if not api_key:
@@ -677,9 +680,7 @@ async def _register_services(hass: HA_HomeAssistant, entry: XAIConfigEntry) -> N
                 content = json.dumps(content)
 
             elapsed = time.time() - start_time
-            LOGGER.info(
-                f"[Context: {context_id}] Grok Code Fast: response_id={response_id}, elapsed={elapsed:.2f}s"
-            )
+            LOGGER.info("chat_end: service=code_fast duration=%.2fs", elapsed)
 
             # Update token usage sensors (only code_fast sensors)
             if usage:

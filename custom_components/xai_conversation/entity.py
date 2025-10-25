@@ -158,6 +158,10 @@ class XAIBaseLLMEntity(HA_Entity):
         import base64
 
         start_time = time.time()
+
+        LOGGER.info("chat_start: service=%s mode=stateless memory=no_memory",
+                   service_type)
+
         client = self._create_client()
 
         # Create chat without previous_response_id (stateless)
@@ -250,8 +254,8 @@ class XAIBaseLLMEntity(HA_Entity):
             chat_log.content.append(ha_conversation.AssistantContent(agent_id=self.entity_id, content=content_text))
 
             api_time = time.time() - start_time
-            LOGGER.info("AI Task stateless call: duration=%.2fs tokens=%d",
-                       api_time, usage.total_tokens if usage else 0)
+            LOGGER.info("chat_end: service=%s duration=%.2fs tokens=%d",
+                       service_type, api_time, usage.total_tokens if usage else 0)
 
         except Exception as err:
             handle_api_error(err, start_time, "AI Task API call")
@@ -493,16 +497,9 @@ class XAIBaseLLMEntity(HA_Entity):
         # Get store_messages setting
         store_messages = self._get_option("store_messages", True)
 
-        # Log the usage data received
-        LOGGER.debug("_update_token_sensors: service=%s mode=%s fallback=%s store=%s model=%s - completion=%s, prompt=%s, cached=%s",
-                    service_type, mode, is_fallback, store_messages, model,
-                    getattr(usage, "completion_tokens", None),
-                    getattr(usage, "prompt_tokens", None),
-                    getattr(usage, "cached_prompt_text_tokens", None))
-
         # Update all registered sensors (with lazy loading)
         sensors = self._get_token_sensors()
-        LOGGER.debug("_update_token_sensors: found %d sensors to update", len(sensors))
+        # LOGGER.debug("_update_token_sensors: found %d sensors to update", len(sensors))
 
         for sensor in sensors:
             try:
@@ -516,7 +513,7 @@ class XAIBaseLLMEntity(HA_Entity):
 
                 # Update sensor with full parameters
                 sensor.update_token_usage(usage, model, mode, is_fallback, store_messages)
-                LOGGER.debug("_update_token_sensors: updated sensor %s", getattr(sensor, "entity_id", "unknown"))
+                # LOGGER.debug("_update_token_sensors: updated sensor %s", getattr(sensor, "entity_id", "unknown"))
             except Exception as err:
                 LOGGER.error("Failed to update sensor %s: %s", getattr(sensor, "entity_id", "unknown"), err)
 
