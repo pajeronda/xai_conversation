@@ -32,6 +32,7 @@ from .const import (
     CONF_PROMPT,
     CONF_PROMPT_PIPELINE,
     CONF_REASONING_EFFORT,
+    CONF_SEND_USER_NAME,
     CONF_STORE_MESSAGES,
     CONF_TEMPERATURE,
     CONF_TOP_P,
@@ -397,6 +398,10 @@ class XAIOptionsFlow(ConfigSubentryFlow):
                 vol.Optional(
                     CONF_STORE_MESSAGES,
                     default=options.get(CONF_STORE_MESSAGES, RECOMMENDED_STORE_MESSAGES),
+                ): selector.BooleanSelector(),
+                vol.Optional(
+                    CONF_SEND_USER_NAME,
+                    default=options.get(CONF_SEND_USER_NAME, False),
                 ): selector.BooleanSelector(),
                 vol.Optional(
                     CONF_ASSISTANT_NAME,

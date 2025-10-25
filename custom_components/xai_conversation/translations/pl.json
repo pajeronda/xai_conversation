@@ -73,6 +73,7 @@
             "allow_smart_home_control": "Zezwól na kontrolę inteligentnego domu",
             "live_search": "Tryb wyszukiwania na żywo",
             "store_messages": "Przechowuj wiadomości",
+            "send_user_name": "Dołącz nazwę użytkownika w wiadomościach",
             "reasoning_effort": "Poziom rozumowania"
           },
           "data_description": {
@@ -86,6 +87,7 @@
             "pipeline_prompt": "Opcjonalny tekst dodany do domyślnego promptu potoku. Przydatne dla niestandardowych reguł lub lokalnych intencji.",
             "allow_smart_home_control": "Jeśli włączone, asystent może wykonywać polecenia inteligentnego domu. Jeśli wyłączone, odpowiada tylko w sposób konwersacyjny. Zmiana tego ustawienia rozpocznie nową konwersację.",
             "store_messages": "Użyj pamięci po stronie serwera xAI, aby zmniejszyć liczbę tokenów do wysłania w każdym żądaniu. Parametry pamięci (czas trwania, liczba tur) są konfigurowane na poziomie integracji.",
+            "send_user_name": "Dodaj nazwę użytkownika Home Assistant lub nazwę urządzenia Assist voice do czatu z Grok.",
             "live_search": "Włącz możliwości wyszukiwania w sieci: 'off' (wyłączone), 'auto' (model decyduje), 'on' (zawsze włączone). Dotyczy zarówno trybu potoku, jak i narzędzi.",
             "prompt": "Niestandardowe instrukcje dla agenta (tylko tryb narzędzi).",
             "reasoning_effort": "Poziom wysiłku rozumowania dla modeli, które to obsługują (niski, średni, wysoki, maksymalny). Dostępne tylko dla modeli grok-4 i grok-4-fast."

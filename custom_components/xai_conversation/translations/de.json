@@ -73,6 +73,7 @@
             "allow_smart_home_control": "Smart-Home-Steuerung erlauben",
             "live_search": "Live-Suchmodus",
             "store_messages": "Nachrichten speichern",
+            "send_user_name": "Benutzernamen in Nachrichten einbeziehen",
             "reasoning_effort": "Denkaufwand"
           },
           "data_description": {
@@ -86,6 +87,7 @@
             "pipeline_prompt": "Optionaler Text, der zum Standard-Pipeline-Prompt hinzugefügt wird. Nützlich für benutzerdefinierte Regeln oder lokale Intents.",
             "allow_smart_home_control": "Wenn aktiviert, kann der Assistent Smart-Home-Befehle ausführen. Wenn deaktiviert, antwortet er nur im Gesprächsmodus. Das Ändern dieser Einstellung startet eine neue Konversation.",
             "store_messages": "Verwenden Sie den serverseitigen Speicher von xAI, um die zu sendenden Tokens pro Anfrage zu reduzieren. Die Speicherparameter (Dauer, Anzahl der Runden) werden auf Integrationsebene konfiguriert.",
+            "send_user_name": "Fügen Sie den Home Assistant-Benutzernamen oder Assist Voice-Gerätenamen zum Chat mit Grok hinzu.",
             "live_search": "Web-Suchfunktionen aktivieren: 'off' (deaktiviert), 'auto' (Modell entscheidet), 'on' (immer aktiviert). Gilt sowohl für Pipeline- als auch für Tools-Modus.",
             "prompt": "Benutzerdefinierte Anweisungen für den Agenten (nur Tools-Modus).",
             "reasoning_effort": "Denkaufwand für Modelle, die dies unterstützen (niedrig, mittel, hoch, maximal). Nur verfügbar für grok-4 und grok-4-fast Modelle."

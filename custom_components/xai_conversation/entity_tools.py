@@ -19,6 +19,7 @@ from .__init__ import (
 # Local imports
 from .const import (
     CONF_ALLOW_SMART_HOME_CONTROL,
+    CONF_SEND_USER_NAME,
     CONF_STORE_MESSAGES,
     DOMAIN,
     LOGGER,
@@ -30,6 +31,7 @@ from .helpers import (
     extract_device_id,
     format_tools_for_xai,
     get_last_user_message,
+    get_user_or_device_name,
     PromptManager,
 )
 from .exceptions import (
@@ -280,13 +282,28 @@ class XAIToolsProcessor:
 
             history_messages = all_messages[-limit:] if len(all_messages) > limit else all_messages
 
+            # Check if user wants to include user/device name (same as in call_xai_api_with_tools)
+            send_user_name = self._entity._get_option(CONF_SEND_USER_NAME, False)
+            user_prefix = ""
+
+            if send_user_name:
+                name, source_type = await get_user_or_device_name(user_input, self._entity.hass)
+                if name and source_type == "user":
+                    user_prefix = f"[User: {name}] "
+                elif name and source_type == "device":
+                    user_prefix = f"[Device: {name}] "
+                # If no name available, user_prefix stays empty
+
             for msg in history_messages:
                 if msg["role"] == "user":
-                    chat.append(xai_user(msg["content"]))
+                    # Add user prefix to user messages in history when enabled
+                    prefixed_content = f"{user_prefix}{msg['content']}" if user_prefix else msg["content"]
+                    chat.append(xai_user(prefixed_content))
                 elif msg["role"] == "assistant":
                     chat.append(xai_assistant(msg["content"]))
 
-            LOGGER.debug("_get_final_answer: added %d history messages", len(history_messages))
+            LOGGER.debug("_get_final_answer: added %d history messages (user/device=%s)",
+                        len(history_messages), name if send_user_name and 'name' in locals() else "N/A")
         else:
             LOGGER.debug("_get_final_answer: store_messages=True, using previous_response_id=%s",
                         response_id[:8] if response_id else None)
@@ -457,15 +474,46 @@ class XAIToolsProcessor:
                 # The server reconstructs the full history using previous_response_id
                 last_user_message = get_last_user_message(chat_log)
                 if last_user_message:
+                    # Check if user wants to include user/device name
+                    send_user_name = self._entity._get_option(CONF_SEND_USER_NAME, False)
+
+                    # Build message prefix based on configuration
                     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    user_message_with_time = f"({timestamp}) {last_user_message}"
+                    if send_user_name:
+                        name, source_type = await get_user_or_device_name(user_input, self._entity.hass)
+                        if name and source_type == "user":
+                            prefix = f"[User: {name}] [Time: {timestamp}] "
+                        elif name and source_type == "device":
+                            prefix = f"[Device: {name}] [Time: {timestamp}] "
+                        else:
+                            # No name available, just timestamp
+                            prefix = f"[Time: {timestamp}] "
+                        user_message_with_time = f"{prefix}{last_user_message}"
+                        LOGGER.debug("Tools mode: sending last message (user/device=%s): %s",
+                                    name or "unknown", last_user_message[:100])
+                    else:
+                        # Default behavior: only timestamp
+                        user_message_with_time = f"({timestamp}) {last_user_message}"
+                        LOGGER.debug("Tools mode: sending last message only (server-side memory): %s",
+                                   last_user_message[:100])
+
                     chat.append(xai_user(user_message_with_time))
-                LOGGER.debug("Tools mode: sending last message only (server-side memory): %s",
-                           last_user_message[:100] if last_user_message else "None")
             else:
                 # NO server-side memory: send the last N turns manually
                 # This ensures Grok has conversation context for continuity
                 limit = RECOMMENDED_HISTORY_LIMIT_TURNS * 2  # turns = pairs of (user + assistant)
+
+                # Check if user wants to include user/device name
+                send_user_name = self._entity._get_option(CONF_SEND_USER_NAME, False)
+                user_prefix = ""
+
+                if send_user_name:
+                    name, source_type = await get_user_or_device_name(user_input, self._entity.hass)
+                    if name and source_type == "user":
+                        user_prefix = f"[User: {name}] "
+                    elif name and source_type == "device":
+                        user_prefix = f"[Device: {name}] "
+                    # If no name available, user_prefix stays empty (no prefix added)
 
                 # Convert ChatLog.content to list of messages
                 all_messages = []
@@ -488,7 +536,9 @@ class XAIToolsProcessor:
 
                 for msg in history_messages:
                     if msg["role"] == "user":
-                        chat.append(xai_user(msg["content"]))
+                        # Add user prefix only to user messages when enabled
+                        prefixed_content = f"{user_prefix}{msg['content']}" if user_prefix else msg["content"]
+                        chat.append(xai_user(prefixed_content))
                     elif msg["role"] == "assistant":
                         chat.append(xai_assistant(msg["content"]))
 

@@ -31,6 +31,7 @@ from .conversation import (
     get_last_user_message,
     extract_user_id,
     extract_device_id,
+    get_user_or_device_name,
     is_device_request,
     prompt_hash,
 )
@@ -64,6 +65,7 @@ __all__ = [
     "get_last_user_message",
     "extract_user_id",
     "extract_device_id",
+    "get_user_or_device_name",
     "is_device_request",
     "prompt_hash",
     # Classes

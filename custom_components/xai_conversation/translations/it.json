@@ -73,6 +73,7 @@
             "allow_smart_home_control": "Consenti controllo della smart home",
             "live_search": "Modalità ricerca live",
             "store_messages": "Memorizza messaggi",
+            "send_user_name": "Includi nome utente nei messaggi",
             "reasoning_effort": "Livello di ragionamento"
           },
           "data_description": {
@@ -86,6 +87,7 @@
             "pipeline_prompt": "Testo opzionale aggiunto al prompt di pipeline predefinito. Utile per regole personalizzate o intent locali.",
             "allow_smart_home_control": "Se abilitato, l'assistente può eseguire comandi di smart home. Se disabilitato, risponde solo in modo conversazionale. La modifica di questa impostazione avvierà una nuova conversazione.",
             "store_messages": "Usa la memoria lato server di xAI che ti permetterà di ridurre i token da inviare per ogni richiesta. I parametri della memoria (durata, numero di turni) sono configurati a livello di integrazione.",
+            "send_user_name": "Aggiungi il nome utente di Home Assistant o il nome del dispositivo Assist voice nella chat con Grok.",
             "live_search": "Abilita capacità di ricerca web: 'off' (disabilitato), 'auto' (il modello decide), 'on' (sempre abilitato). Si applica sia alla modalità pipeline che tools.",
             "prompt": "Istruzioni personalizzate per l'agente (solo modalità tools).",
             "reasoning_effort": "Livello di impegno nel ragionamento per i modelli che lo supportano (basso, medio, alto, massimo). Disponibile solo per i modelli grok-4 e grok-4-fast."

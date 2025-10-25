@@ -73,6 +73,7 @@
             "allow_smart_home_control": "Allow smart home control",
             "live_search": "Live Search Mode",
             "store_messages": "Store messages",
+            "send_user_name": "Include user name in messages",
             "reasoning_effort": "Reasoning effort"
           },
           "data_description": {
@@ -86,6 +87,7 @@
             "pipeline_prompt": "Optional text appended to the default pipeline prompt. Use it for custom intents or local rules.",
             "allow_smart_home_control": "When enabled, your assistant can execute smart home commands. When disabled, your assistant responds conversationally without controlling devices. Changing this setting will start a new conversation.",
             "store_messages": "Use xAI's server-side memory, which allows you to reduce the number of tokens sent with each request. Memory parameters (TTL, max turns) are configured at integration level.",
+            "send_user_name": "Add the Home Assistant user name or Assist voice device name to the chat with Grok.",
             "live_search": "Enable web search capabilities: 'off' (disabled), 'auto' (model decides), 'on' (always enabled). Applies to both pipeline and tools modes.",
             "prompt": "Custom instructions for the agent (tools mode only).",
             "reasoning_effort": "Level of reasoning effort for models that support it (low, medium, high, max). Only available for grok-4 and grok-4-fast models."

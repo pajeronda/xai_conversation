@@ -73,6 +73,7 @@
             "allow_smart_home_control": "允许智能家居控制",
             "live_search": "实时搜索模式",
             "store_messages": "存储消息",
+            "send_user_name": "在消息中包含用户名",
             "reasoning_effort": "推理级别"
           },
           "data_description": {
@@ -86,6 +87,7 @@
             "pipeline_prompt": "添加到默认管道提示词的可选文本。对自定义规则或本地意图有用。",
             "allow_smart_home_control": "如果启用，助手可以执行智能家居命令。如果禁用，仅以对话方式响应。更改此设置将开始新对话。",
             "store_messages": "使用 xAI 的服务器端内存，以减少每个请求需要发送的令牌。内存参数（持续时间、轮次数）在集成级别配置。",
+            "send_user_name": "将 Home Assistant 用户名或 Assist 语音设备名称添加到与 Grok 的聊天中。",
             "live_search": "启用网络搜索功能：'off'（禁用）、'auto'（模型决定）、'on'（始终启用）。适用于管道和工具模式。",
             "prompt": "代理的自定义指令（仅工具模式）。",
             "reasoning_effort": "支持此功能的模型的推理级别（低、中、高、最大）。仅适用于 grok-4 和 grok-4-fast 模型。"

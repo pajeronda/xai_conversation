@@ -15,11 +15,13 @@ from .__init__ import ha_conversation, xai_system, xai_user
 
 # Local application imports
 from .const import (
+    CONF_SEND_USER_NAME,
     LOGGER
 )
 from .helpers import (
     extract_device_id,
     get_last_user_message,
+    get_user_or_device_name,
     parse_ha_local_payload,
     PromptManager,
 )
@@ -117,8 +119,25 @@ class IntelligentPipeline:
         last_user_message = get_last_user_message(chat_log)
         if not last_user_message:
             return
+
+        # Check if user wants to include user/device name
+        send_user_name = self.entity._get_option(CONF_SEND_USER_NAME, False)
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        user_message_with_time = f"({timestamp}) {last_user_message}"
+
+        if send_user_name:
+            name, source_type = await get_user_or_device_name(self.user_input, self.hass)
+            if name and source_type == "user":
+                prefix = f"[User: {name}] [Time: {timestamp}] "
+            elif name and source_type == "device":
+                prefix = f"[Device: {name}] [Time: {timestamp}] "
+            else:
+                # No name available, just timestamp
+                prefix = f"[Time: {timestamp}] "
+            user_message_with_time = f"{prefix}{last_user_message}"
+        else:
+            # Default behavior: only timestamp
+            user_message_with_time = f"({timestamp}) {last_user_message}"
+
         chat.append(xai_user(user_message_with_time))
         
         # Use native xAI SDK streaming with early detection

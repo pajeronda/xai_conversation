@@ -27,6 +27,7 @@ CONF_TEMPERATURE = "temperature"
 CONF_TOP_P = "top_p"
 CONF_LIVE_SEARCH = "live_search"
 CONF_STORE_MESSAGES = "store_messages"
+CONF_SEND_USER_NAME = "send_user_name"
 CONF_TIMEOUT = "timeout"
 CONF_PROMPT = "prompt" # User instructions for tools/non-pipeline mode
 CONF_API_HOST = "api_host"
