@@ -15,6 +15,8 @@
 ### ⚙️ xAI Python SDK: 
 - This component uses [xAI Python SDK](https://github.com/xai-org/xai-sdk-python)
 
+- 🗣️ 🧠 Grok functions as an advanced ASR/NLU system.
+
 ### 💬 Intelligent Conversation Agent
 - **Two Operating Modes**:
   - **Intelligent Pipeline**: Grok delegates device commands using Home Assistant's **conversation/process** service
