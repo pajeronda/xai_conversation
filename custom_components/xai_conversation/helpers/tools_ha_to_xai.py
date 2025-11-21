@@ -113,61 +113,83 @@ _TIMER_PROPS = {
     "area": {"type": "string", "description": "Area name"},
 }
 
+_TIMER_CONTROL_PROPS = {
+    "name": {"type": "string", "description": "Timer name"},
+    "area": {"type": "string", "description": "Area name"},
+}
+
+_CALENDAR_PROPS = {
+    "start_date": {"type": "string", "format": "date", "description": "Start date (YYYY-MM-DD)"},
+    "end_date": {"type": "string", "format": "date", "description": "End date (YYYY-MM-DD)"},
+}
+
+_TODO_PROPS = {
+    "status": {"type": "string", "enum": ["needs_action", "completed"], "description": "To-do item status filter"},
+}
+
+
+# Tool schema map - defined at module level to avoid reconstruction on every call
+# Maps tool names to their schema generation logic for efficient direct lookups
+_TOOL_SCHEMA_MAP = {
+    # Tools with no additional properties (use common schema)
+    "HassTurnOn": _build_common_schema,
+    "HassTurnOff": _build_common_schema,
+    "HassVolumeUp": _build_common_schema,
+    "HassVolumeDown": _build_common_schema,
+    "HassOpenCover": _build_common_schema,
+    "HassCloseCover": _build_common_schema,
+    "HassClimateGetTemperature": _build_common_schema,
+    "HassVacuumStart": _build_common_schema,
+    "HassVacuumReturnToBase": _build_common_schema,
+    "HassVacuumPause": _build_common_schema,
+    "HassVacuumStop": _build_common_schema,
+    "TriggerAssistAI": _build_common_schema,
+    "TriggerAssistMessage": _build_common_schema,
+    "HassGetCurrentDate": lambda: {"type": "object", "properties": {}, "required": []},
+    "HassGetCurrentTime": lambda: {"type": "object", "properties": {}, "required": []},
+    "HassNevermind": lambda: {"type": "object", "properties": {}, "required": []},
+
+    # Tools with additional properties
+    "HassLightSet": lambda: _build_common_schema(_LIGHT_PROPS),
+    "HassSetVolume": lambda: _build_common_schema(_VOLUME_PROPS),
+    "HassGetState": lambda: _build_common_schema({"state": {"type": "string", "description": "State to check"}}),
+    "HassSetPosition": lambda: _build_common_schema({"position": {"type": "integer", "minimum": 0, "maximum": 100, "description": "Position percentage"}}),
+
+    # Tools with additional properties and required fields
+    "HassClimateSetTemperature": lambda: _build_common_schema({"temperature": {"type": "number", "description": "Target temperature"}}, ["temperature"]),
+    "HassSetVolumeRelative": lambda: _build_common_schema({"volume_step": {"type": "string", "enum": ["up", "down"], "description": "Volume direction or integer step"}}, ["volume_step"]),
+
+    # Tools with fully custom schemas
+    "HassStartTimer": lambda: {"type": "object", "properties": _TIMER_PROPS, "required": []},
+    "HassCancelTimer": lambda: {"type": "object", "properties": _TIMER_CONTROL_PROPS, "required": []},
+    "HassCancelAllTimers": lambda: {"type": "object", "properties": {"area": {"type": "string", "description": "Area name to cancel timers in"}}, "required": []},
+    "HassIncreaseTimer": lambda: {"type": "object", "properties": _TIMER_CONTROL_PROPS, "required": []},
+    "HassDecreaseTimer": lambda: {"type": "object", "properties": _TIMER_CONTROL_PROPS, "required": []},
+    "HassPauseTimer": lambda: {"type": "object", "properties": _TIMER_CONTROL_PROPS, "required": []},
+    "HassUnpauseTimer": lambda: {"type": "object", "properties": _TIMER_CONTROL_PROPS, "required": []},
+    "HassTimerStatus": lambda: {"type": "object", "properties": _TIMER_CONTROL_PROPS, "required": []},
+    "HassShoppingListAddItem": lambda: {"type": "object", "properties": {"item": {"type": "string", "description": "Item to add to list"}, "name": {"type": "string", "description": "List name (optional)"}}, "required": ["item"]},
+    "HassListAddItem": lambda: {"type": "object", "properties": {"item": {"type": "string", "description": "Item to add to list"}, "name": {"type": "string", "description": "List name (optional)"}}, "required": ["item"]},
+    "HassListCompleteItem": lambda: {"type": "object", "properties": {"item": {"type": "string", "description": "Item to complete"}, "name": {"type": "string", "description": "List name"}}, "required": ["item"]},
+    "HassBroadcast": lambda: {"type": "object", "properties": {"message": {"type": "string", "description": "Message to broadcast"}}, "required": ["message"]},
+    "HassRespond": lambda: {"type": "object", "properties": {"response": {"type": "string", "description": "Response message"}}, "required": ["response"]},
+    "HassGetWeather": lambda: {"type": "object", "properties": {"name": {"type": "string", "description": "Location name"}}, "required": []},
+    "CalendarGetEvents": lambda: _build_common_schema(_CALENDAR_PROPS),
+    "TodoGetItems": lambda: _build_common_schema(_TODO_PROPS),
+}
+
 
 def _get_fallback_tool_schema(tool_name: str) -> dict | None:
     """Provide fallback JSON schema for known HA tools using a structured map.
     Supports all standard HA intent slots: name, area, floor, domain, device_class.
     """
-
-    # A map of tool names to their schema generation logic.
-    # Using a dictionary for direct lookups is more efficient than iterating.
-    tool_schema_map = {
-        # Tools with no additional properties (use common schema)
-        "HassTurnOn": _build_common_schema,
-        "HassTurnOff": _build_common_schema,
-        "HassVolumeUp": _build_common_schema,
-        "HassVolumeDown": _build_common_schema,
-        "HassOpenCover": _build_common_schema,
-        "HassCloseCover": _build_common_schema,
-        "HassClimateGetTemperature": _build_common_schema,
-        "HassVacuumStart": _build_common_schema,
-        "HassVacuumReturnToBase": _build_common_schema,
-        "HassVacuumPause": _build_common_schema,
-        "HassVacuumStop": _build_common_schema,
-        "TriggerAssistAI": _build_common_schema,
-        "TriggerAssistMessage": _build_common_schema,
-        "HassGetCurrentDate": lambda: {"type": "object", "properties": {}, "required": []},
-        "HassGetCurrentTime": lambda: {"type": "object", "properties": {}, "required": []},
-        "HassNevermind": lambda: {"type": "object", "properties": {}, "required": []},
-
-        # Tools with additional properties
-        "HassLightSet": lambda: _build_common_schema(_LIGHT_PROPS),
-        "HassSetVolume": lambda: _build_common_schema(_VOLUME_PROPS),
-        "HassGetState": lambda: _build_common_schema({"state": {"type": "string", "description": "State to check"}}),
-        "HassSetPosition": lambda: _build_common_schema({"position": {"type": "integer", "minimum": 0, "maximum": 100, "description": "Position percentage"}}),
-
-        # Tools with additional properties and required fields
-        "HassClimateSetTemperature": lambda: _build_common_schema({"temperature": {"type": "number", "description": "Target temperature"}}, ["temperature"]),
-        "HassSetVolumeRelative": lambda: _build_common_schema({"volume_step": {"type": "string", "enum": ["up", "down"], "description": "Volume direction or integer step"}}, ["volume_step"]),
-
-        # Tools with fully custom schemas
-        "HassStartTimer": lambda: {"type": "object", "properties": _TIMER_PROPS, "required": []},
-        "HassCancelAllTimers": lambda: {"type": "object", "properties": {"area": {"type": "string", "description": "Area name to cancel timers in"}}, "required": []},
-        "HassShoppingListAddItem": lambda: {"type": "object", "properties": {"item": {"type": "string", "description": "Item to add to list"}, "name": {"type": "string", "description": "List name (optional)"}}, "required": ["item"]},
-        "HassListAddItem": lambda: {"type": "object", "properties": {"item": {"type": "string", "description": "Item to add to list"}, "name": {"type": "string", "description": "List name (optional)"}}, "required": ["item"]},
-        "HassListCompleteItem": lambda: {"type": "object", "properties": {"item": {"type": "string", "description": "Item to complete"}, "name": {"type": "string", "description": "List name"}}, "required": ["item"]},
-        "HassBroadcast": lambda: {"type": "object", "properties": {"message": {"type": "string", "description": "Message to broadcast"}}, "required": ["message"]},
-        "HassRespond": lambda: {"type": "object", "properties": {"response": {"type": "string", "description": "Response message"}}, "required": ["response"]},
-        "HassGetWeather": lambda: {"type": "object", "properties": {"name": {"type": "string", "description": "Location name"}}, "required": []},
-    }
-
     # Handle media tools, which share properties but have different required fields
     if tool_name in ("HassMediaSearchAndPlay", "HassMediaPause", "HassMediaUnpause", "HassMediaNext", "HassMediaPrevious"):
         required = ["search_query"] if tool_name == "HassMediaSearchAndPlay" else []
         return _build_common_schema(_MEDIA_PROPS, required)
 
-    # Look up the tool in the map
-    schema_func = tool_schema_map.get(tool_name)
+    # Look up the tool in the module-level map
+    schema_func = _TOOL_SCHEMA_MAP.get(tool_name)
     if schema_func:
         return schema_func()
 

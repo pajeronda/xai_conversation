@@ -108,46 +108,11 @@
         "init": {
           "title": "xAI 令牌传感器",
           "data": {
-            "name": "名称",
-            "grok_4_input_price": "grok-4 输入价格每 100 万令牌（美元）",
-            "grok_4_cached_input_price": "grok-4 缓存输入价格每 100 万令牌（美元）",
-            "grok_4_output_price": "grok-4 输出价格每 100 万令牌（美元）",
-            "grok_4_fast_input_price": "grok-4-fast 输入价格每 100 万令牌（美元）",
-            "grok_4_fast_cached_input_price": "grok-4-fast 缓存输入价格每 100 万令牌（美元）",
-            "grok_4_fast_output_price": "grok-4-fast 输出价格每 100 万令牌（美元）",
-            "grok_4_fast_non_reasoning_input_price": "grok-4-fast-non-reasoning 输入价格每 100 万令牌（美元）",
-            "grok_4_fast_non_reasoning_cached_input_price": "grok-4-fast-non-reasoning 缓存输入价格每 100 万令牌（美元）",
-            "grok_4_fast_non_reasoning_output_price": "grok-4-fast-non-reasoning 输出价格每 100 万令牌（美元）",
-            "grok_3_input_price": "grok-3 输入价格每 100 万令牌（美元）",
-            "grok_3_cached_input_price": "grok-3 缓存输入价格每 100 万令牌（美元）",
-            "grok_3_output_price": "grok-3 输出价格每 100 万令牌（美元）",
-            "grok_3_mini_input_price": "grok-3-mini 输入价格每 100 万令牌（美元）",
-            "grok_3_mini_cached_input_price": "grok-3-mini 缓存输入价格每 100 万令牌（美元）",
-            "grok_3_mini_output_price": "grok-3-mini 输出价格每 100 万令牌（美元）",
-            "grok_code_fast_1_input_price": "grok-code-fast-1 输入价格每 100 万令牌（美元）",
-            "grok_code_fast_1_cached_input_price": "grok-code-fast-1 缓存输入价格每 100 万令牌（美元）",
-            "grok_code_fast_1_output_price": "grok-code-fast-1 输出价格每 100 万令牌（美元）"
+            "name": "名称"
           },
           "data_description": {
             "name": "令牌传感器的描述性名称。",
-            "grok_4_input_price": "grok-4 每 100 万输入令牌的成本。保留默认值以使用官方价格。",
-            "grok_4_cached_input_price": "grok-4 每 100 万缓存输入令牌的成本。保留默认值以使用官方价格。",
-            "grok_4_output_price": "grok-4 每 100 万输出令牌的成本。保留默认值以使用官方价格。",
-            "grok_4_fast_input_price": "grok-4-fast 每 100 万输入令牌的成本。保留默认值以使用官方价格。",
-            "grok_4_fast_cached_input_price": "grok-4-fast 每 100 万缓存输入令牌的成本。保留默认值以使用官方价格。",
-            "grok_4_fast_output_price": "grok-4-fast 每 100 万输出令牌的成本。保留默认值以使用官方价格。",
-            "grok_4_fast_non_reasoning_input_price": "grok-4-fast-non-reasoning 每 100 万输入令牌的成本。保留默认值以使用官方价格。",
-            "grok_4_fast_non_reasoning_cached_input_price": "grok-4-fast-non-reasoning 每 100 万缓存输入令牌的成本。保留默认值以使用官方价格。",
-            "grok_4_fast_non_reasoning_output_price": "grok-4-fast-non-reasoning 每 100 万输出令牌的成本。保留默认值以使用官方价格。",
-            "grok_3_input_price": "grok-3 每 100 万输入令牌的成本。保留默认值以使用官方价格。",
-            "grok_3_cached_input_price": "grok-3 每 100 万缓存输入令牌的成本。保留默认值以使用官方价格。",
-            "grok_3_output_price": "grok-3 每 100 万输出令牌的成本。保留默认值以使用官方价格。",
-            "grok_3_mini_input_price": "grok-3-mini 每 100 万输入令牌的成本。保留默认值以使用官方价格。",
-            "grok_3_mini_cached_input_price": "grok-3-mini 每 100 万缓存输入令牌的成本。保留默认值以使用官方价格。",
-            "grok_3_mini_output_price": "grok-3-mini 每 100 万输出令牌的成本。保留默认值以使用官方价格。",
-            "grok_code_fast_1_input_price": "grok-code-fast-1 每 100 万输入令牌的成本。保留默认值以使用官方价格。",
-            "grok_code_fast_1_cached_input_price": "grok-code-fast-1 每 100 万缓存输入令牌的成本。保留默认值以使用官方价格。",
-            "grok_code_fast_1_output_price": "grok-code-fast-1 每 100 万输出令牌的成本。保留默认值以使用官方价格。"
+            "model_pricing_override": "这些字段允许您覆盖每个模型动态获取的官方令牌价格（输入、缓存输入、输出）。保留默认值以使用官方价格。"
           }
         }
       },
@@ -167,8 +132,11 @@
           "data": {
             "name": "名称",
             "prompt": "提示词",
+            "vision_prompt": "视觉提示词",
             "api_host": "API 主机（'api.x.ai'、'us-east-1.api.x.ai' 或 'eu-west-1.api.x.ai'）",
             "chat_model": "模型",
+            "image_model": "图像模型",
+            "vision_model": "照片分析模型",
             "max_tokens": "最大令牌数",
             "temperature": "温度",
             "top_p": "Top P"
@@ -176,8 +144,11 @@
           "data_description": {
             "name": "此 AI 任务的描述性名称。",
             "prompt": "AI 任务的完整系统提示词。替换默认值。请谨慎编辑，因为它定义了模型的行为（例如 JSON 输出格式）。",
+            "vision_prompt": "照片分析的系统提示词。定义视觉模型应如何分析图像（例如简洁、详细、事实）。",
             "api_host": "API 端点主机名。使用 'api.x.ai' 进行全局路由并自动重定向到区域主机，或直接指定区域主机。",
             "chat_model": "选择要使用的 Grok 模型。",
+            "image_model": "专门用于图像生成的模型。",
+            "vision_model": "专门用于照片分析的模型（文档、图表、图形、截图、照片）。",
             "max_tokens": "要生成的最大令牌数。",
             "temperature": "控制响应的随机性（0.0 = 确定性，2.0 = 非常有创意）。",
             "top_p": "通过核采样控制响应的多样性（grok-4 不支持）。"

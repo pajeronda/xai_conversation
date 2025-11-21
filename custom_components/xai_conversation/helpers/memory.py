@@ -1,6 +1,7 @@
 """Conversation memory management for xAI conversation."""
 from __future__ import annotations
 
+import hashlib
 import time
 
 from ..const import (
@@ -22,6 +23,18 @@ class ConversationMemory:
     This class provides persistent storage for conversation response IDs,
     with automatic cleanup of expired responses based on TTL and max_turns limits.
     """
+
+    @staticmethod
+    def _prompt_hash(prompt: str) -> str:
+        """Generate a short SHA256 hash of the prompt.
+
+        Args:
+            prompt: String to hash
+
+        Returns:
+            First 8 characters of SHA256 hash
+        """
+        return hashlib.sha256(prompt.encode()).hexdigest()[:8]
 
     def __init__(self, hass, storage_path: str, entry):
         """Initialize conversation memory.
@@ -56,14 +69,15 @@ class ConversationMemory:
             self._memory = {}
             self._loaded = True
 
-    async def save_response_id(self, user_id: str, mode: str, response_id: str, suffix: str = ""):
-        """Save response ID for user and mode.
+    async def save_response_id(self, user_id: str, mode: str, response_id: str, suffix: str = "", store_messages: bool = None):
+        """Save response ID for user and mode with metadata.
 
         Args:
             user_id: User ID (UUID from Home Assistant)
             mode: Conversation mode (e.g., "code", "pipeline", "tools")
             response_id: Response ID from xAI API
             suffix: Optional suffix for the key (e.g., ":an:hash" for conversation)
+            store_messages: Whether this response was created with server-side memory (True) or client-side (False)
         """
         await self._ensure_loaded()
 
@@ -74,11 +88,17 @@ class ConversationMemory:
         if conv_key not in self._memory:
             self._memory[conv_key] = {"responses": []}
 
-        # Add new response with timestamp
-        self._memory[conv_key]["responses"].append({
+        # Add new response with timestamp and store_messages metadata
+        response_entry = {
             "id": response_id,
             "timestamp": time.time()
-        })
+        }
+
+        # Add store_messages only if provided (for backward compatibility)
+        if store_messages is not None:
+            response_entry["store_messages"] = store_messages
+
+        self._memory[conv_key]["responses"].append(response_entry)
 
         # Save to disk
         try:
@@ -187,6 +207,57 @@ class ConversationMemory:
 
         return responses[-1]["id"] if responses else None
 
+    async def validate_response_id(
+        self,
+        user_id: str,
+        mode: str,
+        response_id: str,
+        current_store_messages: bool,
+        suffix: str = ""
+    ) -> bool:
+        """Validate if response_id is compatible with current store_messages mode.
+
+        This prevents using a response_id created in one mode (server/client)
+        with a different mode, which would cause xAI API errors.
+
+        Args:
+            user_id: User ID (UUID from Home Assistant)
+            mode: Conversation mode (e.g., "code", "pipeline", "tools")
+            response_id: Response ID to validate
+            current_store_messages: Current store_messages configuration (True=server-side, False=client-side)
+            suffix: Optional suffix for the key
+
+        Returns:
+            True if response_id is compatible with current mode, False otherwise
+        """
+        await self._ensure_loaded()
+
+        conv_key = f"user:{user_id}:mode:{mode}{suffix}"
+        memory_entry = self._memory.get(conv_key)
+        if not memory_entry:
+            return False  # No memory entry, response_id is invalid
+
+        responses = memory_entry.get("responses", [])
+        if not responses:
+            return False  # No responses, response_id is invalid
+
+        # Find the response in history (search from end for efficiency)
+        for r in reversed(responses):
+            if r.get("id") == response_id:
+                # Found the response, check store_messages compatibility
+                stored_mode = r.get("store_messages")
+
+                if stored_mode is None:
+                    # Old format (before this fix) - assume server-side (True)
+                    # This provides backward compatibility with existing response_ids
+                    return current_store_messages == True
+
+                # Check if modes match
+                return stored_mode == current_store_messages
+
+        # response_id not found in memory
+        return False
+
     async def save_response_id_by_key(self, conv_key: str, response_id: str):
         """Save response ID using full conversation key.
 
@@ -209,7 +280,7 @@ class ConversationMemory:
 
         await self._store.async_save(self._memory)
 
-    async def clear_memory(self, user_id: str, mode: str):
+    async def clear_memory(self, user_id: str, mode: str) -> list[str]:
         """Clear memory for specific user and mode (all keys matching prefix).
 
         This will delete all keys starting with user:{user_id}:mode:{mode}
@@ -218,6 +289,9 @@ class ConversationMemory:
         Args:
             user_id: User ID (UUID from Home Assistant)
             mode: Conversation mode (e.g., "code", "pipeline", "tools")
+
+        Returns:
+            List of response_ids that were deleted (for remote cleanup)
         """
         await self._ensure_loaded()
 
@@ -227,6 +301,15 @@ class ConversationMemory:
         # Find all keys matching the prefix
         keys_to_delete = [k for k in self._memory.keys() if k.startswith(key_prefix)]
 
+        # Collect response IDs for remote deletion
+        response_ids = []
+        for key in keys_to_delete:
+            memory_entry = self._memory.get(key, {})
+            for response in memory_entry.get("responses", []):
+                if response.get("id"):
+                    response_ids.append(response["id"])
+
+        # Delete local entries
         if keys_to_delete:
             for key in keys_to_delete:
                 del self._memory[key]
@@ -236,6 +319,8 @@ class ConversationMemory:
                 await self._store.async_save(self._memory)
             except Exception as err:
                 LOGGER.error(f"Failed to save conversation memory after clear: {err}")
+
+        return response_ids
 
     async def clear_memory_by_scope(self, scope: str, target_id: str) -> list[str]:
         """Clear memory for specific scope and target_id (all modes).
@@ -305,6 +390,123 @@ class ConversationMemory:
             LOGGER.error(f"Failed to save conversation memory after clear: {err}")
 
         return response_ids
+
+    def get_memory_key(
+        self,
+        user_input,
+        mode: str,
+        subentry_data: dict,
+        memory_scope: str = "user",
+        base_prompt: str | None = None
+    ) -> str:
+        """Calculate consistent memory key for conversation chaining.
+
+        The key is built using:
+        - Base: "user:{user_id}" or "device:{device_id}"
+        - Mode: ":mode:{mode}"
+        - Chat-only flag: ":chatonly" if home control is disabled
+        - Base prompt hash: ":ph:{hash}" - hash of the complete base system prompt
+
+        CRITICAL: Including chat-only flag ensures that switching between
+        "home control enabled" and "home control disabled" starts a NEW
+        conversation chain, preventing contradictory instructions in the
+        same xAI server-side memory.
+
+        CRITICAL: Including base prompt hash ensures that ANY change to the
+        system prompt (assistant name, custom instructions, mode settings)
+        starts a NEW conversation, since the system prompt cannot be modified
+        in existing conversations with previous_response_id.
+
+        Args:
+            user_input: ConversationInput object
+            mode: "pipeline" or "tools"
+            subentry_data: Configuration dictionary from subentry.data
+            memory_scope: "user" or "device" (default: "user")
+            base_prompt: Optional pre-built base prompt to hash. If None, will be built.
+
+        Returns:
+            Memory key string in format: user:id:mode:{mode}[:chatonly]:ph:{hash}
+        """
+        from .conversation import extract_device_id, extract_user_id
+        from ..const import CONF_ALLOW_SMART_HOME_CONTROL
+        from .prompt_manager import PromptManager
+
+        # Build base key
+        if memory_scope == "user":
+            identifier = extract_user_id(user_input) or "unknown"
+            base = f"user:{identifier}"
+        else:  # device
+            identifier = extract_device_id(user_input) or "unknown"
+            base = f"device:{identifier}"
+
+        # Add mode
+        key = f"{base}:mode:{mode}"
+
+        # CRITICAL: Add chat-only flag to force new conversation when toggling home control
+        allow_control = subentry_data.get(CONF_ALLOW_SMART_HOME_CONTROL, True)
+        if not allow_control:
+            key = f"{key}:chatonly"
+
+        # Build or use provided base prompt for hashing
+        if base_prompt is None:
+            prompt_mgr = PromptManager(subentry_data, mode)
+            # For tools mode, we build without static_context/tool_definitions
+            # since those are dynamic and shouldn't affect memory key
+            base_prompt = prompt_mgr.build_base_prompt_with_user_instructions()
+
+        # Always add hash of complete base prompt
+        ph = self._prompt_hash(base_prompt)
+        key = f"{key}:ph:{ph}"
+
+        return key
+
+    async def get_conv_key_and_prev_id(
+        self,
+        user_input,
+        mode: str,
+        subentry_data: dict
+    ) -> tuple[str, str | None]:
+        """Get conversation key and previous response ID.
+
+        Args:
+            user_input: ConversationInput object
+            mode: "pipeline" or "tools"
+            subentry_data: Configuration dictionary from subentry.data
+
+        Returns:
+            A tuple containing (conversation_key, previous_response_id or None)
+        """
+        from .conversation import extract_user_id
+        from ..const import CONF_STORE_MESSAGES
+
+        # Check if server-side memory is enabled
+        store_messages = subentry_data.get(CONF_STORE_MESSAGES, True)
+
+        if not store_messages:
+            # Client-side mode: no need to calculate key or retrieve previous_response_id
+            LOGGER.debug(
+                "ConversationMemory.get_conv_key_and_prev_id: store_messages=False, skipping key calculation"
+            )
+            return "", None
+
+        # Memory scope logic (applies to both pipeline and tools modes):
+        # - If user_id is available: use "user" scope to share conversation across all user's devices
+        # - If no user_id (e.g., voice satellites without user context): use "device" scope for device-specific memory
+        user_id = extract_user_id(user_input)
+        if user_id:
+            memory_scope = "user"
+        else:
+            # Fallback to device scope for voice satellites or other devices without user context
+            memory_scope = "device"
+
+        conv_key = self.get_memory_key(user_input, mode, subentry_data, memory_scope)
+        prev_id = await self.get_response_id_by_key(conv_key)
+
+        LOGGER.debug(
+            "ConversationMemory.get_conv_key_and_prev_id: mode=%s scope=%s conv_key=%s prev_id=%s",
+            mode, memory_scope, conv_key, prev_id[:8] if prev_id else None
+        )
+        return conv_key, prev_id
 
     async def physical_delete_storage(self) -> list[str]:
         """Physically delete the storage file.

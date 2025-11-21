@@ -152,76 +152,69 @@ def parse_with_strategies(
 
 
 # ==============================================================================
-# LEGACY PARSER (Kept for backward compatibility)
+# GROK CODE FAST PARSER - Uses modular strategy system
 # ==============================================================================
 
-def parse_grok_response(response_data: str) -> tuple[str, str]:
-    """Parse Grok response to extract text and code components.
+def parse_grok_code_response(response_data: str) -> tuple[str, str]:
+    """Parse Grok Code Fast response to extract text and code components.
 
-    Handles multiple formats:
-    1. Direct JSON with response_text/response_code fields
-    2. JSON wrapped in markdown code blocks
+    Uses modular parsing strategies to handle multiple response formats:
+    1. Direct JSON: {"response_text": "...", "response_code": "..."}
+    2. JSON in code fence: ```json\n{"response_text": ...}\n```
     3. Plain text with code blocks
     4. Plain text only
 
     Args:
-        response_data: Raw response string from Grok
+        response_data: Raw response string from Grok Code Fast
 
     Returns:
         Tuple of (response_text, response_code)
+
+    Used by:
+        - grok_code_fast service: Parses AI-generated code responses
     """
-    response_text = ""
-    response_code = ""
+    # Validator: Check if parsed JSON has required structure
+    def _validate_code_structure(data: dict) -> bool:
+        """Validate that dict has response_text or response_code fields."""
+        return isinstance(data, dict) and ("response_text" in data or "response_code" in data)
 
-    try:
-        # Try to parse as direct JSON with the expected structure.
-        parsed = json.loads(response_data)
-        if isinstance(parsed, dict) and "response_text" in parsed:
-            response_text = parsed.get("response_text", "")
-            response_code = parsed.get("response_code", "")
+    # Try parsing using modular strategies
+    parsed = parse_with_strategies(
+        response_data,
+        strategies=[parse_strict_json, parse_json_fenced, parse_balanced_braces],
+        validator=_validate_code_structure
+    )
 
-            # Unwrap double-nested JSON (Grok sometimes wraps JSON inside response_text)
-            if isinstance(response_text, str) and response_text.strip().startswith("{"):
-                try:
-                    inner_parsed = json.loads(response_text)
-                    if isinstance(inner_parsed, dict) and "response_text" in inner_parsed:
-                        response_text = inner_parsed.get("response_text", "")
-                        response_code = inner_parsed.get("response_code", response_code)
-                except (json.JSONDecodeError, ValueError):
-                    pass
+    if parsed:
+        # Extract fields from parsed JSON
+        response_text = parsed.get("response_text", "")
+        response_code = parsed.get("response_code", "")
 
-            return response_text, response_code
-        # If JSON is valid but not the expected structure, do nothing and fall through.
-    except (json.JSONDecodeError, ValueError):
-        # Not a JSON string, or not a valid one. Fall through to treat as plain text.
-        pass
+        # Handle double-nested JSON (Grok sometimes wraps JSON inside response_text)
+        if isinstance(response_text, str) and response_text.strip().startswith("{"):
+            try:
+                inner_parsed = json.loads(response_text)
+                if _validate_code_structure(inner_parsed):
+                    response_text = inner_parsed.get("response_text", "")
+                    response_code = inner_parsed.get("response_code", response_code)
+            except (json.JSONDecodeError, ValueError):
+                pass  # Keep original values
 
-    # Try to extract code blocks (```yaml, ```python, ```json, etc.)
+        return response_text, response_code
+
+    # Fallback: Try to extract code blocks from plain text
     code_block_pattern = r"```(?:\w+)?\n(.*?)```"
     code_blocks = re.findall(code_block_pattern, response_data, re.DOTALL)
 
     if code_blocks:
-        # Check if first code block is a JSON with response_text/response_code structure
-        first_block = code_blocks[0].strip()
-        try:
-            parsed_block = json.loads(first_block)
-            if isinstance(parsed_block, dict) and "response_text" in parsed_block:
-                # It's a JSON structure wrapped in code block
-                response_text = parsed_block.get("response_text", "")
-                response_code = parsed_block.get("response_code", "")
-                return response_text, response_code
-        except (json.JSONDecodeError, ValueError):
-            pass
-
-        # Regular code block, use as code
-        response_code = first_block
+        # Use first code block as code
+        response_code = code_blocks[0].strip()
         # Remove code blocks from text
         response_text = re.sub(code_block_pattern, "", response_data, flags=re.DOTALL).strip()
         return response_text, response_code
 
-    # No code blocks found, treat everything as text
-    response_text = response_data
-    return response_text, response_code
+    # Final fallback: Treat everything as text
+    return response_data, ""
 
 
 def parse_ha_local_payload(payload_json: str) -> Optional[dict]:

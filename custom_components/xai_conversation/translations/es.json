@@ -33,11 +33,11 @@
         "title": "Configuración de memoria xAI",
         "description": "Configura los parámetros de memoria para usuarios y dispositivos asistentes de voz. La integración detecta automáticamente si una solicitud proviene de un usuario (smartphone/PC/tablet) o de un dispositivo (satélite de voz) y aplica la configuración apropiada.",
         "data": {
-          "memory_user_ttl_hours": "Duración memoria usuario (horas)",
-          "memory_user_max_turns": "Número máximo de turnos memoria usuario",
-          "memory_device_ttl_hours": "Duración memoria dispositivo (horas)",
-          "memory_device_max_turns": "Número máximo de turnos memoria dispositivo",
-          "memory_cleanup_interval_hours": "Intervalo de limpieza memoria (horas)"
+          "memory_user_ttl_hours": "Memoria de usuario: Duración (horas)",
+          "memory_user_max_turns": "Memoria de usuario: Máx. turnos",
+          "memory_device_ttl_hours": "Memoria de dispositivo: Duración (horas)",
+          "memory_device_max_turns": "Memoria de dispositivo: Máx. turnos",
+          "memory_cleanup_interval_hours": "Intervalo de limpieza de memoria (horas)"
         },
         "data_description": {
           "memory_user_ttl_hours": "Duración de las conversaciones de los usuarios (smartphone, PC, tablet). Predeterminado: 720 horas (30 días)",
@@ -67,9 +67,9 @@
             "max_tokens": "Tokens máximos",
             "temperature": "Temperatura",
             "top_p": "Top P",
-            "use_intelligent_pipeline": "Habilitar pipeline inteligente",
+            "use_intelligent_pipeline": "Habilitar canalización inteligente",
             "prompt": "Prompt",
-            "pipeline_prompt": "Instrucciones del pipeline (añadidas a las predeterminadas)",
+            "pipeline_prompt": "Instrucciones de la canalización (añadidas a las predeterminadas)",
             "allow_smart_home_control": "Permitir control del hogar inteligente",
             "live_search": "Modo de búsqueda en vivo",
             "store_messages": "Almacenar mensajes",
@@ -83,10 +83,10 @@
             "max_tokens": "Número máximo de tokens a generar.",
             "temperature": "Controla la aleatoriedad de las respuestas (0.0 = determinista, 2.0 = muy creativo).",
             "top_p": "Controla la diversidad de las respuestas mediante nucleus sampling (no compatible con grok-4).",
-            "use_intelligent_pipeline": "Habilita un modo inteligente que enruta automáticamente los comandos a Home Assistant o proporciona respuestas conversacionales. Si está deshabilitado, usa la API LLM estándar de Home Assistant para herramientas.",
-            "pipeline_prompt": "Texto opcional añadido al prompt de pipeline predeterminado. Útil para reglas personalizadas o intenciones locales.",
+            "use_intelligent_pipeline": "Habilita un modo inteligente que enruta automáticamente los comandos a Home Assistant o proporciona respuestas conversacionales. Si está deshabilitado, se basa en la API LLM estándar de Home Assistant para el uso de herramientas.",
+            "pipeline_prompt": "Texto opcional añadido al prompt de la canalización predeterminada. Úsalo para intenciones personalizadas o reglas locales.",
             "allow_smart_home_control": "Si está habilitado, el asistente puede ejecutar comandos de hogar inteligente. Si está deshabilitado, solo responde de manera conversacional. Modificar esta configuración iniciará una nueva conversación.",
-            "store_messages": "Usa la memoria del lado del servidor de xAI que te permitirá reducir los tokens a enviar para cada solicitud. Los parámetros de la memoria (duración, número de turnos) se configuran a nivel de integración.",
+            "store_messages": "Usa la memoria del lado del servidor de xAI para reducir los tokens a enviar en cada solicitud. Los parámetros de la memoria (duración, máx. turnos) se configuran a nivel de integración.",
             "send_user_name": "Agrega el nombre de usuario de Home Assistant o el nombre del dispositivo Assist voice al chat con Grok.",
             "live_search": "Habilita capacidades de búsqueda web: 'off' (deshabilitado), 'auto' (el modelo decide), 'on' (siempre habilitado). Se aplica tanto al modo pipeline como al de herramientas.",
             "prompt": "Instrucciones personalizadas para el agente (solo modo herramientas).",
@@ -108,46 +108,11 @@
         "init": {
           "title": "Sensores de tokens xAI",
           "data": {
-            "name": "Nombre",
-            "grok_4_input_price": "Precio entrada grok-4 por 1M tokens (USD)",
-            "grok_4_cached_input_price": "Precio entrada caché grok-4 por 1M tokens (USD)",
-            "grok_4_output_price": "Precio salida grok-4 por 1M tokens (USD)",
-            "grok_4_fast_input_price": "Precio entrada grok-4-fast por 1M tokens (USD)",
-            "grok_4_fast_cached_input_price": "Precio entrada caché grok-4-fast por 1M tokens (USD)",
-            "grok_4_fast_output_price": "Precio salida grok-4-fast por 1M tokens (USD)",
-            "grok_4_fast_non_reasoning_input_price": "Precio entrada grok-4-fast-non-reasoning por 1M tokens (USD)",
-            "grok_4_fast_non_reasoning_cached_input_price": "Precio entrada caché grok-4-fast-non-reasoning por 1M tokens (USD)",
-            "grok_4_fast_non_reasoning_output_price": "Precio salida grok-4-fast-non-reasoning por 1M tokens (USD)",
-            "grok_3_input_price": "Precio entrada grok-3 por 1M tokens (USD)",
-            "grok_3_cached_input_price": "Precio entrada caché grok-3 por 1M tokens (USD)",
-            "grok_3_output_price": "Precio salida grok-3 por 1M tokens (USD)",
-            "grok_3_mini_input_price": "Precio entrada grok-3-mini por 1M tokens (USD)",
-            "grok_3_mini_cached_input_price": "Precio entrada caché grok-3-mini por 1M tokens (USD)",
-            "grok_3_mini_output_price": "Precio salida grok-3-mini por 1M tokens (USD)",
-            "grok_code_fast_1_input_price": "Precio entrada grok-code-fast-1 por 1M tokens (USD)",
-            "grok_code_fast_1_cached_input_price": "Precio entrada caché grok-code-fast-1 por 1M tokens (USD)",
-            "grok_code_fast_1_output_price": "Precio salida grok-code-fast-1 por 1M tokens (USD)"
+            "name": "Nombre"
           },
           "data_description": {
             "name": "Nombre descriptivo para los sensores de tokens.",
-            "grok_4_input_price": "Costo por 1M tokens de entrada para grok-4. Deja el valor predeterminado para usar el precio oficial.",
-            "grok_4_cached_input_price": "Costo por 1M tokens de entrada en caché para grok-4. Deja el valor predeterminado para usar el precio oficial.",
-            "grok_4_output_price": "Costo por 1M tokens de salida para grok-4. Deja el valor predeterminado para usar el precio oficial.",
-            "grok_4_fast_input_price": "Costo por 1M tokens de entrada para grok-4-fast. Deja el valor predeterminado para usar el precio oficial.",
-            "grok_4_fast_cached_input_price": "Costo por 1M tokens de entrada caché para grok-4-fast. Deja el valor predeterminado para usar el precio oficial.",
-            "grok_4_fast_output_price": "Costo por 1M tokens de salida para grok-4-fast. Deja el valor predeterminado para usar el precio oficial.",
-            "grok_4_fast_non_reasoning_input_price": "Costo por 1M tokens de entrada para grok-4-fast-non-reasoning. Deja el valor predeterminado para usar el precio oficial.",
-            "grok_4_fast_non_reasoning_cached_input_price": "Costo por 1M tokens de entrada caché para grok-4-fast-non-reasoning. Deja el valor predeterminado para usar el precio oficial.",
-            "grok_4_fast_non_reasoning_output_price": "Costo por 1M tokens de salida para grok-4-fast-non-reasoning. Deja el valor predeterminado para usar el precio oficial.",
-            "grok_3_input_price": "Costo por 1M tokens de entrada para grok-3. Deja el valor predeterminado para usar el precio oficial.",
-            "grok_3_cached_input_price": "Costo por 1M tokens de entrada caché para grok-3. Deja el valor predeterminado para usar el precio oficial.",
-            "grok_3_output_price": "Costo por 1M tokens de salida para grok-3. Deja el valor predeterminado para usar el precio oficial.",
-            "grok_3_mini_input_price": "Costo por 1M tokens de entrada para grok-3-mini. Deja el valor predeterminado para usar el precio oficial.",
-            "grok_3_mini_cached_input_price": "Costo por 1M tokens de entrada caché para grok-3-mini. Deja el valor predeterminado para usar el precio oficial.",
-            "grok_3_mini_output_price": "Costo por 1M tokens de salida para grok-3-mini. Deja el valor predeterminado para usar el precio oficial.",
-            "grok_code_fast_1_input_price": "Costo por 1M tokens de entrada para grok-code-fast-1. Deja el valor predeterminado para usar el precio oficial.",
-            "grok_code_fast_1_cached_input_price": "Costo por 1M tokens de entrada caché para grok-code-fast-1. Deja el valor predeterminado para usar el precio oficial.",
-            "grok_code_fast_1_output_price": "Costo por 1M tokens de salida para grok-code-fast-1. Deja el valor predeterminado para usar el precio oficial."
+            "model_pricing_override": "Estos campos le permiten sobrescribir los precios oficiales de los tokens (entrada, entrada en caché, salida) obtenidos dinámicamente para cada modelo. Deje el valor predeterminado para usar los precios oficiales."
           }
         }
       },
@@ -167,8 +132,11 @@
           "data": {
             "name": "Nombre",
             "prompt": "Prompt",
+            "vision_prompt": "Prompt de visión",
             "api_host": "Host API ('api.x.ai', 'us-east-1.api.x.ai' o 'eu-west-1.api.x.ai')",
             "chat_model": "Modelo",
+            "image_model": "Modelo de imágenes",
+            "vision_model": "Modelo de análisis de fotos",
             "max_tokens": "Tokens máximos",
             "temperature": "Temperatura",
             "top_p": "Top P"
@@ -176,8 +144,11 @@
           "data_description": {
             "name": "Nombre descriptivo para esta tarea IA.",
             "prompt": "Prompt de sistema completo para la tarea IA. Reemplaza el predeterminado. Modifícalo con precaución, ya que define el comportamiento del modelo (ej. formato de salida JSON).",
+            "vision_prompt": "Prompt de sistema para análisis de fotos. Define cómo el modelo de visión debe analizar imágenes (ej. conciso, detallado, factual).",
             "api_host": "Nombre de host del punto final de la API. Usa 'api.x.ai' para enrutamiento global con redirección automática a un host regional o especifica directamente un host regional.",
             "chat_model": "Selecciona el modelo Grok a utilizar.",
+            "image_model": "Modelo utilizado exclusivamente para la generación de imágenes.",
+            "vision_model": "Modelo utilizado exclusivamente para el análisis de fotos (documentos, diagramas, gráficos, capturas de pantalla, fotografías).",
             "max_tokens": "Número máximo de tokens a generar.",
             "temperature": "Controla la aleatoriedad de las respuestas (0.0 = determinista, 2.0 = muy creativo).",
             "top_p": "Controla la diversidad de las respuestas mediante nucleus sampling (no compatible con grok-4)."

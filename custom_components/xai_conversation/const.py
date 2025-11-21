@@ -3,6 +3,8 @@ import logging
 from homeassistant.const import CONF_LLM_HASS_API
 from homeassistant.helpers import llm
 
+LOGGER = logging.getLogger(__package__)
+
 DOMAIN = "xai_conversation"
 DEFAULT_DEVICE_NAME = "xAI"
 DEFAULT_MANUFACTURER = "xAI"
@@ -11,11 +13,10 @@ DEFAULT_AI_TASK_NAME = "xAI Task"
 DEFAULT_GROK_CODE_FAST_NAME = "Grok Code Fast"
 DEFAULT_SENSORS_NAME = "xAI Token Sensors"
 DEFAULT_API_HOST = "api.x.ai"
-
-LOGGER = logging.getLogger(__package__)
-
 # xAI specific configuration keys
 CONF_CHAT_MODEL = "chat_model"
+CONF_IMAGE_MODEL = "image_model"
+CONF_VISION_MODEL = "vision_model"
 CONF_MAX_TOKENS = "max_tokens"
 CONF_PROMPT_PIPELINE = "pipeline_prompt"
 # Enable/disable Intelligent Pipeline mode for conversation subentries
@@ -30,6 +31,7 @@ CONF_STORE_MESSAGES = "store_messages"
 CONF_SEND_USER_NAME = "send_user_name"
 CONF_TIMEOUT = "timeout"
 CONF_PROMPT = "prompt" # User instructions for tools/non-pipeline mode
+CONF_VISION_PROMPT = "vision_prompt" # System prompt for photo analysis
 CONF_API_HOST = "api_host"
 CONF_ASSISTANT_NAME = "assistant_name"  # Customizable assistant name
 # Memory configuration - separate settings for users and devices
@@ -38,14 +40,15 @@ CONF_MEMORY_USER_MAX_TURNS = "memory_user_max_turns"
 CONF_MEMORY_DEVICE_TTL_HOURS = "memory_device_ttl_hours"
 CONF_MEMORY_DEVICE_MAX_TURNS = "memory_device_max_turns"
 CONF_MEMORY_CLEANUP_INTERVAL_HOURS = "memory_cleanup_interval_hours"  # Interval for periodic cleanup
-# Pricing configuration - removed old single price config, now using per-model pricing
+
 # Model pricing keys are generated dynamically as: {model_name_with_underscores}_{input|output}_price
 # Example: grok_4_input_price, grok_4_output_price
-
-# Default values optimized for grok-4-fast-non-reasoning
-RECOMMENDED_CHAT_MODEL = "grok-4-fast-non-reasoning"
+# Default values optimized for grok-4-1-fast-non-reasoning
+RECOMMENDED_CHAT_MODEL = "grok-4-1-fast-non-reasoning"
 RECOMMENDED_GROK_CODE_FAST_MODEL = "grok-code-fast-1"
 RECOMMENDED_AI_TASK_MODEL = "grok-code-fast-1"
+RECOMMENDED_IMAGE_MODEL = "grok-2-1212"  # Model for image generation
+RECOMMENDED_VISION_MODEL = "grok-2-vision-1212"  # Model for photo analysis
 RECOMMENDED_MAX_TOKENS = 2000
 RECOMMENDED_TEMPERATURE = 1.0
 RECOMMENDED_TOP_P = 1.0
@@ -60,9 +63,9 @@ RECOMMENDED_MEMORY_USER_MAX_TURNS = 1000  # 1000 turns for users
 RECOMMENDED_MEMORY_DEVICE_TTL_HOURS = 24 * 7  # 7 days for voice satellites
 RECOMMENDED_MEMORY_DEVICE_MAX_TURNS = 100  # 100 turns for voice satellites
 RECOMMENDED_MEMORY_CLEANUP_INTERVAL_HOURS = 24  # Run cleanup every 24 hours
+RECOMMENDED_CHAT_HISTORY_MAX_MESSAGES = 100  # Max messages stored per conversation in ChatHistoryService
 # Maximum conversation history turns to send when server-side memory is disabled
 RECOMMENDED_HISTORY_LIMIT_TURNS = 10  # 10 turns = 20 messages (user+assistant)
-
 # Subentry types
 SUBENTRY_TYPE_CONVERSATION = "conversation"
 SUBENTRY_TYPE_AI_TASK = "ai_task_data"
@@ -70,28 +73,14 @@ SUBENTRY_TYPE_CODE_TASK = "code_task"
 SUBENTRY_TYPE_SENSORS = "sensors"
 
 # Supported models from xAI documentation
-SUPPORTED_MODELS = [
-    "grok-4",
-    "grok-4-fast",
-    "grok-4-fast-non-reasoning",
-    "grok-3",
-    "grok-3-mini",
-    "grok-code-fast-1"
-]
+# Supported models from xAI documentation - populated dynamically at runtime
+SUPPORTED_MODELS: list[str] = []
 
-# Models that support reasoning_effort parameter
-REASONING_EFFORT_MODELS = ["grok-3", "grok-3-mini"]
+# Models that support reasoning_effort parameter - populated dynamically at runtime
+REASONING_EFFORT_MODELS: list[str] = []
 
-# Default pricing per 1M tokens (as of January 2025) - source: https://x.ai/api
-# Note: cached_input is typically 25% of input price (cached tokens from server-side memory)
-DEFAULT_MODEL_PRICING = {
-    "grok-4": {"input": 3.00, "cached_input": 0.75, "output": 15.00},
-    "grok-4-fast": {"input": 0.20, "cached_input": 0.05, "output": 0.50},
-    "grok-4-fast-non-reasoning": {"input": 0.20, "cached_input": 0.05, "output": 0.50},
-    "grok-3": {"input": 3.00, "cached_input": 0.75, "output": 15.00},
-    "grok-3-mini": {"input": 0.30, "cached_input": 0.075, "output": 0.50},
-    "grok-code-fast-1": {"input": 0.20, "cached_input": 0.02, "output": 1.50},
-}
+# Dynamic model pricing and details will be fetched from xAI API
+# DEFAULT_MODEL_PRICING is removed as per optimization
 
 # ==============================================================================
 # MODULAR PROMPT SYSTEM - Building Blocks
@@ -146,17 +135,17 @@ PROMPT_PIPELINE_DECISION_LOGIC = """Action Decision:
 - General Questions (non-HA related): answer concisely and truthfully.
 
 Priority Rules:
-- Eventual, present the actions of commands in a natural way
+- where you feel it is relevant, present the command in a natural way. Focus on the action in progress, not the completed result.
 - Smart Home commands/queries → [[HA_LOCAL]]
 - General knowledge questions → Answer directly 
 - When in doubt about device state/control → PRIORITIZE SMART HOME CONTROL"""
 
 PROMPT_PIPELINE_EXAMPLES = """Examples:
 - "when did I last turn on the light?" → "You turned on the living room light on October 6th at 2:32 PM"
-- "turn on the living room light" → "[[HA_LOCAL: {"text": "turn on the living room light"}]]"
+- "turn on the living room light" → your comment, if any and [[HA_LOCAL: {"text": "turn on the living room light"}]]
 - "(any text)  what's the temperature in the kitchen (other words)?" → [[HA_LOCAL: {"text": "what's the temperature in the kitchen?"}]]"
-- "turn off lights in living room and turn on tv" → [[HA_LOCAL: {"commands": [{"text": "turn off lights in living room"}, {"text": "turn on tv"}]}]]"
-- "first close the blinds, then turn off the lights" → [[HA_LOCAL: {"commands": [{"text": "close the blinds"}, {"text": "turn off the lights"}], "sequential": true}]]"""
+- "turn off lights in living room and turn on tv" → your comment, if any and [[HA_LOCAL: {"commands": [{"text": "turn off lights in living room"}, {"text": "turn on tv"}]}]]"
+- "first close the blinds, then turn off the lights" → your comment, if any and [[HA_LOCAL: {"commands": [{"text": "close the blinds"}, {"text": "turn off the lights"}], "sequential": true}]]"""
 
 # -----------------------------------------------------------------------------
 # 5. TOOLS MODE BLOCK (for Tools mode with allow_control=True)
@@ -170,7 +159,8 @@ Available Tools:
 
 Guidelines:
 - For device control (turn on/off, set values): use the appropriate tool with targeting parameters (name, area, floor, domain, device_class)
-- For state queries (current status, temperature, sensor readings): call GetLiveContext() to retrieve live data, then answer based on the returned information"""
+- For state queries (current status, temperature, sensor readings): call GetLiveContext() to retrieve live data, then answer based on the returned information
+- In mixed requests (command + non-home automation activity like a poem), always run the home command tools first, then quickly handle the rest."""
 
 # -----------------------------------------------------------------------------
 # 6. CHAT-ONLY BLOCK (when allow_control=False)
@@ -206,6 +196,9 @@ GROK_CODE_FAST_PROMPT="""You are Grok Code Fast, a sharp Home Assistant dev assi
 Output format: Return a direct JSON object (not stringified) with two fields:
 {"response_text": "Concise steps, rationale, setup tips, tests, or troubleshooting.", "response_code": "Pure code without markdown fences."}
 Rules: Keep explanations in response_text, raw code in response_code (no ``` fences). No code? Leave response_code empty. File uploads: Return full updated content in response_code. Multi-files: Separate with two blank lines and comment headers like '# file: filename.yaml'. Explain changes in response_text. Escape special characters within JSON strings (\n for newlines, \" for quotes). Use the user's language for response_text."""
+
+# Vision analysis system prompt - concise and factual
+VISION_ANALYSIS_PROMPT = """Be concise and factual in your image analysis. Always respond in the user's language."""
 
 
 # Default conversation mode options (Intelligent Pipeline)
@@ -250,10 +243,13 @@ RECOMMENDED_TOOLS_OPTIONS = {
 # Default options for the AI Task service
 RECOMMENDED_AI_TASK_OPTIONS = {
     CONF_CHAT_MODEL: RECOMMENDED_AI_TASK_MODEL,
+    CONF_IMAGE_MODEL: RECOMMENDED_IMAGE_MODEL,
+    CONF_VISION_MODEL: RECOMMENDED_VISION_MODEL,
     CONF_LLM_HASS_API: [],
     CONF_MAX_TOKENS: 5000,
     CONF_TEMPERATURE: 0.1,
     CONF_PROMPT: GROK_AI_TASK_PROMPT,
+    CONF_VISION_PROMPT: VISION_ANALYSIS_PROMPT,
     CONF_TOP_P: RECOMMENDED_TOP_P,
     CONF_LIVE_SEARCH: RECOMMENDED_LIVE_SEARCH,
     CONF_STORE_MESSAGES: False,
@@ -269,6 +265,24 @@ RECOMMENDED_GROK_CODE_FAST_OPTIONS = {
     CONF_LIVE_SEARCH: RECOMMENDED_LIVE_SEARCH,
     CONF_STORE_MESSAGES: True,  # Enable server-side memory via xAI previous_response_id chaining
 }
+
+# ==============================================================================
+# SENSOR CONFIGURATION CONSTANTS
+# ==============================================================================
+
+# Token pricing and cost calculation
+TOKENS_PER_MILLION = 1_000_000  # Division factor for token pricing calculations
+
+# Sensor update intervals
+PRICING_UPDATE_INTERVAL_HOURS = 12  # How often to fetch model pricing from xAI API
+COST_UPDATE_INTERVAL_HOURS = 12  # How often to recalculate costs (runs after pricing update)
+
+# New models detection
+NEW_MODEL_NOTIFICATION_DAYS = 7  # How long to show new model notifications before auto-dismissal
+
+# ==============================================================================
+# END OF SENSOR CONFIGURATION CONSTANTS
+# ==============================================================================
 
 # Author's CONF_PROMPT_PIPELINE for improved custom intent recognition
 # Treat all messages related to topics such as news, weather updates, almanacs, religious events, feasts or holidays, moon phases, family member locations, garbage collection schedules, or similar as custom Smart Home Command.

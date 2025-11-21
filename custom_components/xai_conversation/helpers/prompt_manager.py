@@ -1,14 +1,12 @@
 """Prompt management for xAI conversation."""
 from __future__ import annotations
 
-from .conversation import extract_device_id, extract_user_id, prompt_hash
 from ..const import (
     CONF_ALLOW_SMART_HOME_CONTROL,
     CONF_ASSISTANT_NAME,
     CONF_PROMPT,
     CONF_PROMPT_PIPELINE,
     CONF_STORE_MESSAGES,
-    LOGGER,
     PROMPT_CUSTOM_RULES,
     PROMPT_IDENTITY,
     PROMPT_MEMORY_CLIENTSIDE,
@@ -30,7 +28,6 @@ class PromptManager:
     This class handles:
     - Building system prompts based on mode (pipeline/tools)
     - Managing user custom instructions
-    - Calculating consistent memory keys (conv_key)
     - Handling mode-specific configurations
     """
 
@@ -162,62 +159,6 @@ class PromptManager:
 
         return "\n\n".join(blocks)
 
-    def get_memory_key(self, user_input, memory_scope: str = "user") -> str:
-        """Calculate consistent memory key for conversation chaining.
-
-        The key is built using the same format as entity._conv_mode_key():
-        - Base: "user:{user_id}" or "device:{device_id}"
-        - Mode: ":mode:{mode}"
-        - Chat-only flag: ":chatonly" if home control is disabled
-        - Assistant name hash: ":an:{hash}" to start new conversation when name changes
-        - Hash (optional): ":ph:{hash}" if custom prompt exists
-
-        CRITICAL: Including chat-only flag ensures that switching between
-        "home control enabled" and "home control disabled" starts a NEW
-        conversation chain, preventing contradictory instructions in the
-        same xAI server-side memory.
-
-        CRITICAL: Including assistant name hash ensures that changing the
-        assistant name starts a NEW conversation, since the system prompt
-        cannot be modified in existing conversations with previous_response_id.
-
-        Args:
-            user_input: ConversationInput object
-            memory_scope: "user" or "device" (default: "user")
-
-        Returns:
-            Memory key string in format: user:id:mode:pipeline[:chatonly]:an:hash[:ph:hash]
-        """
-        # Build base key using same format as _get_conversation_key()
-        if memory_scope == "user":
-            identifier = extract_user_id(user_input) or "unknown"
-            base = f"user:{identifier}"
-        else:  # device
-            identifier = extract_device_id(user_input) or "unknown"
-            base = f"device:{identifier}"
-
-        # Add mode
-        key = f"{base}:mode:{self.mode}"
-
-        # CRITICAL: Add chat-only flag to force new conversation when toggling home control
-        if self.is_chat_only_mode():
-            key = f"{key}:chatonly"
-
-        # CRITICAL: Add assistant name hash to force new conversation when name changes
-        # Since assistant_name is in the system prompt and cannot be changed with previous_response_id,
-        # we must start a new conversation when the name is updated
-        assistant_name = self.data.get(CONF_ASSISTANT_NAME, RECOMMENDED_ASSISTANT_NAME)
-        an_hash = prompt_hash(assistant_name)
-        key = f"{key}:an:{an_hash}"
-
-        # Add prompt hash only if custom prompt exists
-        custom_prompt = self.get_user_custom_prompt()
-        if custom_prompt:
-            ph = prompt_hash(custom_prompt)
-            key = f"{key}:ph:{ph}"
-
-        return key
-
     def build_base_prompt_with_user_instructions(
         self,
         static_context: str = "",
@@ -242,46 +183,3 @@ class PromptManager:
             static_context=static_context,
             tool_definitions=tool_definitions
         )
-
-    async def get_conv_key_and_prev_id(self, entity, user_input) -> tuple[str, str | None]:
-        """Get conversation key and previous response ID from entity's memory system.
-
-        Args:
-            entity: XAIBaseLLMEntity instance
-            user_input: ConversationInput object
-
-        Returns:
-            A tuple containing (conversation_key, previous_response_id or None)
-        """
-        # Memory scope logic (applies to both pipeline and tools modes):
-        # - If user_id is available: use "user" scope to share conversation across all user's devices
-        # - If no user_id (e.g., voice satellites without user context): use "device" scope for device-specific memory
-        user_id = extract_user_id(user_input)
-        if user_id:
-            memory_scope = "user"
-        else:
-            # Fallback to device scope for voice satellites or other devices without user context
-            memory_scope = "device"
-
-        conv_key = self.get_memory_key(user_input, memory_scope)
-        prev_id = await entity._memory_get_prev_id(conv_key)
-
-        LOGGER.debug(
-            "PromptManager.get_conv_key_and_prev_id: mode=%s scope=%s conv_key=%s prev_id=%s",
-            self.mode, memory_scope, conv_key, prev_id[:8] if prev_id else None
-        )
-        return conv_key, prev_id
-
-    async def get_prev_id(self, entity, user_input) -> str | None:
-        """Get previous response ID from entity's memory system.
-
-        Args:
-            entity: XAIBaseLLMEntity instance
-            user_input: ConversationInput object
-
-        Returns:
-            Previous response ID or None if not found
-        """
-        # Use the unified method and return only the prev_id
-        _conv_key, prev_id = await self.get_conv_key_and_prev_id(entity, user_input)
-        return prev_id

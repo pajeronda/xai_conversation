@@ -2,23 +2,39 @@
 
 This service provides autonomous, asynchronous chat history management.
 It runs in parallel to the main chat flow without adding latency.
+
+Used by:
+- grok_code_fast service: Saves/loads chat messages for frontend card synchronization
+- clear_code_memory service: Clears stored chat history
+- sync_chat_history service: Provides cross-device chat synchronization
+
+Not used by conversation agents (pipeline/tools modes) which only use ConversationMemory
+for response_id storage.
 """
 from __future__ import annotations
 
 import time
 from typing import Any
 
-from ..const import LOGGER
+from ..const import LOGGER, RECOMMENDED_CHAT_HISTORY_MAX_MESSAGES
 
 
 class ChatHistoryService:
-    """Autonomous chat history service.
+    """Autonomous chat history service for Grok Code Fast.
+
+    Manages full message storage (user prompts + assistant responses) for:
+    - Frontend card UI synchronization across devices
+    - Client-side memory mode (when store_messages=False)
+    - Chat history export/import
 
     Features:
     - Asynchronous message saving (fire-and-forget, zero latency impact)
     - Synchronous history loading (for frontend sync button)
     - Automatic cleanup on conversation reset
-    - TTL and max_messages support
+    - Per-user, per-mode message storage
+
+    Note: Separate from ConversationMemory which only stores response_ids for
+    server-side memory chaining. This service stores complete message text.
     """
 
     def __init__(self, hass, storage_path: str, entry):
@@ -96,11 +112,10 @@ class ChatHistoryService:
         })
         self._history[history_key]["last_updated"] = time.time()
 
-        # Apply limits (keep last 100 messages max)
-        max_messages = 100
-        if len(self._history[history_key]["messages"]) > max_messages:
+        # Apply limits (keep last N messages max)
+        if len(self._history[history_key]["messages"]) > RECOMMENDED_CHAT_HISTORY_MAX_MESSAGES:
             self._history[history_key]["messages"] = \
-                self._history[history_key]["messages"][-max_messages:]
+                self._history[history_key]["messages"][-RECOMMENDED_CHAT_HISTORY_MAX_MESSAGES:]
 
         # Save to disk (async, non-blocking)
         try:

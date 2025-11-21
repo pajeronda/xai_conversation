@@ -18,14 +18,12 @@ from .__init__ import (
 from .const import (
     CONF_ALLOW_SMART_HOME_CONTROL,
     CONF_CHAT_MODEL,
-    CONF_USE_INTELLIGENT_PIPELINE,
     DEFAULT_MANUFACTURER,
     DOMAIN,
     LOGGER,
     RECOMMENDED_CHAT_MODEL,
     SUBENTRY_TYPE_CONVERSATION,
 )
-from .helpers import PromptManager
 from .entity import XAIBaseLLMEntity
 
 
@@ -85,9 +83,6 @@ class XAIConversationEntity(
             entry_type=ha_device_registry.DeviceEntryType.SERVICE,
         )
 
-        # Initialize persistent client for connection reuse
-        self._client = None
-
     @property
     def supported_languages(self) -> list[str] | Literal["*"]:
         """Return supported languages."""
@@ -117,23 +112,14 @@ class XAIConversationEntity(
         """Call the API.
 
         This method determines which mode to use (pipeline or tools) and delegates
-        the actual processing to the appropriate handler. Prompt construction is
-        handled entirely by the processor (entity_pipeline.py or entity_tools.py).
+        the actual processing to the appropriate handler. Prompt construction and
+        memory management are handled entirely by the processor (entity_pipeline.py or entity_tools.py).
         """
-        # Determine mode and create PromptManager for memory key calculation
-        use_pipeline_config = self.subentry.data.get(CONF_USE_INTELLIGENT_PIPELINE, True)
-        mode = "pipeline" if use_pipeline_config else "tools"
-        prompt_mgr = PromptManager(self.subentry.data, mode)
-
-        # Get previous response ID using PromptManager for both modes
-        prev_id = await prompt_mgr.get_prev_id(self, user_input)
-
         # Delegate to the appropriate processor
-        # Each processor handles its own prompt construction independently
+        # Each processor handles its own prompt construction and memory management independently
         await self._async_handle_chat_log(
             user_input,
             chat_log,
-            previous_response_id=prev_id,
         )
 
         return ha_conversation.async_get_result_from_chat_log(user_input, chat_log)

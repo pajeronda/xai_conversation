@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from homeassistant.core import HomeAssistant as HA_HomeAssistant
@@ -136,11 +137,73 @@ def _validate_temperature(args: dict, tool_name: str) -> dict:
     return args
 
 
+def _validate_timer_duration(args: dict, tool_name: str) -> dict:
+    """Validate and clamp timer duration values."""
+    for key in ("hours", "minutes", "seconds"):
+        if key in args:
+            try:
+                value = int(float(args[key]))
+                if key == "hours":
+                    # Hours must be >= 0, no upper limit
+                    args[key] = max(0, value)
+                else:
+                    # Minutes and seconds must be 0-59
+                    args[key] = max(0, min(59, value))
+                LOGGER.debug("Validated and clamped '%s' to %d for %s", key, args[key], tool_name)
+            except (ValueError, TypeError):
+                LOGGER.warning("Invalid value for '%s' in %s: %s. Removing.", key, tool_name, args[key])
+                args.pop(key)
+    return args
+
+
+def _validate_calendar_dates(args: dict, tool_name: str) -> dict:
+    """Validate date format for calendar tools (YYYY-MM-DD)."""
+    date_pattern = re.compile(r'^\d{4}-\d{2}-\d{2}$')
+    for key in ("start_date", "end_date"):
+        if key in args:
+            date_str = str(args[key]).strip()
+            if not date_pattern.match(date_str):
+                LOGGER.warning("Invalid date format for '%s' in %s: %s (expected YYYY-MM-DD). Removing.",
+                             key, tool_name, args[key])
+                args.pop(key)
+            else:
+                # Keep the validated string
+                args[key] = date_str
+                LOGGER.debug("Validated date '%s' for %s", date_str, tool_name)
+    return args
+
+
+def _validate_todo_status(args: dict, tool_name: str) -> dict:
+    """Validate status values for todo tools."""
+    if "status" in args:
+        status = str(args["status"]).strip().lower()
+        valid_statuses = ("needs_action", "completed")
+        if status not in valid_statuses:
+            LOGGER.warning("Invalid status for %s: %s (expected: %s). Removing.",
+                         tool_name, args["status"], valid_statuses)
+            args.pop("status")
+        else:
+            args["status"] = status
+            LOGGER.debug("Validated status '%s' for %s", status, tool_name)
+    return args
+
+
 # Map of tool names to their specific validation functions
 _TOOL_VALIDATORS = {
+    # Light controls
     "HassLightSet": _validate_brightness,
+    # Cover/valve controls
     "HassSetPosition": _validate_position,
+    # Climate controls
     "HassClimateSetTemperature": _validate_temperature,
+    # Timer controls
+    "HassStartTimer": _validate_timer_duration,
+    "HassIncreaseTimer": _validate_timer_duration,
+    "HassDecreaseTimer": _validate_timer_duration,
+    # Calendar tools
+    "CalendarGetEvents": _validate_calendar_dates,
+    # Todo tools
+    "TodoGetItems": _validate_todo_status,
 }
 
 

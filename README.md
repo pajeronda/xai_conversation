@@ -46,6 +46,9 @@ Integration with Home Assistant's AI Task service for:
 - Context-aware actions based on home state
 - Image generation (automatically uses the `grok-2-image` model)
 
+### 📸 Photo Analysis Service
+New `photo_analysis` service for analyzing images with AI. Can be used in scripts and automations by passing camera snapshots or external image URLs.
+
 ### 💻 Grok Code Fast
 Dedicated service for Home Assistant code generation:
 - YAML for automations and configurations
@@ -143,6 +146,36 @@ Click this badge to install **Grok code fast card** via **HACS** (recommended)
 - "Turn on the living room lights"
 - "What's the temperature in the kitchen?"
 
+### Photo Analysis Service
+
+**Analyze a local camera snapshot:**
+```yaml
+service: xai_conversation.photo_analysis
+data:
+  prompt: "What do you see in this image?"
+  images:
+    - /config/www/camera_snapshot.jpg
+```
+
+**Analyze an external image:**
+```yaml
+service: xai_conversation.photo_analysis
+data:
+  prompt: "Describe this image in detail"
+  images:
+    - https://design.home-assistant.io/images/brand/logo.png
+```
+
+**Analyze multiple images:**
+```yaml
+service: xai_conversation.photo_analysis
+data:
+  prompt: "Compare these two images and highlight the differences"
+  images:
+    - /config/www/before.jpg
+    - /config/www/after.jpg
+```
+
 ### Grok Code Fast
 - "Create an automation that turns off the lights at 11 PM"
 - "Generate a Jinja2 template to display energy consumption"
@@ -170,10 +203,9 @@ The integration automatically tracks costs based on xAI pricing (per 1M tokens) 
 | grok-code-fast-1 (default) | $0.20 | $0.02 | $1.50 |
 
 Available sensors:
-- `sensor.<name>_total_tokens`
-- `sensor.<name>_estimated_cost`
-- `sensor.<name>_conversation_cache_ratio`
-- `sensor.<name>_conversation_last_tokens`
+- **Token and Cost Sensors**: Total tokens, estimated cost, cache ratio, and last tokens for each service (Conversation, AI Task, Code Fast)
+- **Model Pricing Sensors**: Real-time pricing (input, cached input, output) for all 10 supported models
+- **New Models Detection**: Automatically detects when xAI releases new models and makes them available in configuration options
 
 ## Troubleshooting
 
@@ -197,14 +229,14 @@ Available sensors:
 - Increases with repeated conversations on the same topic
 - Server-side memory (`store_messages=True`) improves cache
 
-## Technical Documentation
+## Versioning
 
-(Work in progress ...)
-For developers and contributions: consult [xxx.md](xxx.md) for:
-- System architecture
-- Development guide
-- Module and class structure
-- Internal APIs
+This integration generally follows [Semantic Versioning (SemVer)](https://semver.org/) to ensure a clear and predictable approach to versioning. Semantic Versioning uses a three-part version number in the format `MAJOR.MINOR.PATCH`, where:
+
+- **MAJOR** version increments indicate backwards-incompatible changes.
+- **MINOR** version increments indicate the addition of backward-compatible functionality.
+- **PATCH** version increments indicate backward-compatible bug fixes.
+
 
 ## Contributing
 

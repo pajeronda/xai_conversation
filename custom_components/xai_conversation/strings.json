@@ -167,8 +167,11 @@
           "data": {
             "name": "Name",
             "prompt": "Prompt",
+            "vision_prompt": "Vision Prompt",
             "api_host": "API Host ('api.x.ai' or 'us-east-1.api.x.ai' or 'eu-west-1.api.x.ai')",
             "chat_model": "Model",
+            "image_model": "Image Model",
+            "vision_model": "Vision Model",
             "max_tokens": "Max tokens",
             "temperature": "Temperature",
             "top_p": "Top P"
@@ -176,8 +179,11 @@
           "data_description": {
             "name": "Descriptive name for this AI task",
             "prompt": "The entire system prompt for the AI task. This replaces the default. Be careful when editing, as it defines the task's behavior (e.g., JSON output format).",
+            "vision_prompt": "System prompt for photo analysis. Defines how the vision model should analyze images (e.g., concise, detailed, factual).",
             "api_host": "API hostname endpoint. Use 'api.x.ai' for global routing with automatic redirection to a regional host or use a specific regional host directly.",
             "chat_model": "Select the Grok model to use",
+            "image_model": "Model used exclusively for image generation",
+            "vision_model": "Model used exclusively for photo analysis (documents, diagrams, charts, screenshots, photographs)",
             "max_tokens": "Maximum number of tokens to generate",
             "temperature": "Controls randomness in responses (0.0 = deterministic, 2.0 = very creative)",
             "top_p": "Controls diversity via nucleus sampling (not supported by grok-4)"

@@ -58,6 +58,9 @@ class XAIConnectionError(HA_HomeAssistantError):
         elif status_code == grpc.StatusCode.CANCELLED:
             LOGGER.info("Request was cancelled")
             message = "The request was cancelled. Please try again."
+        elif status_code == grpc.StatusCode.DATA_LOSS:
+            LOGGER.error("Data loss error (likely failed to fetch image from URL): %s", error_details)
+            message = "Failed to fetch image from provided URL. Please check the image URL is accessible."
         else:
             LOGGER.error("Unknown gRPC error: %s - %s", status_code, error_details)
             message = f"An error occurred while communicating with xAI: {status_code.name}"

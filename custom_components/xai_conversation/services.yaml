@@ -36,3 +36,45 @@ reset_token_stats:
   name: Reset Token Statistics
   description: Reset all 10 token sensors (6 per-service + 4 aggregated) to zero for the entire xAI Conversation integration. This resets conversation, ai_task, code_fast, and aggregated sensors. Useful when you reload credits on xAI and want to track consumption from that point.
 
+reload_pricing:
+  name: Reload Pricing Data
+  description: >
+    Manually triggers an update of the xAI model pricing information from the API.
+    This will fetch the latest pricing for all models and update the pricing sensors.
+    Use this after the code has been updated or to refresh stale pricing data.
+  fields: {}
+
+dismiss_new_models:
+  name: Dismiss New Models Notification
+  description: >
+    Manually dismiss the new xAI models notification.
+    The notification will automatically expire after 7 days, but you can use this service
+    to dismiss it earlier if you've already reviewed the new models.
+  fields: {}
+
+photo_analysis:
+  name: Photo Analysis
+  description: >
+    Analyze one or multiple photos using Grok Vision AI.
+    Supports both local file paths and URLs. Can process documents, diagrams, charts, screenshots, and photographs.
+    Uses the vision model configured in AI Task settings (default: grok-2-vision-1212).
+  response: optional
+  fields:
+    prompt:
+      name: Prompt
+      description: Question or instruction about the images (e.g., "What objects are visible?", "Which animal looks happier?")
+      required: true
+      example: "Describe what you see in these images"
+      selector:
+        text:
+          multiline: true
+    images:
+      name: Images
+      description: >
+        List of image paths or URLs to analyze. Can be a single string or list of strings.
+        Examples: "/config/www/photo.jpg" or ["https://example.com/img1.jpg", "/local/img2.png"]
+      required: false
+      example: ["/config/www/camera_snapshot.jpg"]
+      selector:
+        object:
+

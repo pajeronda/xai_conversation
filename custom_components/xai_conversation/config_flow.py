@@ -21,6 +21,8 @@ from .const import (
     CONF_API_HOST,
     CONF_ASSISTANT_NAME,
     CONF_CHAT_MODEL,
+    CONF_IMAGE_MODEL,
+    CONF_VISION_MODEL,
     CONF_LIVE_SEARCH,
     CONF_MAX_TOKENS,
     CONF_MEMORY_CLEANUP_INTERVAL_HOURS,
@@ -30,6 +32,7 @@ from .const import (
     CONF_MEMORY_DEVICE_MAX_TURNS,
     CONF_MEMORY_DEVICE_TTL_HOURS,
     CONF_PROMPT,
+    CONF_VISION_PROMPT,
     CONF_PROMPT_PIPELINE,
     CONF_REASONING_EFFORT,
     CONF_SEND_USER_NAME,
@@ -42,7 +45,6 @@ from .const import (
     DEFAULT_CONVERSATION_NAME,
     DEFAULT_DEVICE_NAME,
     DEFAULT_GROK_CODE_FAST_NAME,
-    DEFAULT_MODEL_PRICING,
     DEFAULT_SENSORS_NAME,
     DOMAIN,
     LOGGER,
@@ -328,40 +330,23 @@ class XAIOptionsFlow(ConfigSubentryFlow):
 
         # Sensors subentry now has per-model pricing configuration
         if self._subentry_type == "sensors":
-            # Generate pricing fields dynamically for each model in DEFAULT_MODEL_PRICING
-            for model_name, pricing in DEFAULT_MODEL_PRICING.items():
-                # Create config keys like "grok_4_input_price" (replace - with _)
-                model_key = model_name.replace("-", "_")
-                input_key = f"{model_key}_input_price"
-                cached_input_key = f"{model_key}_cached_input_price"
-                output_key = f"{model_key}_output_price"
+            # Retrieve dynamically fetched model data
+            xai_models_data = self.hass.data[DOMAIN].get("xai_models_data")
+            if not xai_models_data:
+                # Fallback to empty schema or error, though data should always be present at this stage
+                LOGGER.warning("xAI model data not available in hass.data. Cannot generate dynamic pricing fields for sensors.")
+                # Return an error schema that explains the issue
+                step_schema["_warning_no_model_data"] = selector.TextSelector(
+                    selector.TextSelectorConfig(
+                        type=selector.TextSelectorType.TEXT,
+                        multiple=False,
+                        suffix="Could not load model pricing data. Please check integration logs and ensure API key is valid."
+                    )
+                )
+                return self.async_show_form(step_id="init", data_schema=vol.Schema(step_schema), errors={"base": "no_model_data"})
 
-                step_schema.update({
-                    vol.Optional(
-                        input_key,
-                        default=options.get(input_key, pricing["input"]),
-                    ): selector.NumberSelector(
-                        selector.NumberSelectorConfig(
-                            min=0.0, max=100.0, step=0.01, mode=selector.NumberSelectorMode.BOX
-                        )
-                    ),
-                    vol.Optional(
-                        cached_input_key,
-                        default=options.get(cached_input_key, pricing["cached_input"]),
-                    ): selector.NumberSelector(
-                        selector.NumberSelectorConfig(
-                            min=0.0, max=100.0, step=0.01, mode=selector.NumberSelectorMode.BOX
-                        )
-                    ),
-                    vol.Optional(
-                        output_key,
-                        default=options.get(output_key, pricing["output"]),
-                    ): selector.NumberSelector(
-                        selector.NumberSelectorConfig(
-                            min=0.0, max=100.0, step=0.01, mode=selector.NumberSelectorMode.BOX
-                        )
-                    ),
-                })
+
+
 
             if user_input is not None:
                 options.update(user_input)
@@ -433,7 +418,7 @@ class XAIOptionsFlow(ConfigSubentryFlow):
                     ): str,
                     vol.Optional(
                         CONF_CHAT_MODEL,
-                        default=model,
+                        description={"suggested_value": model},
                     ): selector.SelectSelector(
                         selector.SelectSelectorConfig(
                             options=SUPPORTED_MODELS,
@@ -490,7 +475,7 @@ class XAIOptionsFlow(ConfigSubentryFlow):
                     ): selector.TemplateSelector(),
                     vol.Optional(
                         CONF_CHAT_MODEL,
-                        default=model,
+                        description={"suggested_value": model},
                     ): selector.SelectSelector(
                         selector.SelectSelectorConfig(
                             options=SUPPORTED_MODELS,
@@ -541,11 +526,24 @@ class XAIOptionsFlow(ConfigSubentryFlow):
         else:
             # ai_task_data and code_task schemas stay as they are
             model = options.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL)
-            step_schema.update({
+
+            # Build base schema
+            base_fields = {
                 vol.Optional(
                     CONF_PROMPT,
                     description={"suggested_value": options.get(CONF_PROMPT, "")},
                 ): selector.TemplateSelector(),
+            }
+
+            # Add vision_prompt field only for ai_task_data
+            if self._subentry_type == "ai_task_data":
+                base_fields[vol.Optional(
+                    CONF_VISION_PROMPT,
+                    description={"suggested_value": options.get(CONF_VISION_PROMPT, RECOMMENDED_AI_TASK_OPTIONS[CONF_VISION_PROMPT])},
+                )] = selector.TemplateSelector()
+
+            # Continue with common fields
+            base_fields.update({
                 vol.Optional(
                     CONF_API_HOST,
                     default=options.get(CONF_API_HOST, DEFAULT_API_HOST),
@@ -559,6 +557,34 @@ class XAIOptionsFlow(ConfigSubentryFlow):
                         mode=selector.SelectSelectorMode.DROPDOWN,
                     )
                 ),
+            })
+
+            # Add image and vision model fields for ai_task_data right after chat model
+            if self._subentry_type == "ai_task_data":
+                image_model = options.get(CONF_IMAGE_MODEL, RECOMMENDED_AI_TASK_OPTIONS[CONF_IMAGE_MODEL])
+                base_fields[vol.Optional(
+                    CONF_IMAGE_MODEL,
+                    default=image_model,
+                )] = selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=SUPPORTED_MODELS,
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                )
+
+                vision_model = options.get(CONF_VISION_MODEL, RECOMMENDED_AI_TASK_OPTIONS[CONF_VISION_MODEL])
+                base_fields[vol.Optional(
+                    CONF_VISION_MODEL,
+                    default=vision_model,
+                )] = selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=SUPPORTED_MODELS,
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                )
+
+            # Add remaining common fields
+            base_fields.update({
                 vol.Optional(
                     CONF_MAX_TOKENS,
                     default=options.get(CONF_MAX_TOKENS),
@@ -584,6 +610,8 @@ class XAIOptionsFlow(ConfigSubentryFlow):
                     )
                 ),
             })
+
+            step_schema.update(base_fields)
 
             # Add code_task specific fields
             if self._subentry_type == "code_task":
