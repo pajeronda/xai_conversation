@@ -58,7 +58,6 @@ photo_analysis:
     Analyze one or multiple photos using Grok Vision AI.
     Supports both local file paths and URLs. Can process documents, diagrams, charts, screenshots, and photographs.
     Uses the vision model configured in AI Task settings (default: grok-2-vision-1212).
-  response: optional
   fields:
     prompt:
       name: Prompt
