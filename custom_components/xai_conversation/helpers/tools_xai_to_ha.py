@@ -1,4 +1,5 @@
 """Tool conversion utilities between HA and xAI formats."""
+
 from __future__ import annotations
 
 import json
@@ -41,9 +42,9 @@ def _safe_parse_tool_arguments(raw_args) -> dict:
 
     # Try to convert to dict if possible
     try:
-        if hasattr(raw_args, '__dict__'):
+        if hasattr(raw_args, "__dict__"):
             return vars(raw_args)
-        elif hasattr(raw_args, 'items'):
+        elif hasattr(raw_args, "items"):
             return dict(raw_args)
     except Exception as err:
         LOGGER.debug("Could not convert args to dict: %s", err)
@@ -60,7 +61,7 @@ def _sanitize_argument_value(key: str, value: Any) -> Any:
     # Handle list-like values first
     if isinstance(value, (list, tuple)):
         # Specific handler for RGB color lists
-        if key == 'rgb_color':
+        if key == "rgb_color":
             try:
                 # Ensure 3 values and convert them to integers
                 return [int(float(c)) for c in value[:3]]
@@ -69,11 +70,13 @@ def _sanitize_argument_value(key: str, value: Any) -> Any:
                 return None  # Return None if format is invalid
 
         # Specific handler for domain/device_class which should be strings
-        if key in ('domain', 'device_class'):
+        if key in ("domain", "device_class"):
             return value[0] if value else ""
 
         # Generic handler for other unexpected lists
-        LOGGER.warning("Unexpected list value for %s: %s, taking first element", key, value)
+        LOGGER.warning(
+            "Unexpected list value for %s: %s, taking first element", key, value
+        )
         return value[0] if value else ""
 
     # For non-list values, convert to string and strip
@@ -82,32 +85,63 @@ def _sanitize_argument_value(key: str, value: Any) -> Any:
         return None
 
     # Handle boolean-like strings
-    if str_value.lower() in ('true', 'false'):
-        return str_value.lower() == 'true'
+    if str_value.lower() in ("true", "false"):
+        return str_value.lower() == "true"
 
     # Handle numeric strings for specific keys
-    if key in ('brightness_pct', 'color_temp', 'temperature'):
+    if key in ("brightness_pct", "color_temp", "temperature"):
         try:
-            return float(str_value) if '.' in str_value else int(str_value)
+            return float(str_value) if "." in str_value else int(str_value)
         except ValueError:
-            LOGGER.debug("Could not convert %s to number: %s. Returning as string.", key, str_value)
+            LOGGER.debug(
+                "Could not convert %s to number: %s. Returning as string.",
+                key,
+                str_value,
+            )
             # Fall through to return the original string if conversion fails
 
     return str_value
 
 
 def _validate_brightness(args: dict, tool_name: str) -> dict:
-    """Validate and clamp brightness values for light tools."""
-    for key in ("brightness", "brightness_pct"):
-        if key in args:
-            try:
-                brightness = int(float(args[key]))
-                # Clamp value to the valid 0-100 range
-                args[key] = max(0, min(100, brightness))
-                LOGGER.debug("Validated and clamped '%s' to %d for %s", key, args[key], tool_name)
-            except (ValueError, TypeError):
-                LOGGER.warning("Invalid value for '%s' in %s: %s. Removing.", key, tool_name, args[key])
-                args.pop(key)
+    """Validate and clamp brightness values for light tools, handling both 0-255 and 0-100 scales."""
+    # Handle brightness_pct (0-100 scale)
+    if "brightness_pct" in args:
+        try:
+            brightness = int(float(args["brightness_pct"]))
+            args["brightness_pct"] = max(0, min(100, brightness))
+            LOGGER.debug(
+                "Validated and clamped 'brightness_pct' to %d for %s",
+                args["brightness_pct"],
+                tool_name,
+            )
+        except (ValueError, TypeError):
+            LOGGER.warning(
+                "Invalid value for 'brightness_pct' in %s: %s. Removing.",
+                tool_name,
+                args["brightness_pct"],
+            )
+            args.pop("brightness_pct")
+
+    # Handle brightness (0-255 scale)
+    if "brightness" in args:
+        try:
+            brightness = int(float(args["brightness"]))
+            # Clamp value to the valid 0-255 range
+            args["brightness"] = max(0, min(255, brightness))
+            LOGGER.debug(
+                "Validated and clamped 'brightness' to %d for %s",
+                args["brightness"],
+                tool_name,
+            )
+        except (ValueError, TypeError):
+            LOGGER.warning(
+                "Invalid value for 'brightness' in %s: %s. Removing.",
+                tool_name,
+                args["brightness"],
+            )
+            args.pop("brightness")
+
     return args
 
 
@@ -118,9 +152,17 @@ def _validate_position(args: dict, tool_name: str) -> dict:
             position = int(float(args["position"]))
             # Clamp value to the valid 0-100 range
             args["position"] = max(0, min(100, position))
-            LOGGER.debug("Validated and clamped 'position' to %d for %s", args["position"], tool_name)
+            LOGGER.debug(
+                "Validated and clamped 'position' to %d for %s",
+                args["position"],
+                tool_name,
+            )
         except (ValueError, TypeError):
-            LOGGER.warning("Invalid value for 'position' in %s: %s. Removing.", tool_name, args["position"])
+            LOGGER.warning(
+                "Invalid value for 'position' in %s: %s. Removing.",
+                tool_name,
+                args["position"],
+            )
             args.pop("position")
     return args
 
@@ -132,7 +174,11 @@ def _validate_temperature(args: dict, tool_name: str) -> dict:
             # Just ensure it's a valid float, no clamping unless we know the unit
             float(args["temperature"])
         except (ValueError, TypeError):
-            LOGGER.warning("Invalid value for 'temperature' in %s: %s. Removing.", tool_name, args["temperature"])
+            LOGGER.warning(
+                "Invalid value for 'temperature' in %s: %s. Removing.",
+                tool_name,
+                args["temperature"],
+            )
             args.pop("temperature")
     return args
 
@@ -149,22 +195,33 @@ def _validate_timer_duration(args: dict, tool_name: str) -> dict:
                 else:
                     # Minutes and seconds must be 0-59
                     args[key] = max(0, min(59, value))
-                LOGGER.debug("Validated and clamped '%s' to %d for %s", key, args[key], tool_name)
+                LOGGER.debug(
+                    "Validated and clamped '%s' to %d for %s", key, args[key], tool_name
+                )
             except (ValueError, TypeError):
-                LOGGER.warning("Invalid value for '%s' in %s: %s. Removing.", key, tool_name, args[key])
+                LOGGER.warning(
+                    "Invalid value for '%s' in %s: %s. Removing.",
+                    key,
+                    tool_name,
+                    args[key],
+                )
                 args.pop(key)
     return args
 
 
 def _validate_calendar_dates(args: dict, tool_name: str) -> dict:
     """Validate date format for calendar tools (YYYY-MM-DD)."""
-    date_pattern = re.compile(r'^\d{4}-\d{2}-\d{2}$')
+    date_pattern = re.compile(r"^\d{4}-\d{2}-\d{2}$")
     for key in ("start_date", "end_date"):
         if key in args:
             date_str = str(args[key]).strip()
             if not date_pattern.match(date_str):
-                LOGGER.warning("Invalid date format for '%s' in %s: %s (expected YYYY-MM-DD). Removing.",
-                             key, tool_name, args[key])
+                LOGGER.warning(
+                    "Invalid date format for '%s' in %s: %s (expected YYYY-MM-DD). Removing.",
+                    key,
+                    tool_name,
+                    args[key],
+                )
                 args.pop(key)
             else:
                 # Keep the validated string
@@ -179,8 +236,12 @@ def _validate_todo_status(args: dict, tool_name: str) -> dict:
         status = str(args["status"]).strip().lower()
         valid_statuses = ("needs_action", "completed")
         if status not in valid_statuses:
-            LOGGER.warning("Invalid status for %s: %s (expected: %s). Removing.",
-                         tool_name, args["status"], valid_statuses)
+            LOGGER.warning(
+                "Invalid status for %s: %s (expected: %s). Removing.",
+                tool_name,
+                args["status"],
+                valid_statuses,
+            )
             args.pop("status")
         else:
             args["status"] = status
@@ -207,7 +268,9 @@ _TOOL_VALIDATORS = {
 }
 
 
-def _apply_tool_specific_validation(hass: HA_HomeAssistant, tool_name: str, args: dict) -> dict:
+def _apply_tool_specific_validation(
+    hass: HA_HomeAssistant, tool_name: str, args: dict
+) -> dict:
     """Apply tool-specific validation by dispatching to the correct validator.
 
     This function adds a layer of validation to tool arguments to ensure they
@@ -228,7 +291,9 @@ def _apply_tool_specific_validation(hass: HA_HomeAssistant, tool_name: str, args
     return args
 
 
-def _validate_and_sanitize_args(hass: HA_HomeAssistant, tool_name: str, tool_args: dict) -> dict:
+def _validate_and_sanitize_args(
+    hass: HA_HomeAssistant, tool_name: str, tool_args: dict
+) -> dict:
     """Validate and sanitize tool arguments for HA compatibility."""
     if not isinstance(tool_args, dict):
         LOGGER.warning("Tool args not a dict for %s: %s", tool_name, type(tool_args))
@@ -255,8 +320,12 @@ def convert_xai_to_ha_tool(hass: HA_HomeAssistant, xai_tool_call) -> ha_llm.Tool
     tool_name = xai_tool_call.function.name
     raw_args = xai_tool_call.function.arguments
 
-    LOGGER.debug("Converting xAI tool call: %s with raw args: %s (type: %s)",
-                tool_name, raw_args, type(raw_args))
+    LOGGER.debug(
+        "Converting xAI tool call: %s with raw args: %s (type: %s)",
+        tool_name,
+        raw_args,
+        type(raw_args),
+    )
 
     # Parse arguments safely
     tool_args = _safe_parse_tool_arguments(raw_args)

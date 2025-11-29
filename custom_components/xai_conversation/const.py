@@ -1,4 +1,5 @@
 """Constants for xAI Grok Conversation integration."""
+
 import logging
 from homeassistant.const import CONF_LLM_HASS_API
 from homeassistant.helpers import llm
@@ -13,6 +14,9 @@ DEFAULT_AI_TASK_NAME = "xAI Task"
 DEFAULT_GROK_CODE_FAST_NAME = "Grok Code Fast"
 DEFAULT_SENSORS_NAME = "xAI Token Sensors"
 DEFAULT_API_HOST = "api.x.ai"
+
+# Default assistant names for different services
+DEFAULT_CODE_FAST_ASSISTANT_NAME = "Grok Code Fast"
 # xAI specific configuration keys
 CONF_CHAT_MODEL = "chat_model"
 CONF_IMAGE_MODEL = "image_model"
@@ -30,8 +34,9 @@ CONF_LIVE_SEARCH = "live_search"
 CONF_STORE_MESSAGES = "store_messages"
 CONF_SEND_USER_NAME = "send_user_name"
 CONF_TIMEOUT = "timeout"
-CONF_PROMPT = "prompt" # User instructions for tools/non-pipeline mode
-CONF_VISION_PROMPT = "vision_prompt" # System prompt for photo analysis
+CONF_PROMPT = "prompt"  # User instructions for tools/non-pipeline mode
+CONF_PROMPT_CODE = "prompt_code"  # Custom instructions for code_fast mode
+CONF_VISION_PROMPT = "vision_prompt"  # System prompt for photo analysis
 CONF_API_HOST = "api_host"
 CONF_ASSISTANT_NAME = "assistant_name"  # Customizable assistant name
 # Memory configuration - separate settings for users and devices
@@ -39,15 +44,17 @@ CONF_MEMORY_USER_TTL_HOURS = "memory_user_ttl_hours"
 CONF_MEMORY_USER_MAX_TURNS = "memory_user_max_turns"
 CONF_MEMORY_DEVICE_TTL_HOURS = "memory_device_ttl_hours"
 CONF_MEMORY_DEVICE_MAX_TURNS = "memory_device_max_turns"
-CONF_MEMORY_CLEANUP_INTERVAL_HOURS = "memory_cleanup_interval_hours"  # Interval for periodic cleanup
+CONF_MEMORY_CLEANUP_INTERVAL_HOURS = (
+    "memory_cleanup_interval_hours"  # Interval for periodic cleanup
+)
 
-# Model pricing keys are generated dynamically as: {model_name_with_underscores}_{input|output}_price
-# Example: grok_4_input_price, grok_4_output_price
-# Default values optimized for grok-4-1-fast-non-reasoning
+# Model pricing is fetched dynamically from xAI API and displayed in XAIPricingSensor entities
+# Pricing sensors are created automatically for all available models at startup
+# Default model recommendations optimized for grok-4-1-fast-non-reasoning
 RECOMMENDED_CHAT_MODEL = "grok-4-1-fast-non-reasoning"
 RECOMMENDED_GROK_CODE_FAST_MODEL = "grok-code-fast-1"
 RECOMMENDED_AI_TASK_MODEL = "grok-code-fast-1"
-RECOMMENDED_IMAGE_MODEL = "grok-2-1212"  # Model for image generation
+RECOMMENDED_IMAGE_MODEL = "grok-2-image-1212"  # Model for image generation (Aurora)
 RECOMMENDED_VISION_MODEL = "grok-2-vision-1212"  # Model for photo analysis
 RECOMMENDED_MAX_TOKENS = 2000
 RECOMMENDED_TEMPERATURE = 1.0
@@ -63,14 +70,20 @@ RECOMMENDED_MEMORY_USER_MAX_TURNS = 1000  # 1000 turns for users
 RECOMMENDED_MEMORY_DEVICE_TTL_HOURS = 24 * 7  # 7 days for voice satellites
 RECOMMENDED_MEMORY_DEVICE_MAX_TURNS = 100  # 100 turns for voice satellites
 RECOMMENDED_MEMORY_CLEANUP_INTERVAL_HOURS = 24  # Run cleanup every 24 hours
-RECOMMENDED_CHAT_HISTORY_MAX_MESSAGES = 100  # Max messages stored per conversation in ChatHistoryService
+RECOMMENDED_CHAT_HISTORY_MAX_MESSAGES = (
+    100  # Max messages stored per conversation in ChatHistoryService
+)
 # Maximum conversation history turns to send when server-side memory is disabled
 RECOMMENDED_HISTORY_LIMIT_TURNS = 10  # 10 turns = 20 messages (user+assistant)
-# Subentry types
+# Subentry types (aligned with service_type for consistency)
 SUBENTRY_TYPE_CONVERSATION = "conversation"
-SUBENTRY_TYPE_AI_TASK = "ai_task_data"
-SUBENTRY_TYPE_CODE_TASK = "code_task"
+SUBENTRY_TYPE_AI_TASK = "ai_task"
+SUBENTRY_TYPE_CODE_TASK = "code_fast"
 SUBENTRY_TYPE_SENSORS = "sensors"
+
+
+# Dynamic model pricing and details will be fetched from xAI API
+# DEFAULT_MODEL_PRICING is removed as per optimization
 
 # Supported models from xAI documentation
 # Supported models from xAI documentation - populated dynamically at runtime
@@ -78,9 +91,6 @@ SUPPORTED_MODELS: list[str] = []
 
 # Models that support reasoning_effort parameter - populated dynamically at runtime
 REASONING_EFFORT_MODELS: list[str] = []
-
-# Dynamic model pricing and details will be fetched from xAI API
-# DEFAULT_MODEL_PRICING is removed as per optimization
 
 # ==============================================================================
 # MODULAR PROMPT SYSTEM - Building Blocks
@@ -94,19 +104,22 @@ REASONING_EFFORT_MODELS: list[str] = []
 # which assembles blocks in this order:
 #
 # 1. PROMPT_IDENTITY                    (always)
-# 2. PROMPT_ROLE_BASE                   (always)
+# 2. PROMPT_ROLE_BASE                   (always for conversation modes)
 # 3. PROMPT_MEMORY_* (serverside/client) (based on store_messages)
 # 4. MODE-SPECIFIC BLOCKS:
+#    - Code mode:                 CODE_ROLE → [USER_INSTRUCTIONS] → CODE_OUTPUT_FORMAT
 #    - Pipeline + allow_control:  RECOGNITION → CUSTOM_RULES → DECISION_LOGIC → EXAMPLES
 #    - Tools + allow_control:     TOOLS_USAGE
 #    - Chat-only or !allow_control: NO_CONTROL
-# 5. PROMPT_OUTPUT_FORMAT               (always)
+# 5. PROMPT_OUTPUT_FORMAT               (conversation/pipeline/tools modes only)
 # ==============================================================================
 
 # -----------------------------------------------------------------------------
 # 1. IDENTITY BLOCK (always present)
 # -----------------------------------------------------------------------------
-PROMPT_IDENTITY = """You are {assistant_name}, a powerfull assistant for Home Assistant."""
+PROMPT_IDENTITY = (
+    """You are {assistant_name}, a powerfull assistant for Home Assistant."""
+)
 
 # -----------------------------------------------------------------------------
 # 2. ROLE BASE BLOCK (always present)
@@ -170,7 +183,16 @@ PROMPT_NO_CONTROL = """Limitations:
 - If asked to control a device, reply that the user must enable the functionality in the settings"""
 
 # -----------------------------------------------------------------------------
-# 7. OUTPUT FORMAT BLOCK (always present at the end)
+# 7. CODE MODE BLOCKS (for Code Fast service)
+# -----------------------------------------------------------------------------
+PROMPT_CODE_ROLE = """You are a sharp Home Assistant dev assistant focused on YAML, Jinja, Python automations, javascript and custom components. Craft tight, scalable code that slots right into HA: 2-space YAML indents, smart Jinja defaults for None/unavailable (|default()), async Python with HA APIs, PEP 8, error logs, and entity validations. Scan uploads for structure, deps, and fixes—improve with specific changes. Use state_attr() safely, set device_class/units, tune scan_intervals."""
+
+PROMPT_CODE_OUTPUT_FORMAT = """Output format: Return a direct JSON object (not stringified) with two fields:
+{"response_text": "Concise steps, rationale, setup tips, tests, or troubleshooting.", "response_code": "Pure code without markdown fences."}
+Rules: Keep explanations in response_text, raw code in response_code (no ``` fences). No code? Leave response_code empty. File uploads: Return full updated content in response_code. Multi-files: Separate with two blank lines and comment headers like '# file: filename.yaml'. Explain changes in response_text. Escape special characters within JSON strings (\\n for newlines, \\" for quotes). Use the user's language for response_text."""
+
+# -----------------------------------------------------------------------------
+# 8. OUTPUT FORMAT BLOCK (conversation/pipeline/tools modes)
 # -----------------------------------------------------------------------------
 PROMPT_OUTPUT_FORMAT = """Output Format:
 - Follow the user's language and communication style.
@@ -190,12 +212,6 @@ IMPORTANT OUTPUT RULES:
 5. Do not include explanations, comments, or additional text beyond what is requested
 6. Ensure all YAML uses 2-space indentation and follows Home Assistant conventions"""
 
-
-# Grok Code Task optimized prompt per xAI specifications: 240 token
-GROK_CODE_FAST_PROMPT="""You are Grok Code Fast, a sharp Home Assistant dev assistant focused on YAML, Jinja, Python automations, javascript and custom components. Craft tight, scalable code that slots right into HA: 2-space YAML indents, smart Jinja defaults for None/unavailable (|default()), async Python with HA APIs, PEP 8, error logs, and entity validations. Scan uploads for structure, deps, and fixes—improve with specific changes. Use state_attr() safely, set device_class/units, tune scan_intervals.
-Output format: Return a direct JSON object (not stringified) with two fields:
-{"response_text": "Concise steps, rationale, setup tips, tests, or troubleshooting.", "response_code": "Pure code without markdown fences."}
-Rules: Keep explanations in response_text, raw code in response_code (no ``` fences). No code? Leave response_code empty. File uploads: Return full updated content in response_code. Multi-files: Separate with two blank lines and comment headers like '# file: filename.yaml'. Explain changes in response_text. Escape special characters within JSON strings (\n for newlines, \" for quotes). Use the user's language for response_text."""
 
 # Vision analysis system prompt - concise and factual
 VISION_ANALYSIS_PROMPT = """Be concise and factual in your image analysis. Always respond in the user's language."""
@@ -260,10 +276,11 @@ RECOMMENDED_GROK_CODE_FAST_OPTIONS = {
     CONF_CHAT_MODEL: RECOMMENDED_GROK_CODE_FAST_MODEL,
     CONF_MAX_TOKENS: 5000,
     CONF_TEMPERATURE: 0.1,
-    CONF_PROMPT: GROK_CODE_FAST_PROMPT,
+    CONF_PROMPT_CODE: "",  # Empty default - PromptManager builds prompt from modular blocks
     CONF_TOP_P: RECOMMENDED_TOP_P,
     CONF_LIVE_SEARCH: RECOMMENDED_LIVE_SEARCH,
     CONF_STORE_MESSAGES: True,  # Enable server-side memory via xAI previous_response_id chaining
+    CONF_ASSISTANT_NAME: DEFAULT_CODE_FAST_ASSISTANT_NAME,
 }
 
 # ==============================================================================
@@ -272,13 +289,19 @@ RECOMMENDED_GROK_CODE_FAST_OPTIONS = {
 
 # Token pricing and cost calculation
 TOKENS_PER_MILLION = 1_000_000  # Division factor for token pricing calculations
-
+XAI_PRICING_CONVERSION_FACTOR = 10000.0 # API returns prices in units of 0.0001 USD per 1M tokens
 # Sensor update intervals
-PRICING_UPDATE_INTERVAL_HOURS = 12  # How often to fetch model pricing from xAI API
-COST_UPDATE_INTERVAL_HOURS = 12  # How often to recalculate costs (runs after pricing update)
+PRICING_UPDATE_INTERVAL_HOURS = (
+    48  # How often to fetch model pricing from xAI API (prices rarely change)
+)
+COST_UPDATE_INTERVAL_HOURS = (
+    12  # How often to recalculate costs (runs after pricing update)
+)
 
 # New models detection
-NEW_MODEL_NOTIFICATION_DAYS = 7  # How long to show new model notifications before auto-dismissal
+NEW_MODEL_NOTIFICATION_DAYS = (
+    7  # How long to show new model notifications before auto-dismissal
+)
 
 # ==============================================================================
 # END OF SENSOR CONFIGURATION CONSTANTS

@@ -1,5 +1,8 @@
 """Conversation utilities for xAI conversation."""
+
 from __future__ import annotations
+
+from datetime import datetime
 
 from homeassistant.components import conversation as ha_conversation
 
@@ -52,6 +55,7 @@ async def get_user_or_device_name(user_input, hass) -> tuple[str | None, str]:
     if device_id:
         try:
             from homeassistant.helpers import device_registry as dr
+
             device_registry = dr.async_get(hass)
             device = device_registry.async_get(device_id)
             if device:
@@ -78,3 +82,72 @@ def parse_id_list(value: str | list) -> list[str]:
     if isinstance(value, str):
         return [item for item in (s.strip() for s in value.split(",")) if item]
     return list(value) if value else []
+
+
+async def format_user_message_with_metadata(
+    message: str, user_input, hass, send_user_name: bool, include_timestamp: bool = True
+) -> str:
+    """Format user message with optional timestamp and user/device name prefix.
+
+    This is a shared helper to avoid code duplication across pipeline and tools modes.
+
+    Args:
+        message: The raw user message
+        user_input: ConversationInput object
+        hass: Home Assistant instance
+        send_user_name: Whether to include user/device name
+        include_timestamp: Whether to include timestamp
+
+    Returns:
+        Formatted message with metadata
+    """
+    timestamp = (
+        datetime.now().strftime("%Y-%m-%d %H:%M:%S") if include_timestamp else None
+    )
+
+    if send_user_name:
+        name, source_type = await get_user_or_device_name(user_input, hass)
+        if name and source_type == "user":
+            prefix = f"[User: {name}]"
+        elif name and source_type == "device":
+            prefix = f"[Device: {name}]"
+        else:
+            prefix = None
+
+        # Build final prefix
+        if prefix and timestamp:
+            full_prefix = f"{prefix} [Time: {timestamp}] "
+        elif prefix:
+            full_prefix = f"{prefix} "
+        elif timestamp:
+            full_prefix = f"[Time: {timestamp}] "
+        else:
+            full_prefix = ""
+
+        return f"{full_prefix}{message}"
+    else:
+        # Default behavior: only timestamp in parentheses
+        if timestamp:
+            return f"({timestamp}) {message}"
+        return message
+
+
+def build_session_context_info(hass) -> str:
+    """Build session context information (timestamp, timezone, country).
+
+    This is added to system prompts to provide temporal and geographic context
+    without breaking cache on subsequent messages.
+
+    Args:
+        hass: Home Assistant instance
+
+    Returns:
+        Formatted session context string
+    """
+    session_start = datetime.now()
+    return (
+        f"\n\nSession Context:"
+        f"\n- Started at: {session_start.strftime('%Y-%m-%d %H:%M:%S %Z')}"
+        f"\n- Timezone: {hass.config.time_zone}"
+        f"\n- Country: {hass.config.country}"
+    )

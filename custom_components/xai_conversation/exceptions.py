@@ -7,7 +7,7 @@ import time
 from homeassistant.exceptions import (
     HomeAssistantError as HA_HomeAssistantError,
     ConfigEntryNotReady as HA_ConfigEntryNotReady,
-    ServiceValidationError
+    ServiceValidationError,
 )
 from .const import LOGGER
 
@@ -33,7 +33,9 @@ class XAIConnectionError(HA_HomeAssistantError):
         # Map gRPC status codes to user-friendly messages
         if status_code == grpc.StatusCode.UNAUTHENTICATED:
             LOGGER.error("Authentication failed: Invalid API key")
-            message = "Authentication failed. Please check your xAI API key configuration."
+            message = (
+                "Authentication failed. Please check your xAI API key configuration."
+            )
         elif status_code == grpc.StatusCode.PERMISSION_DENIED:
             LOGGER.error("Permission denied: API key lacks required permissions")
             message = "Permission denied. Your API key may not have the required permissions for this operation."
@@ -59,11 +61,16 @@ class XAIConnectionError(HA_HomeAssistantError):
             LOGGER.info("Request was cancelled")
             message = "The request was cancelled. Please try again."
         elif status_code == grpc.StatusCode.DATA_LOSS:
-            LOGGER.error("Data loss error (likely failed to fetch image from URL): %s", error_details)
+            LOGGER.error(
+                "Data loss error (likely failed to fetch image from URL): %s",
+                error_details,
+            )
             message = "Failed to fetch image from provided URL. Please check the image URL is accessible."
         else:
             LOGGER.error("Unknown gRPC error: %s - %s", status_code, error_details)
-            message = f"An error occurred while communicating with xAI: {status_code.name}"
+            message = (
+                f"An error occurred while communicating with xAI: {status_code.name}"
+            )
 
         return cls(message)
 
@@ -96,12 +103,16 @@ class XAIConfigurationError(HA_HomeAssistantError):
 
 
 # Centralized error helper functions
-def raise_auth_error(message: str = "Authentication failed. Please check your xAI API key.") -> None:
+def raise_auth_error(
+    message: str = "Authentication failed. Please check your xAI API key.",
+) -> None:
     """Raise authentication error with consistent messaging."""
     raise XAIConnectionError(message)
 
 
-def raise_communication_error(message: str = "Communication error with xAI service. Please try again.") -> None:
+def raise_communication_error(
+    message: str = "Communication error with xAI service. Please try again.",
+) -> None:
     """Raise communication error with consistent messaging."""
     raise XAIConnectionError(message)
 
@@ -131,7 +142,9 @@ def raise_config_not_ready(message: str) -> None:
     raise HA_ConfigEntryNotReady(message)
 
 
-def handle_api_error(err: Exception, start_time: float, context: str = "API call") -> None:
+def handle_api_error(
+    err: Exception, start_time: float, context: str = "API call"
+) -> None:
     """Centralized error handling for xAI API calls with timing and classification.
 
     Args:
@@ -147,25 +160,59 @@ def handle_api_error(err: Exception, start_time: float, context: str = "API call
 
     # Handle gRPC errors specifically
     if isinstance(err, grpc.RpcError):
-        LOGGER.error("gRPC error in %s after %.2f seconds: %s (status: %s)",
-                    context, elapsed, err.details(), err.code())
+        LOGGER.error(
+            "gRPC error in %s after %.2f seconds: %s (status: %s)",
+            context,
+            elapsed,
+            err.details(),
+            err.code(),
+        )
         raise XAIConnectionError.from_grpc_error(err) from err
 
     # Handle other exceptions with error message classification
     error_msg = str(err)
 
     if "Tool has no" in error_msg and "field" in error_msg:
-        LOGGER.error("Tool validation error in %s after %.2f seconds: %s", context, elapsed, err, exc_info=True)
-        raise_tool_error("tool_validation", "Tool configuration error. Please check the integration setup.")
+        LOGGER.error(
+            "Tool validation error in %s after %.2f seconds: %s",
+            context,
+            elapsed,
+            err,
+            exc_info=True,
+        )
+        raise_tool_error(
+            "tool_validation",
+            "Tool configuration error. Please check the integration setup.",
+        )
     elif "grpc" in error_msg.lower() or "channel" in error_msg.lower():
-        LOGGER.error("gRPC communication error in %s after %.2f seconds: %s", context, elapsed, err, exc_info=True)
+        LOGGER.error(
+            "gRPC communication error in %s after %.2f seconds: %s",
+            context,
+            elapsed,
+            err,
+            exc_info=True,
+        )
         raise_communication_error()
     elif "authentication" in error_msg.lower() or "api_key" in error_msg.lower():
-        LOGGER.error("Authentication error in %s after %.2f seconds: %s", context, elapsed, err, exc_info=True)
+        LOGGER.error(
+            "Authentication error in %s after %.2f seconds: %s",
+            context,
+            elapsed,
+            err,
+            exc_info=True,
+        )
         raise_auth_error()
     else:
-        LOGGER.error("Unexpected error in %s after %.2f seconds: %s", context, elapsed, err, exc_info=True)
-        raise_generic_error(f"An unexpected error occurred during {context}: {error_msg}")
+        LOGGER.error(
+            "Unexpected error in %s after %.2f seconds: %s",
+            context,
+            elapsed,
+            err,
+            exc_info=True,
+        )
+        raise_generic_error(
+            f"An unexpected error occurred during {context}: {error_msg}"
+        )
 
 
 # Re-export HA exceptions for centralized access

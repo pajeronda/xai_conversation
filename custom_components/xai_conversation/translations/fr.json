@@ -73,6 +73,7 @@
             "allow_smart_home_control": "Autoriser le contrôle de la maison intelligente",
             "live_search": "Mode de recherche en direct",
             "store_messages": "Mémoriser les messages",
+            "assistant_name": "Nom de l'assistant",
             "send_user_name": "Inclure le nom d'utilisateur dans les messages",
             "reasoning_effort": "Niveau de raisonnement"
           },
@@ -87,6 +88,7 @@
             "pipeline_prompt": "Texte optionnel ajouté au prompt de la canalisation par default. Utilisez-le pour des intentions personnalisées ou des règles locales.",
             "allow_smart_home_control": "Si activé, l'assistant peut exécuter des commandes de maison intelligente. Si désactivé, il répond uniquement de manière conversationnelle. La modification de ce paramètre démarrera une nouvelle conversation.",
             "store_messages": "Utilisez la mémoire côté serveur de xAI pour réduire les tokens à envoyer pour chaque requête. Les paramètres de la mémoire (durée, nombre de tours) sont configurés au niveau de l'intégration.",
+            "assistant_name": "Le nom avec lequel l'assistant s'identifiera (par ex. 'Jarvis', 'Alexa', 'HAL'). La modification de cette valeur démarrera une nouvelle conversation et l'historique précédent ne sera plus accessible.",
             "send_user_name": "Ajoutez le nom d'utilisateur de Home Assistant ou le nom du périphérique Assist voice au chat avec Grok.",
             "live_search": "Active les capacités de recherche web : 'off' (désactivé), 'auto' (le modèle décide), 'on' (toujours activé). S'applique aux modes pipeline et outils.",
             "prompt": "Instructions personnalisées pour l'agent (mode outils uniquement).",
@@ -120,7 +122,7 @@
         "reconfigure_successful": "Configuration mise à jour avec succès !"
       }
     },
-    "ai_task_data": {
+    "ai_task": {
       "initiate_flow": {
         "user": "Ajouter tâche IA",
         "reconfigure": "Reconfigurer tâche IA"
@@ -159,18 +161,18 @@
         "reconfigure_successful": "Configuration mise à jour avec succès !"
       }
     },
-    "code_task": {
+    "code_fast": {
       "initiate_flow": {
         "user": "Ajouter Grok Code Fast",
         "reconfigure": "Reconfigurer Grok Code Fast"
       },
-      "entry_type": "code_task",
+      "entry_type": "code_fast",
       "step": {
         "init": {
           "title": "Grok Code Fast",
           "data": {
             "name": "Nom",
-            "prompt": "Prompt",
+            "prompt_code": "Prompt",
             "api_host": "Hôte API ('api.x.ai', 'us-east-1.api.x.ai' ou 'eu-west-1.api.x.ai')",
             "chat_model": "Modèle",
             "max_tokens": "Tokens maximum",
@@ -178,11 +180,12 @@
             "top_p": "Top P",
             "live_search": "Mode de recherche en direct",
             "store_messages": "Mémoriser les messages",
+            "assistant_name": "Nom de l'assistant",
             "reasoning_effort": "Niveau de raisonnement"
           },
           "data_description": {
             "name": "Nom descriptif pour cette tâche Grok Code Fast.",
-            "prompt": "Prompt système complet pour la tâche de code. Remplace celui par default. Modifiez-le avec prudence, car il définit l'expertise de l'assistant et le format de sortie.",
+            "prompt_code": "Instructions personnalisées facultatives ajoutées au prompt par défaut. Utilisez ceci pour des règles spécifiques au projet ou des conventions de codage. Laissez vide pour n'utiliser que le prompt par défaut.",
             "api_host": "Nom d'hôte du point de terminaison API. Utilisez 'api.x.ai' pour le routage global avec redirection automatique vers un hôte régional ou spécifiez directement un hôte régional.",
             "chat_model": "Sélectionnez le modèle Grok à utiliser.",
             "max_tokens": "Nombre maximum de tokens à générer.",
@@ -190,6 +193,7 @@
             "top_p": "Contrôle la diversité des réponses via nucleus sampling (non pris en charge par grok-4).",
             "live_search": "Active les capacités de recherche web : 'off' (désactivé), 'auto' (le modèle décide), 'on' (toujours activé)",
             "store_messages": "Utilisez la mémoire côté serveur de xAI pour maintenir le contexte de la conversation. Les paramètres de la mémoire (durée, nombre de tours) sont configurés au niveau de l'intégration et détectent automatiquement les requêtes provenant d'un utilisateur ou d'un appareil.",
+            "assistant_name": "Le nom que l'assistant utilisera pour s'identifier (par exemple, 'Grok Code Fast', 'CodeBot', 'DevAssistant'). Changer cette valeur démarrera une new conversation, et l'historique précédent deviendra inaccessible.",
             "reasoning_effort": "Niveau d'effort de raisonnement pour les modèles qui le supportent (faible, moyen, élevé)"
           }
         }

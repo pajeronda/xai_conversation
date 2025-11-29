@@ -120,7 +120,7 @@
         "reconfigure_successful": "配置更新成功！"
       }
     },
-    "ai_task_data": {
+    "ai_task": {
       "initiate_flow": {
         "user": "添加 AI 任务",
         "reconfigure": "重新配置 AI 任务"
@@ -159,18 +159,18 @@
         "reconfigure_successful": "配置更新成功！"
       }
     },
-    "code_task": {
+    "code_fast": {
       "initiate_flow": {
         "user": "添加 Grok Code Fast",
         "reconfigure": "重新配置 Grok Code Fast"
       },
-      "entry_type": "code_task",
+      "entry_type": "code_fast",
       "step": {
         "init": {
           "title": "Grok Code Fast",
           "data": {
             "name": "名称",
-            "prompt": "提示词",
+            "prompt_code": "提示词",
             "api_host": "API 主机（'api.x.ai'、'us-east-1.api.x.ai' 或 'eu-west-1.api.x.ai'）",
             "chat_model": "模型",
             "max_tokens": "最大令牌数",
@@ -178,11 +178,12 @@
             "top_p": "Top P",
             "live_search": "实时搜索模式",
             "store_messages": "存储消息",
+            "assistant_name": "助手名称",
             "reasoning_effort": "推理级别"
           },
           "data_description": {
             "name": "此 Grok Code Fast 任务的描述性名称。",
-            "prompt": "代码任务的完整系统提示词。替换默认值。请谨慎编辑，因为它定义了助手的专业知识和输出格式。",
+            "prompt_code": "附加到默认提示的可选自定义指令。用于项目特定规则或编码约定。留空以仅使用默认提示。",
             "api_host": "API 端点主机名。使用 'api.x.ai' 进行全局路由并自动重定向到区域主机，或直接指定区域主机。",
             "chat_model": "选择要使用的 Grok 模型。",
             "max_tokens": "要生成的最大令牌数。",
@@ -190,7 +191,8 @@
             "top_p": "通过核采样控制响应的多样性（grok-4 不支持）。",
             "live_search": "启用网络搜索功能：'off'（禁用）、'auto'（模型决定）、'on'（始终启用）",
             "store_messages": "使用 xAI 的服务器端内存来维护对话上下文。内存参数（持续时间、轮次数）在集成级别配置，并自动检测来自用户或设备的请求。",
-            "reasoning_effort": "支持此功能的模型的推理级别（低、中、高）"
+            "reasoning_effort": "支持此功能的模型的推理级别（低、中、高）",
+            "assistant_name": "助手用来标识自己的名称（例如 'Grok Code Fast'、'CodeBot'、'DevAssistant'）。更改此值将开始新的对话，以前的历史记录将无法访问。"
           }
         }
       },

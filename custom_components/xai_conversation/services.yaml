@@ -2,17 +2,10 @@
 clear_memory:
   name: Clear Conversation Memory
   description: >
-    Delete conversation memory for selected users/satellites, or physically delete entire storage file.
+    Delete conversation memory for selected users/satellites, or entire storage file.
     NOTE: This will clear ALL conversation histories for the selected users/satellites,
     including conversations with different assistant names, custom prompts, and control modes.
   fields:
-    delete_storage_file:
-      name: Delete Storage File
-      description: Physically delete the entire memory storage file (IRREVERSIBLE - deletes ALL conversations permanently)
-      required: false
-      default: false
-      selector:
-        boolean:
     user_id:
       name: Users
       description: Select specific users to clear memory for
@@ -31,17 +24,23 @@ clear_memory:
           multiple: true
           filter:
             - domain: assist_satellite
-
+    delete_storage_file:
+      name: Delete all
+      description: Clear all memory data for user and device satellites
+      required: false
+      default: false
+      selector:
+        boolean:
+        
 reset_token_stats:
   name: Reset Token Statistics
-  description: Reset all 10 token sensors (6 per-service + 4 aggregated) to zero for the entire xAI Conversation integration. This resets conversation, ai_task, code_fast, and aggregated sensors. Useful when you reload credits on xAI and want to track consumption from that point.
+  description: Reset all token sensors for the entire xAI Conversation integration. Useful when you reload credits on xAI and want to track consumption from that point.
 
 reload_pricing:
   name: Reload Pricing Data
   description: >
     Manually triggers an update of the xAI model pricing information from the API.
     This will fetch the latest pricing for all models and update the pricing sensors.
-    Use this after the code has been updated or to refresh stale pricing data.
   fields: {}
 
 dismiss_new_models:
@@ -57,7 +56,7 @@ photo_analysis:
   description: >
     Analyze one or multiple photos using Grok Vision AI.
     Supports both local file paths and URLs. Can process documents, diagrams, charts, screenshots, and photographs.
-    Uses the vision model configured in AI Task settings (default: grok-2-vision-1212).
+    Uses the vision model configured in AI Task settings.
   fields:
     prompt:
       name: Prompt

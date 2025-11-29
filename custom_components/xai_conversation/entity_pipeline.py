@@ -3,14 +3,14 @@ from __future__ import annotations
 # Standard library imports
 import asyncio
 import re
-from typing import Optional
+import time
 
 # Home Assistant imports
 from homeassistant.components.conversation import ConversationInput
 from homeassistant.core import Context
 
-# Home Assistant and standard library imports (re-exported from __init__)
-from .__init__ import datetime, ha_conversation, xai_system, xai_user
+# Home Assistant imports (excluding xAI SDK wrappers)
+from .__init__ import ha_conversation
 
 # Local application imports
 from .const import (
@@ -20,57 +20,20 @@ from .const import (
     RECOMMENDED_STORE_MESSAGES,
 )
 from .helpers import (
-    extract_device_id,
+    build_session_context_info,
+    format_user_message_with_metadata,
     get_last_user_message,
-    get_user_or_device_name,
     parse_ha_local_payload,
     PromptManager,
+    save_response_metadata,
+    XAIGateway,
+    extract_device_id,
+    LogTimeServices,
+    timed_stream_generator,
 )
+
 # tag pattern for command parsing
 HA_LOCAL_TAG_PATTERN = re.compile(r"\[\[HA_LOCAL\s*:\s*({.*?})\]\]", re.DOTALL)
-
-class MinimalChatLog:
-    """Minimal chat_log object for fallback mode.
-
-    Simulates ChatLog with only the methods needed by async_process_with_loop:
-    - .content: list of messages
-    - async_add_assistant_content(): to receive the response from tools mode
-    - async_add_delta_content_stream(): for streaming support in fallback mode
-    """
-    def __init__(self, content):
-        self.content = content
-        self._accumulated_content = ""
-
-    async def async_add_assistant_content(self, assistant_content):
-        """Add assistant content to the chat log (simulates HA ChatLog behavior)."""
-        self.content.append(assistant_content)
-        # HA's async_add_assistant_content is an async generator that yields once
-        yield None
-
-    async def async_add_delta_content_stream(self, agent_id: str, stream):
-        """Add delta content stream to the chat log (simulates HA ChatLog streaming behavior).
-
-        This method accumulates deltas and builds the final AssistantContent,
-        mimicking what the real ChatLog does during streaming.
-        """
-        self._accumulated_content = ""
-
-        async for delta in stream:
-            # Accumulate content from deltas
-            if "content" in delta:
-                self._accumulated_content += delta["content"]
-
-            # Yield the delta for consumer to process
-            yield delta
-
-        # After stream ends, add accumulated content to chat log
-        if self._accumulated_content:
-            self.content.append(
-                ha_conversation.AssistantContent(
-                    agent_id=agent_id,
-                    content=self._accumulated_content,
-                )
-            )
 
 
 class IntelligentPipeline:
@@ -99,26 +62,33 @@ class IntelligentPipeline:
         """
         if self._cached_base_prompt is None:
             pipeline_prompt_mgr = PromptManager(self.entity.subentry.data, "pipeline")
-            self._cached_base_prompt = pipeline_prompt_mgr.build_base_prompt_with_user_instructions()
+            self._cached_base_prompt = (
+                pipeline_prompt_mgr.build_base_prompt_with_user_instructions()
+            )
         return self._cached_base_prompt
 
-    async def run(self, chat_log) -> None:
-        """Execute pipeline using chat_log prepared by conversation.py"""
+    async def run(self, chat_log, timer: LogTimeServices) -> None:
+        """Execute pipeline, passing the timer down for API measurement."""
         client = self.entity.gateway.create_client()
 
         # Get memory key and previous response ID from ConversationMemory
-        conv_key, previous_response_id = await self.entity._conversation_memory.get_conv_key_and_prev_id(
-            self.user_input,
-            "pipeline",
-            self.entity.subentry.data
+        (
+            conv_key,
+            previous_response_id,
+        ) = await self.entity._conversation_memory.get_conv_key_and_prev_id(
+            self.user_input, "pipeline", self.entity.subentry.data
         )
 
         # Only use previous_response_id in server-side mode
-        store_messages = self.entity._get_option(CONF_STORE_MESSAGES, RECOMMENDED_STORE_MESSAGES)
+        store_messages = self.entity._get_option(
+            CONF_STORE_MESSAGES, RECOMMENDED_STORE_MESSAGES
+        )
         previous_response_id = previous_response_id if store_messages else None
 
         # Create chat with filtered previous_response_id
-        chat = self.entity.gateway.create_chat(client, tools=None, previous_response_id=previous_response_id)
+        chat = self.entity.gateway.create_chat(
+            client, tools=None, previous_response_id=previous_response_id
+        )
 
         # Build system prompt using cached base prompt + dynamic context
         if not previous_response_id:
@@ -126,64 +96,53 @@ class IntelligentPipeline:
             base_prompt = self._get_base_prompt()
 
             # Add temporal and geographic context to system prompt (only on first message)
-            # This provides Grok with timezone and location info without breaking cache on subsequent messages
-            session_start = datetime.now()
-            context_info = (
-                f"\n\nSession Context:"
-                f"\n- Started at: {session_start.strftime('%Y-%m-%d %H:%M:%S %Z')}"
-                f"\n- Timezone: {self.hass.config.time_zone}"
-                f"\n- Country: {self.hass.config.country}"
-            )
+            context_info = build_session_context_info(self.hass)
             system_prompt = base_prompt + context_info
 
-            LOGGER.debug("PIPELINE FIRST MESSAGE: Adding system prompt (length=%d chars)", len(system_prompt))
+            LOGGER.debug(
+                "PIPELINE FIRST MESSAGE: Adding system prompt (length=%d chars)",
+                len(system_prompt),
+            )
             LOGGER.debug("=" * 80)
-            LOGGER.debug("FULL PIPELINE SYSTEM PROMPT SENT TO GROK (COMPLETE - NOT TRUNCATED)")
+            LOGGER.debug(
+                "FULL PIPELINE SYSTEM PROMPT SENT TO GROK (COMPLETE - NOT TRUNCATED)"
+            )
             LOGGER.debug("=" * 80)
             LOGGER.debug("%s", system_prompt)
             LOGGER.debug("=" * 80)
             LOGGER.debug("END PIPELINE SYSTEM PROMPT")
             LOGGER.debug("=" * 80)
-            chat.append(xai_system(system_prompt))
+            chat.append(XAIGateway.system_msg(system_prompt))
         else:
-            LOGGER.debug("PIPELINE SUBSEQUENT MESSAGE: Skipping system prompt (using previous_response_id)")
+            LOGGER.debug(
+                "PIPELINE SUBSEQUENT MESSAGE: Skipping system prompt (using previous_response_id)"
+            )
 
-        # Pipeline mode is stateless by design - always send only the last user message
-        # The [[HA_LOCAL]] system doesn't require conversation history
         last_user_message = get_last_user_message(chat_log)
         if not last_user_message:
             return
 
-        # Check if user wants to include user/device name
         send_user_name = self.entity._get_option(CONF_SEND_USER_NAME, False)
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        user_message_with_time = await format_user_message_with_metadata(
+            last_user_message, self.user_input, self.hass, send_user_name
+        )
 
-        if send_user_name:
-            name, source_type = await get_user_or_device_name(self.user_input, self.hass)
-            if name and source_type == "user":
-                prefix = f"[User: {name}] [Time: {timestamp}] "
-            elif name and source_type == "device":
-                prefix = f"[Device: {name}] [Time: {timestamp}] "
-            else:
-                # No name available, just timestamp
-                prefix = f"[Time: {timestamp}] "
-            user_message_with_time = f"{prefix}{last_user_message}"
-        else:
-            # Default behavior: only timestamp
-            user_message_with_time = f"({timestamp}) {last_user_message}"
+        chat.append(XAIGateway.user_msg(user_message_with_time))
 
-        chat.append(xai_user(user_message_with_time))
-        
-        # Use native xAI SDK streaming with early detection
         try:
-            await self._stream_and_route(chat, chat_log, conv_key)
+            await self._stream_and_route(chat, chat_log, conv_key, timer)
         except Exception as err:
-            LOGGER.warning("pipeline_stream: streaming failed, using non-streaming fallback | error=%s", err)
+            LOGGER.warning(
+                "pipeline_stream: streaming failed, using non-streaming fallback | error=%s",
+                err,
+            )
             # Fallback: single-shot non-streaming response
-            response = await chat.sample()
+            async with timer.record_api_call():
+                response = await chat.sample()
+
             content = getattr(response, "content", "")
 
-            # Add response directly (no streaming, no command routing)
+            # Add response directly
             if content:
                 async for _ in chat_log.async_add_assistant_content(
                     ha_conversation.AssistantContent(
@@ -193,260 +152,318 @@ class IntelligentPipeline:
                 ):
                     pass
 
-            # Save response metadata using extracted method
-            await self._save_response_metadata(
-                conv_key,
-                getattr(response, "id", None),
-                getattr(response, "usage", None),
-                getattr(response, "model", None)
+            await save_response_metadata(
+                hass=self.hass,
+                entry_id=self.entity.entry.entry_id,
+                usage=getattr(response, "usage", None),
+                model=getattr(response, "model", None),
+                service_type="conversation",
+                mode="pipeline",
+                is_fallback=True,  # Mark as fallback
+                store_messages=store_messages,
+                conv_key=conv_key,
+                response_id=getattr(response, "id", None),
+                entity=self.entity,
             )
 
-    # _xai_stream_async has been removed as part of the migration to native async streaming.
-    # The logic is now integrated directly into _delta_generator.
-
-    async def _delta_generator(self, chat, chat_log, conv_key: str, response_id_holder: dict):
+    async def _delta_generator(
+        self,
+        chat,
+        chat_log,
+        conv_key: str,
+        response_holder: dict,
+        timer: LogTimeServices,
+    ):
         """
-        Generator that yields deltas progressively for streaming using native async.
-        Stream until '[' character, then suspend streaming and buffer everything for command execution.
+        Generator that yields deltas progressively, with API timing handled by timed_stream_generator.
         """
         buffer = ""
         streaming_active = True
+        suspicious_buffer = ""  # Holds a trailing "[" while waiting for next chunk
         new_message = True
         last_response = None
 
         try:
-            # Natively iterate over the async stream
-            async for response, chunk in chat.stream():
+            # The timed_stream_generator wrapper handles all timing and reports it to the timer
+            async for response, chunk in timed_stream_generator(chat.stream(), timer):
                 last_response = response
                 content_chunk = getattr(chunk, "content", None)
                 if content_chunk is None:
                     content_chunk = getattr(chunk, "delta", None)
-                
+
                 if not content_chunk:
                     continue
 
-                # CRITICAL: Yield role BEFORE any content
                 if new_message:
                     yield {"role": "assistant"}
                     new_message = False
-                
+
                 if streaming_active:
-                    if '[' in content_chunk:
-                        idx = content_chunk.index('[')
+                    # Check if we have a pending suspicious "[" from previous chunk
+                    if suspicious_buffer:
+                        if content_chunk.startswith("["):
+                            # Found "[[": stop streaming, switch to buffering command
+                            streaming_active = False
+                            buffer = suspicious_buffer + content_chunk
+                            suspicious_buffer = ""
+                            LOGGER.debug("pipeline_stream: suspended at split '[[', buffer: %s", buffer[:20])
+                            continue # Skip normal processing for this chunk
+                        else:
+                            # False alarm: was just a single "[", stream it now
+                            yield {"content": suspicious_buffer}
+                            suspicious_buffer = ""
+                            # Continue to process current chunk normally
+
+                    # Check for "[[HA_LOCAL" pattern in current chunk
+                    if "[[" in content_chunk:
+                        idx = content_chunk.index("[[")
                         if idx > 0:
                             yield {"content": content_chunk[:idx]}
-                            LOGGER.debug("pipeline_stream: streamed %d chars before '[', suspending", idx)
                         
                         streaming_active = False
                         buffer = content_chunk[idx:]
-                        LOGGER.debug("pipeline_stream: streaming suspended at '[', buffer starts with: %s", buffer[:20])
+                        LOGGER.debug("pipeline_stream: suspended at '[[', buffer: %s", buffer[:20])
+                    
+                    elif content_chunk.endswith("["):
+                        # Possible start of command split across chunks
+                        # Stream everything except the last "["
+                        if len(content_chunk) > 1:
+                            yield {"content": content_chunk[:-1]}
+                        suspicious_buffer = "["
+                    
                     else:
+                        # Normal content, just stream it
                         yield {"content": content_chunk}
                 else:
+                    # Buffering mode: accumulate everything
                     buffer += content_chunk
-            
+
+            # End of stream handling
+            if suspicious_buffer:
+                # Flush any pending "[" if stream ended
+                yield {"content": suspicious_buffer}
+
             # Store final response metadata
             if last_response:
-                response_id_holder["id"] = getattr(last_response, "id", None)
-                response_id_holder["usage"] = getattr(last_response, "usage", None)
-                response_id_holder["model"] = getattr(last_response, "model", None)
-                # Capture search citations and number of sources used
-                response_id_holder["citations"] = getattr(last_response, "citations", [])
-                response_id_holder["num_sources_used"] = getattr(getattr(last_response, "usage", None), "num_sources_used", 0)
+                response_holder["id"] = getattr(last_response, "id", None)
+                response_holder["usage"] = getattr(last_response, "usage", None)
+
+                model_value = getattr(last_response, "model", None)
+                if hasattr(last_response, "model") and last_response.model:
+                    response_holder["model"] = last_response.model
+
+                response_holder["citations"] = getattr(last_response, "citations", [])
+                response_holder["num_sources_used"] = getattr(
+                    getattr(last_response, "usage", None), "num_sources_used", 0
+                )
+                response_holder["command_buffer"] = buffer
 
         except Exception as err:
-            LOGGER.error("pipeline_stream: error during native async streaming: %s", err)
-            # Yield an error message to the user
-            if new_message: # Ensure role is set if error happens on first chunk
+            LOGGER.error(
+                "pipeline_stream: error during native async streaming: %s", err
+            )
+            # The timer's __aexit__ will handle error logging. We just add content for the user.
+            if new_message:
                 yield {"role": "assistant"}
             yield {"content": f"\n\nAn error occurred during streaming: {err}"}
             return
 
-        # End of stream - process buffer if it contains commands
-        if buffer:
-            LOGGER.debug("pipeline_stream: stream ended, processing buffer (len=%d)", len(buffer))
+        if buffer and "[[HA_LOCAL:" not in buffer:
+            LOGGER.debug(
+                "pipeline_stream: no command tag in buffer, treating as dialogue"
+            )
+            yield {"content": buffer}
 
-            # Check if buffer contains command tag
-            if "[[HA_LOCAL:" in buffer:
-                # Execute commands and stream results as deltas
-                LOGGER.debug("pipeline_stream: executing command(s) to add to streamed dialogue")
-                async for delta in self._handle_command_with_streaming(buffer, chat_log):
-                    yield delta
-            else:
-                # No command tag - stream it as dialogue
-                LOGGER.debug("pipeline_stream: no command tag in buffer, treating as dialogue")
-                yield {"content": buffer}
-        
-        # Append citations to the chat log if available
-        citations = response_id_holder.get("citations")
+        citations = response_holder.get("citations")
         if citations:
             formatted_citations = "\n\nCitations:\n"
             for i, citation in enumerate(citations):
-                formatted_citations += f"  [{i+1}] {getattr(citation, 'title', 'No Title')} - {getattr(citation, 'url', 'No URL')}\n"
+                formatted_citations += f"  [{i + 1}] {getattr(citation, 'title', 'No Title')} - {getattr(citation, 'url', 'No URL')}\n"
             yield {"content": formatted_citations}
 
-
-    async def _save_response_metadata(self, conv_key: str, response_id: str | None, usage, model: str | None = None, citations: list | None = None, num_sources_used: int = 0) -> None:
-        """Save response ID to memory and update token sensors.
-
-        Args:
-            conv_key: Conversation key for memory storage
-            response_id: xAI response ID to save
-            usage: Usage statistics from xAI response
-            model: Model name (extracted from response.model or usage)
-            citations: List of citations from xAI response
-            num_sources_used: Number of unique search sources used
+    async def _stream_and_route(
+        self, chat, chat_log, conv_key: str, timer: LogTimeServices
+    ) -> None:
         """
-        # Store response ID
-        if response_id:
-            try:
-                await self.entity._memory_set_prev_id(conv_key, response_id)
-                LOGGER.debug(
-                    "memory_save: mode=pipeline conv_key=%s response_id=%s",
-                    conv_key, response_id[:8]
-                )
-            except Exception as err:
-                LOGGER.error("MEMORY_DEBUG: entity_pipeline.py - failed to store response_id: %s", err)
-
-        # Update token sensors
-        if usage:
-            self.entity._update_token_sensors(
-                usage,
-                model=model,
-                service_type="conversation",
-                mode="pipeline",
-                is_fallback=False
-            )
-        
-        # Log search details if available
-        if citations:
-            LOGGER.debug("pipeline_stream: citations found: %d", len(citations))
-            for citation in citations:
-                LOGGER.debug("Citation: %s", citation)
-        if num_sources_used > 0:
-            LOGGER.debug("pipeline_stream: unique search sources used: %d", num_sources_used)
-
-    async def _stream_and_route(self, chat, chat_log, conv_key: str) -> None:
+        Stream using async_add_delta_content_stream and handle routing.
+        The timer is passed down to the generator for measurement.
         """
-        Stream using async_add_delta_content_stream for progressive output.
-        Handles dialogue streaming, command execution, and fallback to tools mode.
-        """
-        response_id_holder = {"id": None, "usage": None, "model": None}
+        response_holder = {
+            "id": None,
+            "usage": None,
+            "model": None,
+            "command_buffer": "",
+        }
 
-        # Use delta generator with async_add_delta_content_stream
-        # CRITICAL: We must consume the generator to allow delta_listener to be called
         async for _ in chat_log.async_add_delta_content_stream(
             agent_id=self.entity.entity_id,
-            stream=self._delta_generator(chat, chat_log, conv_key, response_id_holder),
+            stream=self._delta_generator(
+                chat, chat_log, conv_key, response_holder, timer
+            ),
         ):
-            # Yield control to event loop to allow UI updates
             await asyncio.sleep(0)
 
-        # Save response metadata (ID, usage, model, citations, num_sources_used)
-        await self._save_response_metadata(
-            conv_key,
-            response_id_holder.get("id"),
-            response_id_holder.get("usage"),
-            response_id_holder.get("model"),
-            response_id_holder.get("citations"),
-            response_id_holder.get("num_sources_used", 0)
+        store_messages = self.entity._get_option(
+            CONF_STORE_MESSAGES, RECOMMENDED_STORE_MESSAGES
         )
 
-    async def _handle_command_with_streaming(self, command_tag: str, chat_log):
+        await save_response_metadata(
+            hass=self.hass,
+            entry_id=self.entity.entry.entry_id,
+            usage=response_holder.get("usage"),
+            model=response_holder.get("model"),
+            service_type="conversation",
+            mode="pipeline",
+            is_fallback=False,
+            store_messages=store_messages,
+            conv_key=conv_key,
+            response_id=response_holder.get("id"),
+            entity=self.entity,
+            citations=response_holder.get("citations"),
+            num_sources_used=response_holder.get("num_sources_used", 0),
+        )
+
+        command_buffer = response_holder.get("command_buffer", "")
+        if command_buffer and "[[HA_LOCAL:" in command_buffer:
+            LOGGER.debug("pipeline_stream: executing commands in SEPARATE stream")
+            async for _ in chat_log.async_add_delta_content_stream(
+                agent_id=self.entity.entity_id,
+                stream=self._command_results_generator(command_buffer, chat_log, timer),
+            ):
+                await asyncio.sleep(0)
+
+    async def _command_results_generator(
+        self, command_buffer: str, chat_log, timer: LogTimeServices
+    ):
         """
-        Handle command execution and yield result as delta for streaming.
-        Supports single commands, multi-commands (sequential/parallel), and fallback to tools.
+        Generator that yields command results as a new separate stream.
         """
-        payload_json = self._extract_payload_json(command_tag)
+        # CRITICAL: New message = new role
+        yield {"role": "assistant"}
+
+        payload_json = self._extract_payload_json(command_buffer)
         if not payload_json:
             LOGGER.debug("pipeline_stream: no valid JSON payload found")
-            yield {"content": "\nInvalid command format."}
-            yield {"role": "assistant"}  # Flush error
+            yield {"content": "Invalid command format."}
             return
 
-        LOGGER.debug("pipeline_stream: extracted JSON payload: '%s'", payload_json[:200])
+        LOGGER.debug(
+            "pipeline_stream: extracted JSON payload: '%s'", payload_json[:200]
+        )
 
-        # Parse payload to detect single vs multi-command
         payload_data = parse_ha_local_payload(payload_json)
         if not payload_data:
-            LOGGER.error("pipeline_stream: failed to parse JSON payload | raw='%s'", payload_json[:200])
-            yield {"content": "\nCould not parse the command."}
-            yield {"role": "assistant"}  # Flush error
+            LOGGER.error(
+                "pipeline_stream: failed to parse JSON payload | raw='%s'",
+                payload_json[:200],
+            )
+            yield {"content": "Could not parse the command."}
             return
 
         # Check if multi-command format
         if "commands" in payload_data:
-            # Multi-command: process and yield results
             commands = payload_data.get("commands", [])
             sequential = payload_data.get("sequential", False)
 
             if not commands:
-                LOGGER.warning("pipeline_stream: multi-command payload has empty commands array")
+                LOGGER.warning(
+                    "pipeline_stream: multi-command payload has empty commands array"
+                )
                 return
 
             if not isinstance(commands, list):
-                LOGGER.error("pipeline_stream: 'commands' field is not a list. Got %s", type(commands).__name__)
+                LOGGER.error(
+                    "pipeline_stream: 'commands' field is not a list. Got %s",
+                    type(commands).__name__,
+                )
                 return
 
             total = len(commands)
-            LOGGER.info("pipeline_stream: processing %d commands | sequential=%s", total, sequential)
+            LOGGER.info(
+                "pipeline_stream: processing %d commands | sequential=%s",
+                total,
+                sequential,
+            )
 
             if sequential:
-                # Sequential execution - yield each result as it completes
                 for idx, cmd in enumerate(commands, 1):
                     command_text = str(cmd.get("text", "")).strip()
                     if command_text:
-                        LOGGER.debug("pipeline_stream: [%d/%d] executing command: '%s'", idx, total, command_text[:50])
-                        result = await self._execute_single_command_streaming(command_text, chat_log, idx, total)
+                        LOGGER.debug(
+                            "pipeline_stream: [%d/%d] executing command: '%s'",
+                            idx,
+                            total,
+                            command_text[:50],
+                        )
+                        result = await self._execute_single_command_streaming(
+                            command_text, chat_log, timer, idx, total
+                        )
                         if result:
-                            # Stream result as part of the same message
-                            yield {"content": f"\n{result}"}
+                            yield {"content": f"{result}\n"}
             else:
-                # Parallel execution - yield results as they complete (streaming via as_completed)
+                # Parallel execution
                 tasks = []
                 for idx, cmd in enumerate(commands, 1):
                     command_text = str(cmd.get("text", "")).strip()
                     if command_text:
-                        LOGGER.debug("pipeline_stream: [%d/%d] queueing command: '%s'", idx, total, command_text[:50])
-                        tasks.append(self._execute_single_command_streaming(command_text, chat_log, idx, total))
+                        LOGGER.debug(
+                            "pipeline_stream: [%d/%d] queueing command: '%s'",
+                            idx,
+                            total,
+                            command_text[:50],
+                        )
+                        tasks.append(
+                            self._execute_single_command_streaming(
+                                command_text, chat_log, timer, idx, total
+                            )
+                        )
 
                 if tasks:
-                    # Use as_completed to yield results as they finish (not waiting for all)
                     for coro in asyncio.as_completed(tasks):
                         try:
                             result = await coro
                             if result:
-                                # Stream each result as it completes (as part of same message)
-                                yield {"content": f"\n{result}"}
+                                yield {"content": f"{result}\n"}
                         except Exception as err:
-                            LOGGER.warning("pipeline_stream: parallel command failed: %s", err)
+                            LOGGER.warning(
+                                "pipeline_stream: parallel command failed: %s", err
+                            )
 
         elif "text" in payload_data:
             # Single command
             command_text = str(payload_data.get("text", "")).strip()
             if not command_text:
-                yield {"content": "\nCould not parse the command."}
-                yield {"role": "assistant"}  # Flush error message
+                yield {"content": "Could not parse the command."}
                 return
 
-            result = await self._execute_single_command_streaming(command_text, chat_log)
+            result = await self._execute_single_command_streaming(
+                command_text, chat_log, timer
+            )
             if result:
-                # CRITICAL: Il flush del dialogo è già stato fatto PRIMA del comando
-                # Qui aggiungiamo SOLO il risultato come continuazione dello stesso messaggio
-                yield {"content": "\n" + result}
-                LOGGER.debug("pipeline_stream: yielded command result (len=%d)", len(result))
+                yield {"content": result}
+                LOGGER.debug(
+                    "pipeline_stream: yielded command result (len=%d)", len(result)
+                )
         else:
             LOGGER.error("pipeline_stream: payload missing 'text' or 'commands' field")
-            yield {"content": "\nInvalid command format."}
-            yield {"role": "assistant"}  # Flush error message
+            yield {"content": "Invalid command format."}
 
-    async def _execute_single_command_streaming(self, command_text: str, chat_log, command_index: Optional[int] = None, total_commands: Optional[int] = None) -> Optional[str]:
+    async def _execute_single_command_streaming(
+        self,
+        command_text: str,
+        chat_log,
+        timer: LogTimeServices,
+        command_index: int | None = None,
+        total_commands: int | None = None,
+    ) -> str | None:
         """
         Execute a single command via conversation.process or fallback to tools.
         Returns the result string (not yielded as delta - caller handles that).
         """
         prefix = f"[{command_index}/{total_commands}] " if command_index else ""
-        LOGGER.debug("pipeline_stream: %sprocessing command='%s'", prefix, command_text[:50])
+        LOGGER.debug(
+            "pipeline_stream: %sprocessing command='%s'", prefix, command_text[:50]
+        )
 
         # Try conversation.process first
         trigger_tools_fallback = False
@@ -463,8 +480,14 @@ class IntelligentPipeline:
             if conv_id:
                 data["conversation_id"] = conv_id
 
-            LOGGER.debug("pipeline_stream: %s→ conversation.process | text='%s' language=%s agent=%s conv_id=%s",
-                        prefix, command_text, language, data.get("agent_id"), conv_id or "None")
+            LOGGER.debug(
+                "pipeline_stream: %s→ conversation.process | text='%s' language=%s agent=%s conv_id=%s",
+                prefix,
+                command_text,
+                language,
+                data.get("agent_id"),
+                conv_id or "None",
+            )
 
             result = await self.hass.services.async_call(
                 "conversation",
@@ -478,29 +501,58 @@ class IntelligentPipeline:
             # Check if result is an error
             response_type = (result or {}).get("response", {}).get("response_type")
             error_code = (result or {}).get("response", {}).get("data", {}).get("code")
-            speech_text = (result or {}).get("response", {}).get("speech", {}).get("plain", {}).get("speech", "")
+            speech_text = (
+                (result or {})
+                .get("response", {})
+                .get("speech", {})
+                .get("plain", {})
+                .get("speech", "")
+            )
 
-            LOGGER.debug("pipeline_stream: %s← conversation.process | response_type=%s speech='%s' error_code=%s",
-                        prefix, response_type or "unknown", speech_text[:100] if speech_text else "none", error_code or "none")
+            LOGGER.debug(
+                "pipeline_stream: %s← conversation.process | response_type=%s speech='%s' error_code=%s",
+                prefix,
+                response_type or "unknown",
+                speech_text[:100] if speech_text else "none",
+                error_code or "none",
+            )
 
             if response_type == "error":
-                LOGGER.info("pipeline_stream: %sconversation.process returned error, triggering fallback", prefix)
+                LOGGER.info(
+                    "pipeline_stream: %sconversation.process returned error, triggering fallback",
+                    prefix,
+                )
                 trigger_tools_fallback = True
 
             # Return response if NOT triggering fallback
             if not trigger_tools_fallback:
-                speech = (result or {}).get("response", {}).get("speech", {}).get("plain", {}).get("speech")
+                speech = (
+                    (result or {})
+                    .get("response", {})
+                    .get("speech", {})
+                    .get("plain", {})
+                    .get("speech")
+                )
                 return speech or "Done."
 
         except Exception as err:
-            LOGGER.debug("pipeline_stream: %sconversation.process fallback triggered: error_type=%s error=%s",
-                        prefix, type(err).__name__, str(err)[:100])
+            LOGGER.debug(
+                "pipeline_stream: %sconversation.process fallback triggered: error_type=%s error=%s",
+                prefix,
+                type(err).__name__,
+                str(err)[:100],
+            )
             trigger_tools_fallback = True
 
         # Fallback to tools mode
         if trigger_tools_fallback:
-            LOGGER.debug("pipeline_stream: %sFALLBACK→tools | reason=%s command='%s' error_code=%s",
-                        prefix, "error" if error_code else "no_intent_match", command_text[:50], error_code or "none")
+            LOGGER.debug(
+                "pipeline_stream: %sFALLBACK→tools | reason=%s command='%s' error_code=%s",
+                prefix,
+                "error" if error_code else "no_intent_match",
+                command_text[:50],
+                error_code or "none",
+            )
 
             # Create fallback input (preserving original user context)
             fallback_input = ConversationInput(
@@ -524,9 +576,7 @@ class IntelligentPipeline:
 
             # Execute tools processor (writes to MinimalChatLog)
             await self.entity._tools_processor.async_process_with_loop(
-                fallback_input,
-                fallback_chat_log,
-                force_tools=True
+                fallback_input, fallback_chat_log, timer, force_tools=True
             )
 
             # Extract the assistant response from MinimalChatLog
@@ -536,9 +586,56 @@ class IntelligentPipeline:
 
             return "Done."
 
-    def _extract_payload_json(self, buffer: str) -> Optional[str]:
+    def _extract_payload_json(self, buffer: str) -> str | None:
         """Extract JSON payload from [[HA_LOCAL: {...}]] tag."""
         match = HA_LOCAL_TAG_PATTERN.search(buffer or "")
         if match:
             return match.group(1)
         return None
+
+
+class MinimalChatLog:
+    """Minimal chat_log object for fallback mode.
+
+    Simulates ChatLog with only the methods needed by async_process_with_loop:
+    - .content: list of messages
+    - async_add_assistant_content(): to receive the response from tools mode
+    - async_add_delta_content_stream(): for streaming support in fallback mode
+    """
+
+    def __init__(self, content):
+        self.content = content
+        self._accumulated_content = ""
+
+    async def async_add_assistant_content(self, assistant_content):
+        """Add assistant content to the chat log (simulates HA ChatLog behavior)."""
+        self.content.append(assistant_content)
+        # HA's async_add_assistant_content is an async generator that yields once
+        yield None
+
+    async def async_add_delta_content_stream(self, agent_id: str, stream):
+        """
+        Consume a delta stream and add the final content as a single
+        AssistantContent message. This is NOT a generator, it fully consumes
+        the stream. This is to avoid race conditions when waiting for the result.
+        """
+        self._accumulated_content = ""
+
+        async for delta in stream:
+            # Consume the stream but do nothing with the deltas,
+            # as the caller in the fallback doesn't need real-time updates.
+            if "content" in delta:
+                self._accumulated_content += delta["content"]
+
+        # After stream ends, add the single accumulated content to the chat log
+        if self._accumulated_content:
+            self.content.append(
+                ha_conversation.AssistantContent(
+                    agent_id=agent_id,
+                    content=self._accumulated_content,
+                )
+            )
+
+        # This function is called in an `async for` loop, so it must be a generator.
+        # We yield once at the end after the stream is fully processed.
+        yield

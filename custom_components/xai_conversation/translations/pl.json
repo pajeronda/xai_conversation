@@ -73,6 +73,7 @@
             "allow_smart_home_control": "Zezwól na kontrolę inteligentnego domu",
             "live_search": "Tryb wyszukiwania na żywo",
             "store_messages": "Przechowuj wiadomości",
+            "assistant_name": "Nazwa asystenta",
             "send_user_name": "Dołącz nazwę użytkownika w wiadomościach",
             "reasoning_effort": "Poziom rozumowania"
           },
@@ -87,6 +88,7 @@
             "pipeline_prompt": "Opcjonalny tekst dodany do domyślnego promptu potoku. Przydatne dla niestandardowych reguł lub lokalnych intencji.",
             "allow_smart_home_control": "Jeśli włączone, asystent może wykonywać polecenia inteligentnego domu. Jeśli wyłączone, odpowiada tylko w sposób konwersacyjny. Zmiana tego ustawienia rozpocznie nową konwersację.",
             "store_messages": "Użyj pamięci po stronie serwera xAI, aby zmniejszyć liczbę tokenów do wysłania w każdym żądaniu. Parametry pamięci (czas trwania, liczba tur) są konfigurowane na poziomie integracji.",
+            "assistant_name": "Nazwa, którą asystent będzie używał do identyfikacji (np. 'Jarvis', 'Alexa', 'HAL'). Zmiana tej wartości rozpocznie nową konwersację, a poprzednia historia nie będzie już dostępna.",
             "send_user_name": "Dołącz nazwę użytkownika Home Assistant lub nazwę urządzenia Assist voice do czatu z Grok.",
             "live_search": "Włącz możliwości wyszukiwania w sieci: 'off' (wyłączone), 'auto' (model decyduje), 'on' (zawsze włączone). Dotyczy zarówno trybu potoku, jak i narzędzi.",
             "prompt": "Niestandardowe instrukcje dla agenta (tylko tryb narzędzi).",
@@ -120,7 +122,7 @@
         "reconfigure_successful": "Konfiguracja została pomyślnie zaktualizowana!"
       }
     },
-    "ai_task_data": {
+    "ai_task": {
       "initiate_flow": {
         "user": "Dodaj zadanie AI",
         "reconfigure": "Przekonfiguruj zadanie AI"
@@ -159,18 +161,18 @@
         "reconfigure_successful": "Konfiguracja została pomyślnie zaktualizowana!"
       }
     },
-    "code_task": {
+    "code_fast": {
       "initiate_flow": {
         "user": "Dodaj Grok Code Fast",
         "reconfigure": "Przekonfiguruj Grok Code Fast"
       },
-      "entry_type": "code_task",
+      "entry_type": "code_fast",
       "step": {
         "init": {
           "title": "Grok Code Fast",
           "data": {
             "name": "Nazwa",
-            "prompt": "Prompt",
+            "prompt_code": "Prompt",
             "api_host": "Host API ('api.x.ai', 'us-east-1.api.x.ai' lub 'eu-west-1.api.x.ai')",
             "chat_model": "Model",
             "max_tokens": "Maksymalna liczba tokenów",
@@ -178,11 +180,12 @@
             "top_p": "Top P",
             "live_search": "Tryb wyszukiwania na żywo",
             "store_messages": "Przechowuj wiadomości",
+            "assistant_name": "Nazwa asystenta",
             "reasoning_effort": "Poziom rozumowania"
           },
           "data_description": {
             "name": "Opisowa nazwa tego zadania Grok Code Fast.",
-            "prompt": "Pełny prompt systemowy dla zadania kodu. Zastępuje domyślny. Edytuj ostrożnie, ponieważ definiuje wiedzę asystenta i format wyjścia.",
+            "prompt_code": "Opcjonalne niestandardowe instrukcje dołączane do domyślnego monitu. Użyj tego do reguł specyficznych dla projektu lub konwencji kodowania. Pozostaw puste, aby używać tylko domyślnego monitu.",
             "api_host": "Nazwa hosta punktu końcowego API. Użyj 'api.x.ai' dla globalnego routingu z automatycznym przekierowaniem do hosta regionalnego lub podaj bezpośrednio host regionalny.",
             "chat_model": "Wybierz model Grok do użycia.",
             "max_tokens": "Maksymalna liczba tokenów do wygenerowania.",
@@ -190,6 +193,7 @@
             "top_p": "Kontroluje różnorodność odpowiedzi poprzez próbkowanie nucleus (nie obsługiwane przez grok-4).",
             "live_search": "Włącz możliwości wyszukiwania w sieci: 'off' (wyłączone), 'auto' (model decyduje), 'on' (zawsze włączone)",
             "store_messages": "Użyj pamięci po stronie serwera xAI, aby zachować kontekst konwersacji. Parametry pamięci (czas trwania, liczba tur) są konfigurowane na poziomie integracji i automatycznie wykrywają żądania od użytkownika lub urządzenia.",
+            "assistant_name": "Nazwa, której asystent będzie używał do identyfikacji (np. 'Grok Code Fast', 'CodeBot', 'DevAssistant'). Zmiana tej wartości rozpocznie nową rozmowę, a poprzednia historia stanie się niedostępna.",
             "reasoning_effort": "Poziom wysiłku rozumowania dla modeli, które to obsługują (niski, średni, wysoki)"
           }
         }

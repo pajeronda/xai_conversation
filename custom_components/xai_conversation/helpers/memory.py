@@ -1,4 +1,5 @@
 """Conversation memory management for xAI conversation."""
+
 from __future__ import annotations
 
 import hashlib
@@ -36,6 +37,26 @@ class ConversationMemory:
         """
         return hashlib.sha256(prompt.encode()).hexdigest()[:8]
 
+    def calculate_conv_key_simple(
+        self, user_id: str, mode: str, base_prompt: str, memory_scope: str = "user"
+    ) -> str:
+        """Calculate conversation key for code_fast service.
+
+        Builds a key like: user:{id}:mode:code:ph:{hash}
+        This enables automatic prompt-based conversation invalidation.
+
+        Args:
+            user_id: User ID (UUID from Home Assistant)
+            mode: Conversation mode (e.g., "code")
+            base_prompt: Base system prompt (before user instructions)
+            memory_scope: "user" or "device" (default: "user")
+
+        Returns:
+            Full conversation key for memory lookup
+        """
+        prompt_hash = self._prompt_hash(base_prompt)
+        return f"{memory_scope}:{user_id}:mode:{mode}:ph:{prompt_hash}"
+
     def __init__(self, hass, storage_path: str, entry):
         """Initialize conversation memory.
 
@@ -65,11 +86,18 @@ class ConversationMemory:
                 self._memory = {}
             self._loaded = True
         except Exception as err:
-            LOGGER.warning(f"Failed to load conversation memory: {err}")
+            LOGGER.warning("Failed to load conversation memory: %s", err)
             self._memory = {}
             self._loaded = True
 
-    async def save_response_id(self, user_id: str, mode: str, response_id: str, suffix: str = "", store_messages: bool = None):
+    async def save_response_id(
+        self,
+        user_id: str,
+        mode: str,
+        response_id: str,
+        suffix: str = "",
+        store_messages: bool = None,
+    ):
         """Save response ID for user and mode with metadata.
 
         Args:
@@ -89,10 +117,7 @@ class ConversationMemory:
             self._memory[conv_key] = {"responses": []}
 
         # Add new response with timestamp and store_messages metadata
-        response_entry = {
-            "id": response_id,
-            "timestamp": time.time()
-        }
+        response_entry = {"id": response_id, "timestamp": time.time()}
 
         # Add store_messages only if provided (for backward compatibility)
         if store_messages is not None:
@@ -104,7 +129,7 @@ class ConversationMemory:
         try:
             await self._store.async_save(self._memory)
         except Exception as err:
-            LOGGER.error(f"Failed to save conversation memory: {err}")
+            LOGGER.error("Failed to save conversation memory: %s", err)
 
     def _get_memory_params(self, conv_key: str) -> tuple[float, int]:
         """Get TTL and max_turns based on conv_key (device vs user).
@@ -117,14 +142,24 @@ class ConversationMemory:
         """
         is_device = conv_key.startswith("device:")
         if is_device:
-            ttl_hours = self.entry.data.get(CONF_MEMORY_DEVICE_TTL_HOURS, RECOMMENDED_MEMORY_DEVICE_TTL_HOURS)
-            max_turns = self.entry.data.get(CONF_MEMORY_DEVICE_MAX_TURNS, RECOMMENDED_MEMORY_DEVICE_MAX_TURNS)
+            ttl_hours = self.entry.data.get(
+                CONF_MEMORY_DEVICE_TTL_HOURS, RECOMMENDED_MEMORY_DEVICE_TTL_HOURS
+            )
+            max_turns = self.entry.data.get(
+                CONF_MEMORY_DEVICE_MAX_TURNS, RECOMMENDED_MEMORY_DEVICE_MAX_TURNS
+            )
         else:
-            ttl_hours = self.entry.data.get(CONF_MEMORY_USER_TTL_HOURS, RECOMMENDED_MEMORY_USER_TTL_HOURS)
-            max_turns = self.entry.data.get(CONF_MEMORY_USER_MAX_TURNS, RECOMMENDED_MEMORY_USER_MAX_TURNS)
+            ttl_hours = self.entry.data.get(
+                CONF_MEMORY_USER_TTL_HOURS, RECOMMENDED_MEMORY_USER_TTL_HOURS
+            )
+            max_turns = self.entry.data.get(
+                CONF_MEMORY_USER_MAX_TURNS, RECOMMENDED_MEMORY_USER_MAX_TURNS
+            )
         return ttl_hours, max_turns
 
-    def _filter_valid_responses(self, responses: list, ttl_hours: float, max_turns: int, now: float) -> tuple[list, list]:
+    def _filter_valid_responses(
+        self, responses: list, ttl_hours: float, max_turns: int, now: float
+    ) -> tuple[list, list]:
         """Filter responses by TTL and max_turns.
 
         Args:
@@ -159,7 +194,9 @@ class ConversationMemory:
 
         return valid_responses, expired_ids
 
-    async def get_response_id(self, user_id: str, mode: str, suffix: str = "") -> str | None:
+    async def get_response_id(
+        self, user_id: str, mode: str, suffix: str = ""
+    ) -> str | None:
         """Get last response ID for user and mode.
 
         Args:
@@ -213,7 +250,7 @@ class ConversationMemory:
         mode: str,
         response_id: str,
         current_store_messages: bool,
-        suffix: str = ""
+        suffix: str = "",
     ) -> bool:
         """Validate if response_id is compatible with current store_messages mode.
 
@@ -273,10 +310,9 @@ class ConversationMemory:
         if conv_key not in self._memory:
             self._memory[conv_key] = {"responses": []}
 
-        self._memory[conv_key]["responses"].append({
-            "id": response_id,
-            "timestamp": time.time()
-        })
+        self._memory[conv_key]["responses"].append(
+            {"id": response_id, "timestamp": time.time()}
+        )
 
         await self._store.async_save(self._memory)
 
@@ -318,7 +354,7 @@ class ConversationMemory:
             try:
                 await self._store.async_save(self._memory)
             except Exception as err:
-                LOGGER.error(f"Failed to save conversation memory after clear: {err}")
+                LOGGER.error("Failed to save conversation memory after clear: %s", err)
 
         return response_ids
 
@@ -341,7 +377,11 @@ class ConversationMemory:
         base_key = f"{scope}:{target_id}"
 
         # Find all keys matching the prefix (exact match or with :mode: suffix)
-        keys_to_delete = [k for k in self._memory.keys() if k == base_key or k.startswith(base_key + ":mode:")]
+        keys_to_delete = [
+            k
+            for k in self._memory.keys()
+            if k == base_key or k.startswith(base_key + ":mode:")
+        ]
 
         # Collect response IDs for remote deletion
         response_ids = []
@@ -360,7 +400,7 @@ class ConversationMemory:
             try:
                 await self._store.async_save(self._memory)
             except Exception as err:
-                LOGGER.error(f"Failed to save conversation memory after clear: {err}")
+                LOGGER.error("Failed to save conversation memory after clear: %s", err)
 
         return response_ids
 
@@ -387,7 +427,7 @@ class ConversationMemory:
         try:
             await self._store.async_save(self._memory)
         except Exception as err:
-            LOGGER.error(f"Failed to save conversation memory after clear: {err}")
+            LOGGER.error("Failed to save conversation memory after clear: %s", err)
 
         return response_ids
 
@@ -397,7 +437,7 @@ class ConversationMemory:
         mode: str,
         subentry_data: dict,
         memory_scope: str = "user",
-        base_prompt: str | None = None
+        base_prompt: str | None = None,
     ) -> str:
         """Calculate consistent memory key for conversation chaining.
 
@@ -461,10 +501,7 @@ class ConversationMemory:
         return key
 
     async def get_conv_key_and_prev_id(
-        self,
-        user_input,
-        mode: str,
-        subentry_data: dict
+        self, user_input, mode: str, subentry_data: dict
     ) -> tuple[str, str | None]:
         """Get conversation key and previous response ID.
 
@@ -504,7 +541,10 @@ class ConversationMemory:
 
         LOGGER.debug(
             "ConversationMemory.get_conv_key_and_prev_id: mode=%s scope=%s conv_key=%s prev_id=%s",
-            mode, memory_scope, conv_key, prev_id[:8] if prev_id else None
+            mode,
+            memory_scope,
+            conv_key,
+            prev_id[:8] if prev_id else None,
         )
         return conv_key, prev_id
 
@@ -535,6 +575,48 @@ class ConversationMemory:
             raise
 
         return response_ids
+
+    def setup_periodic_cleanup(self, cleanup_interval_hours: int):
+        """Setup periodic cleanup task for conversation memory.
+
+        This method creates and returns an async cleanup callback and its unsubscribe function.
+        Should be called from async_setup_entry in __init__.py.
+
+        Args:
+            cleanup_interval_hours: Interval in hours between cleanup runs
+
+        Returns:
+            Tuple of (cleanup_callback, unsubscribe_function)
+        """
+        from datetime import timedelta
+        from homeassistant.helpers.event import async_track_time_interval
+
+        async def periodic_cleanup(_now):
+            """Periodic cleanup task for conversation memory."""
+            LOGGER.debug(
+                "Running periodic memory cleanup (interval: %s hours)",
+                cleanup_interval_hours,
+            )
+            stats = await self.async_cleanup_expired()
+            if stats["keys_removed"] > 0 or stats["keys_cleaned"] > 0:
+                LOGGER.info(
+                    "Memory cleanup: cleaned %d keys, removed %d keys, deleted %d responses",
+                    stats["keys_cleaned"],
+                    stats["keys_removed"],
+                    stats["responses_removed"],
+                )
+
+        cleanup_interval = timedelta(hours=cleanup_interval_hours)
+        cleanup_unsub = async_track_time_interval(
+            self.hass, periodic_cleanup, cleanup_interval
+        )
+
+        LOGGER.debug(
+            "Started periodic memory cleanup task (interval: %s hours)",
+            cleanup_interval_hours,
+        )
+
+        return cleanup_unsub
 
     async def async_cleanup_expired(self) -> dict:
         """Periodic cleanup task: remove expired response IDs based on TTL and max_turns.
@@ -571,7 +653,9 @@ class ConversationMemory:
 
             # Get TTL and max_turns for this key
             ttl_hours, max_turns = self._get_memory_params(conv_key)
-            valid_responses, expired_ids = self._filter_valid_responses(responses, ttl_hours, max_turns, now)
+            valid_responses, expired_ids = self._filter_valid_responses(
+                responses, ttl_hours, max_turns, now
+            )
 
             if not valid_responses:
                 # All responses expired, mark key for deletion
@@ -595,13 +679,15 @@ class ConversationMemory:
                 await self._store.async_save(self._memory)
                 LOGGER.info(
                     "Memory cleanup completed: %d keys cleaned, %d keys removed, %d responses removed",
-                    keys_cleaned, keys_removed, responses_removed
+                    keys_cleaned,
+                    keys_removed,
+                    responses_removed,
                 )
             except Exception as err:
-                LOGGER.error(f"Failed to save memory after cleanup: {err}")
+                LOGGER.error("Failed to save memory after cleanup: %s", err)
 
         return {
             "keys_cleaned": keys_cleaned,
             "keys_removed": keys_removed,
-            "responses_removed": responses_removed
+            "responses_removed": responses_removed,
         }

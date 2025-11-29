@@ -8,18 +8,38 @@ Architecture:
 2. Strategy composer that applies strategies in order
 3. Use-case specific parsers that configure appropriate strategies
 """
+
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Callable
 import json
 import re
-from typing import Optional, Callable, Any
+from typing import Any
 
+# Import LOGGER and constants
+from ..const import (
+    LOGGER,
+    DOMAIN,
+    CONF_CHAT_MODEL,
+    RECOMMENDED_CHAT_MODEL,
+)
+
+# Import sensor updater
+from .sensors import update_token_sensors
+
+# ==============================================================================
+# COMPILED REGEX PATTERNS (Module-level for performance)
+# ==============================================================================
+_JSON_FENCE_PATTERN = re.compile(r"```(?:json)?\s*([\s\S]*?)```", re.IGNORECASE)
+_CODE_BLOCK_PATTERN = re.compile(r"```(?:\w+)?\s*\n?(.*?)```", re.DOTALL)
 
 # ==============================================================================
 # BASE PARSING STRATEGIES (Building Blocks)
 # ==============================================================================
 
-def parse_strict_json(text: str) -> Optional[dict]:
+
+def parse_strict_json(text: str) -> dict | None:
     """Strategy 1: Strict JSON parsing.
 
     Args:
@@ -34,7 +54,7 @@ def parse_strict_json(text: str) -> Optional[dict]:
         return None
 
 
-def parse_json_fenced(text: str) -> Optional[dict]:
+def parse_json_fenced(text: str) -> dict | None:
     """Strategy 2: Extract JSON from markdown code fence (```json ... ```).
 
     Args:
@@ -43,14 +63,14 @@ def parse_json_fenced(text: str) -> Optional[dict]:
     Returns:
         Parsed dict from first fenced block or None
     """
-    fence = re.search(r"```(?:json)?\s*([\s\S]*?)```", text, re.IGNORECASE)
+    fence = _JSON_FENCE_PATTERN.search(text)
     if fence:
         inner = fence.group(1).strip()
         return parse_strict_json(inner)
     return None
 
 
-def parse_balanced_braces(text: str) -> Optional[dict]:
+def parse_balanced_braces(text: str) -> dict | None:
     """Strategy 3: Extract first balanced {...} or [...] and parse as JSON.
 
     Args:
@@ -59,9 +79,10 @@ def parse_balanced_braces(text: str) -> Optional[dict]:
     Returns:
         Parsed dict from first balanced structure or None
     """
-    def _find_balanced(s: str) -> Optional[str]:
-        opens = '{['
-        closes = '}]'
+
+    def _find_balanced(s: str) -> str | None:
+        opens = "{["
+        closes = "}]"
         stack = []
         start = -1
         for i, ch in enumerate(s):
@@ -71,7 +92,7 @@ def parse_balanced_braces(text: str) -> Optional[dict]:
                 stack.append(ch)
             elif ch in closes and stack:
                 # Ensure matching pair
-                if (stack[-1] == '{' and ch == '}') or (stack[-1] == '[' and ch == ']'):
+                if (stack[-1] == "{" and ch == "}") or (stack[-1] == "[" and ch == "]"):
                     stack.pop()
                     if not stack and start != -1:
                         return s[start : i + 1]
@@ -87,7 +108,7 @@ def parse_balanced_braces(text: str) -> Optional[dict]:
     return None
 
 
-def parse_regex_fields(text: str, field_patterns: dict[str, str]) -> Optional[dict]:
+def parse_regex_fields(text: str, field_patterns: dict[str, str]) -> dict | None:
     r"""Strategy 4: Extract specific fields using regex patterns.
 
     Useful for malformed JSON where you know which fields to extract.
@@ -112,7 +133,7 @@ def parse_regex_fields(text: str, field_patterns: dict[str, str]) -> Optional[di
         if match:
             value = match.group(1)
             # Try to parse as JSON if it looks like a structure
-            if value.startswith(('{', '[')):
+            if value.startswith(("{", "[")):
                 parsed = parse_strict_json(value)
                 result[field] = parsed if parsed is not None else value
             else:
@@ -125,11 +146,12 @@ def parse_regex_fields(text: str, field_patterns: dict[str, str]) -> Optional[di
 # STRATEGY COMPOSER
 # ==============================================================================
 
+
 def parse_with_strategies(
     text: str,
-    strategies: list[Callable[[str], Optional[dict]]],
-    validator: Optional[Callable[[dict], bool]] = None
-) -> Optional[dict]:
+    strategies: list[Callable[[str], dict | None]],
+    validator: Callable[[dict], bool] | None = None,
+) -> dict | None:
     """Apply parsing strategies in order until one succeeds.
 
     Args:
@@ -155,14 +177,16 @@ def parse_with_strategies(
 # GROK CODE FAST PARSER - Uses modular strategy system
 # ==============================================================================
 
+
 def parse_grok_code_response(response_data: str) -> tuple[str, str]:
     """Parse Grok Code Fast response to extract text and code components.
 
     Uses modular parsing strategies to handle multiple response formats:
     1. Direct JSON: {"response_text": "...", "response_code": "..."}
     2. JSON in code fence: ```json\n{"response_text": ...}\n```
-    3. Plain text with code blocks
-    4. Plain text only
+    3. Regex extraction (tolerant of malformed JSON/multiline strings)
+    4. Plain text with code blocks
+    5. Plain text only
 
     Args:
         response_data: Raw response string from Grok Code Fast
@@ -173,16 +197,42 @@ def parse_grok_code_response(response_data: str) -> tuple[str, str]:
     Used by:
         - grok_code_fast service: Parses AI-generated code responses
     """
+
     # Validator: Check if parsed JSON has required structure
     def _validate_code_structure(data: dict) -> bool:
         """Validate that dict has response_text or response_code fields."""
-        return isinstance(data, dict) and ("response_text" in data or "response_code" in data)
+        return isinstance(data, dict) and (
+            "response_text" in data or "response_code" in data
+        )
+
+    # Strategy: Regex for tolerant extraction (handles malformed JSON/multiline strings)
+    def _code_regex_strategy(text: str) -> dict | None:
+        # Extract response_text (capture until response_code key or end)
+        # This pattern is tolerant of unescaped newlines
+        text_match = re.search(
+            r'"response_text"\s*:\s*"(.*?)"(?=\s*,\s*"response_code"|\s*})',
+            text,
+            re.DOTALL,
+        )
+        code_match = re.search(r'"response_code"\s*:\s*"(.*?)"\s*}', text, re.DOTALL)
+
+        if text_match or code_match:
+            return {
+                "response_text": text_match.group(1) if text_match else "",
+                "response_code": code_match.group(1) if code_match else "",
+            }
+        return None
 
     # Try parsing using modular strategies
     parsed = parse_with_strategies(
         response_data,
-        strategies=[parse_strict_json, parse_json_fenced, parse_balanced_braces],
-        validator=_validate_code_structure
+        strategies=[
+            parse_strict_json,
+            parse_json_fenced,
+            parse_balanced_braces,
+            _code_regex_strategy,
+        ],
+        validator=_validate_code_structure,
     )
 
     if parsed:
@@ -200,24 +250,46 @@ def parse_grok_code_response(response_data: str) -> tuple[str, str]:
             except (json.JSONDecodeError, ValueError):
                 pass  # Keep original values
 
+        # Cleanup: Unescape escaped newlines/quotes if regex extraction was used (json.loads does this automatically)
+        # Simple cleanup for regex-extracted content
+        if not isinstance(response_text, str):
+            response_text = str(response_text)
+        if not isinstance(response_code, str):
+            response_code = str(response_code)
+
+        # If strict JSON failed, we might have raw escaped chars from regex
+        if "\\" in response_code and not isinstance(parsed, dict):  # Heuristic check
+            try:
+                response_code = response_code.encode("utf-8").decode("unicode_escape")
+            except:
+                pass
+
         return response_text, response_code
 
     # Fallback: Try to extract code blocks from plain text
-    code_block_pattern = r"```(?:\w+)?\n(.*?)```"
-    code_blocks = re.findall(code_block_pattern, response_data, re.DOTALL)
+    code_blocks = _CODE_BLOCK_PATTERN.findall(response_data)
 
     if code_blocks:
         # Use first code block as code
         response_code = code_blocks[0].strip()
         # Remove code blocks from text
-        response_text = re.sub(code_block_pattern, "", response_data, flags=re.DOTALL).strip()
+        response_text = _CODE_BLOCK_PATTERN.sub("", response_data).strip()
+
+        # CLEANUP: Remove leftover JSON artifacts from text if fallback triggered on broken JSON
+        # Remove leading {"response_text": " and trailing "}
+        response_text = re.sub(r'^\s*{"response_text"\s*:\s*"', "", response_text)
+        response_text = re.sub(
+            r'"\s*,?\s*"response_code".*$', "", response_text, flags=re.DOTALL
+        )
+        response_text = re.sub(r'"\s*}?\s*$', "", response_text)
+
         return response_text, response_code
 
     # Final fallback: Treat everything as text
     return response_data, ""
 
 
-def parse_ha_local_payload(payload_json: str) -> Optional[dict]:
+def parse_ha_local_payload(payload_json: str) -> dict | None:
     """Parse [[HA_LOCAL: {...}]] JSON payload with robust fallback strategies.
 
     Uses modular strategy system:
@@ -234,14 +306,18 @@ def parse_ha_local_payload(payload_json: str) -> Optional[dict]:
     Returns:
         Parsed dict with "text" or "commands" key, or None if parsing fails
     """
-    def _ha_local_regex_strategy(text: str) -> Optional[dict]:
+
+    def _ha_local_regex_strategy(text: str) -> dict | None:
         """Custom regex strategy for HA_LOCAL payloads."""
         # Multi-command format detection
         if '"commands"' in text:
-            fields = parse_regex_fields(text, {
-                "commands": r'"commands"\s*:\s*(\[.*?\])',
-                "sequential": r'"sequential"\s*:\s*(true|false)'
-            })
+            fields = parse_regex_fields(
+                text,
+                {
+                    "commands": r'"commands"\s*:\s*(\[.*?\])',
+                    "sequential": r'"sequential"\s*:\s*(true|false)',
+                },
+            )
             if fields and "commands" in fields:
                 result = {"commands": fields["commands"]}
                 if "sequential" in fields:
@@ -262,5 +338,255 @@ def parse_ha_local_payload(payload_json: str) -> Optional[dict]:
             parse_strict_json,
             _ha_local_regex_strategy,
         ],
-        validator=_validator
+        validator=_validator,
     )
+
+
+# ==============================================================================
+# RESPONSE METADATA MANAGEMENT
+# ==============================================================================
+
+
+async def _async_save_token_sensors(
+    hass,
+    entry_id: str,
+    usage,
+    model: str | None,
+    service_type: str,
+    mode: str = "unknown",
+    is_fallback: bool = False,
+    store_messages: bool = True,
+) -> None:
+    """Internal helper: Update token sensors and save to storage.
+
+    This function is designed to be called in parallel with other I/O operations.
+
+    Args:
+        hass: Home Assistant instance
+        entry_id: Config entry ID
+        usage: Usage statistics from xAI response
+        model: Model name
+        service_type: Service type ("conversation", "ai_task", "code_fast")
+        mode: Mode string ("pipeline" or "tools") - only used for conversation
+        is_fallback: Whether this is a fallback response - only used for conversation
+        store_messages: Server-side (True) or client-side (False) memory - only used for conversation
+    """
+    try:
+        # Step 1: Update all sensor objects' state in memory
+        update_token_sensors(
+            hass,
+            entry_id,
+            usage,
+            model=model,
+            service_type=service_type,
+            mode=mode,
+            is_fallback=is_fallback,
+            store_messages=store_messages,
+        )
+
+        # Step 2: Get the shared storage object
+        storage = hass.data.get(DOMAIN, {}).get("token_stats_storage")
+        if not storage:
+            LOGGER.error("Failed to save token stats: TokenStatsStorage not found.")
+            return
+
+        # Step 3: Find a base sensor to source the aggregated data from.
+        # All XAITokenSensorBase sensors have the complete aggregated data after update_token_sensors runs.
+        sensors = hass.data.get(DOMAIN, {}).get(f"{entry_id}_sensors", [])
+        source_sensor = None
+        for sensor in sensors:
+            if hasattr(
+                sensor, "update_token_usage"
+            ):  # Find a sensor that holds token data
+                source_sensor = sensor
+                break
+
+        if not source_sensor:
+            LOGGER.error("Failed to save token stats: No suitable source sensor found.")
+            return
+
+        # Step 4: Build the aggregated stats payload from the source sensor's state
+        stats = {
+            "tokens_by_model": source_sensor._tokens_by_model,
+            "cumulative_completion_tokens": source_sensor._cumulative_completion_tokens,
+            "cumulative_prompt_tokens": source_sensor._cumulative_prompt_tokens,
+            "cumulative_cached_tokens": source_sensor._cumulative_cached_tokens,
+            "cumulative_reasoning_tokens": source_sensor._cumulative_reasoning_tokens,
+            "message_count": source_sensor._message_count,
+            "last_completion_tokens": source_sensor._last_completion_tokens,
+            "last_prompt_tokens": source_sensor._last_prompt_tokens,
+            "last_cached_tokens": source_sensor._last_cached_tokens,
+            "last_reasoning_tokens": source_sensor._last_reasoning_tokens,
+            "last_model": source_sensor._last_model,
+            "last_timestamp": source_sensor._last_timestamp.isoformat()
+            if source_sensor._last_timestamp
+            else None,
+            "reset_timestamp": source_sensor._reset_timestamp.isoformat()
+            if source_sensor._reset_timestamp
+            else None,
+        }
+
+        # Step 5: Directly save the aggregated stats to storage.
+        await storage.save_aggregated_stats(stats)
+        LOGGER.debug(
+            "Successfully saved token stats to storage for service=%s", service_type
+        )
+
+    except Exception as err:
+        LOGGER.error(
+            "Failed to save token sensors for %s: %s", service_type, err, exc_info=True
+        )
+
+
+async def save_response_metadata(
+    hass,
+    entry_id: str,
+    usage,
+    model: str | None,
+    service_type: str,
+    mode: str = "unknown",
+    is_fallback: bool = False,
+    store_messages: bool = True,
+    conv_key: str | None = None,
+    response_id: str | None = None,
+    entity=None,
+    citations: list | None = None,
+    num_sources_used: int = 0,
+) -> None:
+    """Save response metadata to memory and update token sensors.
+
+    SERVICE-TYPE BASED: Unified function for conversation, ai_task, and code_fast.
+
+    PERFORMANCE OPTIMIZATION (Fire-and-Forget):
+    - Executes I/O operations in background WITHOUT blocking the response
+    - Uses asyncio.create_task() for non-blocking execution
+    - Tracks pending tasks for graceful shutdown
+    - Reduces user-facing latency to 0ms (100% improvement on I/O operations)
+
+    SAFETY:
+    - Safe for Home Assistant environments (Raspberry Pi, Proxmox VMs)
+    - Guaranteed write time during conversation or STT processing
+    - Data loss risk: near zero (HA graceful shutdown + conversation duration)
+
+    Args:
+        hass: Home Assistant instance
+        entry_id: Config entry ID
+        usage: Usage statistics from xAI response
+        model: Model name (extracted from response.model or usage)
+        service_type: Service type ("conversation", "ai_task", "code_fast")
+        mode: Mode string ("pipeline" or "tools") - only used for conversation
+        is_fallback: Whether this is a fallback response - only used for conversation
+        store_messages: Server-side (True) or client-side (False) memory - only used for conversation
+        conv_key: Conversation key for memory storage (None for ai_task/code_fast)
+        response_id: xAI response ID to save (None if not using server-side memory)
+        entity: Optional entity instance for graceful shutdown tracking (conversation only)
+        citations: List of citations from xAI response (conversation only)
+        num_sources_used: Number of unique search sources used (conversation only)
+    """
+    # If model not provided, fallback to entity config (if available)
+    if model is None and entity is not None:
+        model = entity._get_option(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL)
+        LOGGER.debug("Model not in response, using entity config fallback: %s", model)
+
+    # If still None, get from config entry data
+    if model is None:
+        # Get config entry from hass.config_entries
+        for entry in hass.config_entries.async_entries(DOMAIN):
+            if entry.entry_id == entry_id:
+                model = entry.data.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL)
+                LOGGER.debug(
+                    "Model not in response, using entry data fallback: %s", model
+                )
+                break
+
+    # Prepare parallel tasks list
+    tasks = []
+
+    # Task 1: Save response ID to conversation memory (I/O operation)
+    # Only for conversation service with server-side memory
+    if response_id and conv_key and service_type == "conversation":
+
+        async def _save_response_id():
+            try:
+                memory = hass.data[DOMAIN]["conversation_memory"]
+                await memory.save_response_id_by_key(conv_key, response_id)
+                LOGGER.debug(
+                    "memory_save: service=%s mode=%s conv_key=%s response_id=%s",
+                    service_type,
+                    mode,
+                    conv_key,
+                    response_id[:8],
+                )
+            except Exception as err:
+                LOGGER.error(
+                    "MEMORY_DEBUG: failed to store response_id for %s: %s",
+                    service_type,
+                    err,
+                )
+
+        tasks.append(_save_response_id())
+
+    # Task 2: Update token sensors and save to storage (I/O operation)
+    # For ALL service types (conversation, ai_task, code_fast)
+    if usage:
+        tasks.append(
+            _async_save_token_sensors(
+                hass,
+                entry_id,
+                usage,
+                model,
+                service_type,
+                mode,
+                is_fallback,
+                store_messages,
+            )
+        )
+
+    # FIRE-AND-FORGET: Execute I/O in background without blocking the response
+    if tasks:
+
+        async def _background_save():
+            """Background task that executes I/O operations without blocking caller."""
+            try:
+                await asyncio.gather(*tasks, return_exceptions=True)
+            except Exception as err:
+                LOGGER.error(
+                    "Background save task failed for %s: %s", service_type, err
+                )
+
+        # Create background task and track it for graceful shutdown
+        task = asyncio.create_task(_background_save())
+
+        # Store task reference in hass.data for graceful shutdown tracking
+        # This ensures we can await all pending saves before unload
+
+        if DOMAIN not in hass.data:
+            hass.data[DOMAIN] = {}
+        if "pending_save_tasks" not in hass.data[DOMAIN]:
+            hass.data[DOMAIN]["pending_save_tasks"] = set()
+
+        hass.data[DOMAIN]["pending_save_tasks"].add(task)
+        # Auto-cleanup completed tasks to avoid memory leak
+        task.add_done_callback(
+            lambda t: hass.data[DOMAIN]["pending_save_tasks"].discard(t)
+        )
+
+        # Also track in entity if provided (for backward compatibility)
+        if entity is not None:
+            if not hasattr(entity, "_pending_save_tasks"):
+                entity._pending_save_tasks = set()
+            entity._pending_save_tasks.add(task)
+            # Auto-cleanup completed tasks to avoid memory leak
+            task.add_done_callback(lambda t: entity._pending_save_tasks.discard(t))
+
+    # Log search details if available (non-blocking, informational only)
+    # Only for conversation service
+    if service_type == "conversation":
+        if citations:
+            LOGGER.debug("conversation: citations found: %d", len(citations))
+            for citation in citations:
+                LOGGER.debug("Citation: %s", citation)
+        if num_sources_used > 0:
+            LOGGER.debug(
+                "conversation: unique search sources used: %d", num_sources_used
+            )

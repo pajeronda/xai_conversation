@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 # Standard library imports
+import asyncio
 from typing import TYPE_CHECKING
 
-# Home Assistant and standard library imports (re-exported from __init__)
-from .__init__ import (
-    time,
-    HA_ConfigSubentry, HA_Entity,
-    ha_conversation, ha_device_registry
-)
+# Home Assistant imports
+from homeassistant.config_entries import ConfigSubentry as HA_ConfigSubentry
+from homeassistant.helpers.entity import Entity as HA_Entity
+from homeassistant.components import conversation as ha_conversation
+from homeassistant.helpers import device_registry as ha_device_registry
 
 # Local imports
 from .const import (
@@ -25,13 +25,8 @@ from .const import (
 )
 from .entity_pipeline import IntelligentPipeline
 from .entity_tools import XAIToolsProcessor
-from .helpers import (
-    XAIGateway,
-)
-from .helpers.sensors import update_token_sensors
-from .exceptions import (
-    handle_api_error,
-)
+from .helpers import XAIGateway, LogTimeServices
+from .exceptions import handle_api_error
 
 if TYPE_CHECKING:
     from . import XAIConfigEntry
@@ -60,7 +55,14 @@ class XAIBaseLLMEntity(HA_Entity):
         self.gateway = XAIGateway(self)
         # Tools processor instance to maintain cache across calls
         self._tools_processor = XAIToolsProcessor(self)
-        LOGGER.debug("Initialized XAI entity: %s (model: %s, unique_id: %s)", subentry.title, model, subentry.subentry_id)
+        # Track pending I/O tasks for graceful shutdown
+        self._pending_save_tasks = set()
+        LOGGER.debug(
+            "Initialized XAI entity: %s (model: %s, unique_id: %s)",
+            subentry.title,
+            model,
+            subentry.subentry_id,
+        )
 
     async def async_added_to_hass(self) -> None:
         """Link to shared sensors and get global ConversationMemory."""
@@ -71,11 +73,18 @@ class XAIBaseLLMEntity(HA_Entity):
         sensor_key = f"{entry_id}_sensors"
         if DOMAIN in self.hass.data and sensor_key in self.hass.data[DOMAIN]:
             self._token_sensors = self.hass.data[DOMAIN][sensor_key]
-            LOGGER.debug("Entity %s linked to %d shared sensors", self.entity_id, len(self._token_sensors))
+            LOGGER.debug(
+                "Entity %s linked to %d shared sensors",
+                self.entity_id,
+                len(self._token_sensors),
+            )
         else:
             # Sensors will be linked later when they are created
             self._token_sensors = []
-            LOGGER.debug("Sensors not yet available for entry %s, will be linked when ready", entry_id)
+            LOGGER.debug(
+                "Sensors not yet available for entry %s, will be linked when ready",
+                entry_id,
+            )
 
         # Get global ConversationMemory instance
         self._conversation_memory = self.hass.data[DOMAIN]["conversation_memory"]
@@ -84,11 +93,42 @@ class XAIBaseLLMEntity(HA_Entity):
         # Store a reference to this entity for easy access by other components, if not already present
         if entry_id not in self.hass.data[DOMAIN]:
             self.hass.data[DOMAIN][entry_id] = self
-            LOGGER.debug("Stored reference to entity %s for entry %s", self.entity_id, entry_id)
+            LOGGER.debug(
+                "Stored reference to entity %s for entry %s", self.entity_id, entry_id
+            )
 
     async def async_will_remove_from_hass(self) -> None:
         """Cleanup when entity is being removed."""
         await super().async_will_remove_from_hass()
+
+        # Wait for pending save tasks to complete (graceful shutdown)
+        if self._pending_save_tasks:
+            LOGGER.debug(
+                "Waiting for %d pending save tasks to complete for entity %s",
+                len(self._pending_save_tasks),
+                self.entity_id,
+            )
+            try:
+                # Use asyncio.wait with timeout to avoid indefinite blocking
+                done, pending = await asyncio.wait(
+                    self._pending_save_tasks,
+                    timeout=5.0,  # Max 5 seconds wait
+                )
+                if pending:
+                    LOGGER.warning(
+                        "Shutdown timeout: %d save tasks still pending for entity %s",
+                        len(pending),
+                        self.entity_id,
+                    )
+                    # Cancel remaining tasks
+                    for task in pending:
+                        task.cancel()
+                else:
+                    LOGGER.debug(
+                        "All save tasks completed for entity %s", self.entity_id
+                    )
+            except Exception as err:
+                LOGGER.error("Error waiting for pending save tasks: %s", err)
 
         # Close xAI client and cleanup gRPC channels
         LOGGER.debug("Closing xAI gateway for entity %s", self.entity_id)
@@ -99,43 +139,39 @@ class XAIBaseLLMEntity(HA_Entity):
         self,
         user_input,
         chat_log,
-        ) -> None:
-        """Generate an answer for the chat log with optional persistent memory.
-
-        Memory management (previous_response_id retrieval and storage) is handled
-        entirely by the processors (IntelligentPipeline or XAIToolsProcessor).
+    ) -> None:
         """
-        start_time = time.time()
+        Generate an answer for the chat log, with logging and timing handled by LogTimeServices.
+        The timer context is created here and passed down to the processors.
+        """
         use_pipeline_raw = self._get_option(CONF_USE_INTELLIGENT_PIPELINE, True)
-        store_messages = self._get_option(CONF_STORE_MESSAGES, RECOMMENDED_STORE_MESSAGES)
+        store_messages = self._get_option(
+            CONF_STORE_MESSAGES, RECOMMENDED_STORE_MESSAGES
+        )
 
-        mode = "pipeline" if use_pipeline_raw else "tools"
-        memory_status = "with_memory" if store_messages else "no_memory"
+        mode = "intelligent_pipeline" if use_pipeline_raw else "tools_mode"
+        context = {"memory": "with_memory" if store_messages else "no_memory"}
 
-        LOGGER.info("chat_start: entity=%s mode=%s memory=%s",
-                   self.entity_id, mode, memory_status)
+        async with LogTimeServices(LOGGER, mode, context) as timer:
+            try:
+                if use_pipeline_raw:
+                    LOGGER.debug("Using intelligent pipeline")
+                    pipeline = IntelligentPipeline(self.hass, self, user_input)
+                    # The timer instance is passed down to the processor
+                    await pipeline.run(chat_log, timer)
+                else:
+                    LOGGER.debug("Using tools processor (pipeline disabled)")
+                    # The timer instance is passed down to the processor
+                    await self._tools_processor.async_process_with_loop(
+                        user_input, chat_log, timer
+                    )
+            except Exception as err:
+                # The timer's __aexit__ will log the error details
+                handle_api_error(err, timer.start_time, "xAI API call")
 
-        try:
-            # Route based on the configuration. The pipeline itself will handle fallbacks.
-            if use_pipeline_raw:
-                LOGGER.debug("Using intelligent pipeline")
-                pipeline = IntelligentPipeline(self.hass, self, user_input)
-                await pipeline.run(chat_log)
-            else: # Handles "tools" mode (which includes simple chat if tools are off)
-                LOGGER.debug("Using tools processor (pipeline disabled)")
-                await self._tools_processor.async_process_with_loop(
-                    user_input, chat_log
-                )
-
-            # Persist latest prev_id if available (already handled in individual methods)
-            # No additional persistence needed here as it's done in each API call
-
-            processing_time = time.time() - start_time
-            LOGGER.info("chat_end: entity=%s duration=%.2fs", self.entity_id, processing_time)
-        except Exception as err:
-            handle_api_error(err, start_time, "xAI API call")
-
-    async def _add_error_response_and_continue(self, user_input, chat_log, message: str) -> None:
+    async def _add_error_response_and_continue(
+        self, user_input, chat_log, message: str
+    ) -> None:
         """Add an error response to the chat log and keep the conversation going."""
         # Add error as assistant content to keep conversation flowing
         async for _ in chat_log.async_add_assistant_content(
@@ -146,70 +182,14 @@ class XAIBaseLLMEntity(HA_Entity):
         ):
             pass
 
-    async def _memory_get_prev_id(self, conv_key: str) -> str | None:
-        """Get last response_id using global ConversationMemory."""
-        store_messages_enabled = self._get_option(CONF_STORE_MESSAGES, True)
-        if not store_messages_enabled:
-            return None
-
-        # Delegate to global ConversationMemory which handles the full key format
-        return await self._conversation_memory.get_response_id_by_key(conv_key)
-
-    async def _memory_set_prev_id(self, conv_key: str, response_id: str) -> None:
-        """Save response_id using global ConversationMemory."""
-        store_messages_enabled = self._get_option(CONF_STORE_MESSAGES, True)
-        if not store_messages_enabled or not conv_key:
-            return
-
-        # Delegate to global ConversationMemory which handles the full key format
-        await self._conversation_memory.save_response_id_by_key(conv_key, response_id)
-
-    def _update_token_sensors(
-        self,
-        usage,
-        model: str | None = None,
-        service_type: str = "conversation",
-        mode: str = "pipeline",
-        is_fallback: bool = False
-    ) -> None:
-        """Update all registered token sensors with new usage data.
-
-        This is a wrapper around the global update_token_sensors() function.
-        """
-        # Get store_messages setting
-        store_messages = self._get_option("store_messages", True)
-
-        # If model not provided, try to get from config as fallback
-        if model is None:
-            model = self._get_option(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL)
-
-        # Call global function
-        update_token_sensors(
-            self.hass,
-            self.entry.entry_id,
-            usage,
-            model=model,
-            service_type=service_type,
-            mode=mode,
-            is_fallback=is_fallback,
-            store_messages=store_messages,
-        )
-
-    def _get_token_sensors(self) -> list:
-        """Get token sensors with lazy loading if not yet available."""
-        if not self._token_sensors:
-            # Try to load sensors from hass.data if they were created after this entity
-            entry_id = self.entry.entry_id
-            sensor_key = f"{entry_id}_sensors"
-            if DOMAIN in self.hass.data and sensor_key in self.hass.data[DOMAIN]:
-                self._token_sensors = self.hass.data[DOMAIN][sensor_key]
-                LOGGER.debug("Entity %s lazy-loaded %d shared sensors", self.entity_id, len(self._token_sensors))
-        return self._token_sensors
-
     def _get_option(self, key: str, default=None):
         """Get an option from subentry data with a fallback to defaults."""
         # Try options first (for modified settings), then data (for defaults)
-        if hasattr(self.subentry, 'options') and self.subentry.options and key in self.subentry.options:
+        if (
+            hasattr(self.subentry, "options")
+            and self.subentry.options
+            and key in self.subentry.options
+        ):
             return self.subentry.options[key]
         return self.subentry.data.get(key, default)
 
@@ -221,5 +201,5 @@ class XAIBaseLLMEntity(HA_Entity):
         """Get a float option with type safety and locale handling."""
         value = self._get_option(key, default)
         if isinstance(value, str):
-            value = value.replace(',', '.')
+            value = value.replace(",", ".")
         return float(value)

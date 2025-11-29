@@ -120,7 +120,7 @@
         "reconfigure_successful": "Configurazione aggiornata correttamente!"
       }
     },
-    "ai_task_data": {
+    "ai_task": {
       "initiate_flow": {
         "user": "Aggiungi attività AI",
         "reconfigure": "Riconfigura attività AI"
@@ -159,18 +159,18 @@
         "reconfigure_successful": "Configurazione aggiornata correttamente!"
       }
     },
-    "code_task": {
+    "code_fast": {
       "initiate_flow": {
         "user": "Aggiungi Grok Code Fast",
         "reconfigure": "Riconfigura Grok Code Fast"
       },
-      "entry_type": "code_task",
+      "entry_type": "code_fast",
       "step": {
         "init": {
           "title": "Grok Code Fast",
           "data": {
             "name": "Nome",
-            "prompt": "Prompt",
+            "prompt_code": "Prompt",
             "api_host": "Host API ('api.x.ai', 'us-east-1.api.x.ai' o 'eu-west-1.api.x.ai')",
             "chat_model": "Modello",
             "max_tokens": "Token massimi",
@@ -178,11 +178,12 @@
             "top_p": "Top P",
             "live_search": "Modalità ricerca live",
             "store_messages": "Memorizza messaggi",
+            "assistant_name": "Nome assistente",
             "reasoning_effort": "Livello di ragionamento"
           },
           "data_description": {
             "name": "Nome descrittivo per questa attività Grok Code Fast.",
-            "prompt": "Prompt di sistema completo per il task di codice. Sostituisce quello predefinito. Modificalo con cautela, poiché definisce l'expertise dell'assistente e il formato dell'output.",
+            "prompt_code": "Istruzioni personalizzate opzionali aggiunte al prompt predefinito. Utile per regole specifiche del progetto o convenzioni di codifica. Lasciare vuoto per usare solo il prompt predefinito.",
             "api_host": "Hostname dell'endpoint API. Usa 'api.x.ai' per il routing globale con ridirezione automatica a un host regionale oppure specifica direttamente un host regionale.",
             "chat_model": "Seleziona il modello Grok da utilizzare.",
             "max_tokens": "Numero massimo di token da generare.",
@@ -190,6 +191,7 @@
             "top_p": "Controlla la diversità delle risposte tramite nucleus sampling (non supportato da grok-4).",
             "live_search": "Abilita capacità di ricerca web: 'off' (disabilitato), 'auto' (il modello decide), 'on' (sempre abilitato)",
             "store_messages": "Usa la memoria lato server di xAI per mantenere il contesto della conversazione. I parametri della memoria (durata, numero di turni) sono configurati a livello di integrazione e rilevano automaticamente le richieste da utente o dispositivo.",
+            "assistant_name": "Il nome che l'assistente userà per identificarsi (es. 'Grok Code Fast', 'CodeBot', 'DevAssistant'). Modificare questo valore avvierà una nuova conversazione e la cronologia precedente diventerà inaccessibile.",
             "reasoning_effort": "Livello di impegno nel ragionamento per i modelli che lo supportano (basso, medio, alto)"
           }
         }

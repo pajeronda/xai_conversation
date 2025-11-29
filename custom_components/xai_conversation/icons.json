@@ -5,6 +5,15 @@
     },
     "clear_memory": {
       "service": "mdi:chat-remove"
+    },
+    "photo_analysis": {
+      "service": "mdi:camera"
+    },
+    "dismiss_new_models": {
+      "service": "mdi:alpha-m-box-outline"
+    },
+    "reload_pricing": {
+      "service": "mdi:cash-multiple"
     }
   }
 }

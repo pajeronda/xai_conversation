@@ -1,12 +1,17 @@
 """Prompt management for xAI conversation."""
+
 from __future__ import annotations
 
 from ..const import (
     CONF_ALLOW_SMART_HOME_CONTROL,
     CONF_ASSISTANT_NAME,
     CONF_PROMPT,
+    CONF_PROMPT_CODE,
     CONF_PROMPT_PIPELINE,
     CONF_STORE_MESSAGES,
+    DEFAULT_CODE_FAST_ASSISTANT_NAME,
+    PROMPT_CODE_OUTPUT_FORMAT,
+    PROMPT_CODE_ROLE,
     PROMPT_CUSTOM_RULES,
     PROMPT_IDENTITY,
     PROMPT_MEMORY_CLIENTSIDE,
@@ -36,10 +41,12 @@ class PromptManager:
 
         Args:
             subentry_data: Configuration dictionary from subentry.data
-            mode: Either "pipeline" or "tools"
+            mode: Either "pipeline", "tools", or "code"
         """
-        if mode not in ("pipeline", "tools"):
-            raise ValueError(f"Invalid mode '{mode}', must be 'pipeline' or 'tools'")
+        if mode not in ("pipeline", "tools", "code"):
+            raise ValueError(
+                f"Invalid mode '{mode}', must be 'pipeline', 'tools', or 'code'"
+            )
 
         self.mode = mode
         self.data = subentry_data
@@ -61,13 +68,13 @@ class PromptManager:
         """
         if self.mode == "pipeline":
             return self.data.get(CONF_PROMPT_PIPELINE, "")
+        elif self.mode == "code":
+            return self.data.get(CONF_PROMPT_CODE, "")
         else:  # tools mode
             return self.data.get(CONF_PROMPT, "")
 
     def get_base_system_prompt(
-        self,
-        static_context: str = "",
-        tool_definitions: str = ""
+        self, static_context: str = "", tool_definitions: str = ""
     ) -> str:
         """Get the base system prompt for this mode using modular building blocks.
 
@@ -82,8 +89,7 @@ class PromptManager:
             Complete system prompt assembled from building blocks
         """
         return self.build_system_prompt(
-            static_context=static_context,
-            tool_definitions=tool_definitions
+            static_context=static_context, tool_definitions=tool_definitions
         )
 
     def _build_pipeline_control_prompt_blocks(self, custom_rules: str) -> list[str]:
@@ -109,6 +115,23 @@ class PromptManager:
         """Build prompt blocks for chat-only mode."""
         return [PROMPT_NO_CONTROL]
 
+    def _build_code_prompt_blocks(self, custom_instructions: str) -> list[str]:
+        """Build prompt blocks for code mode (Grok Code Fast service).
+
+        Args:
+            custom_instructions: User's custom instructions for code generation
+
+        Returns:
+            List of prompt blocks specific to code mode
+        """
+        blocks = [PROMPT_CODE_ROLE]
+        if custom_instructions:
+            blocks.append(
+                f"# --- USER INSTRUCTIONS (appended to default) ---\n{custom_instructions}"
+            )
+        blocks.append(PROMPT_CODE_OUTPUT_FORMAT)
+        return blocks
+
     def build_system_prompt(
         self,
         static_context: str = "",
@@ -118,27 +141,47 @@ class PromptManager:
 
         This method assembles the final system prompt from reusable building blocks
         defined in const.py, based on the current configuration.
+
+        Composition order:
+        - Code mode: Identity → Memory → Code Role → [User Instructions] → Code Output Format
+        - Pipeline/Tools: Identity → Role Base → Memory → Mode Blocks → [User Instructions] → Output Format
         """
-        assistant_name = self.data.get(CONF_ASSISTANT_NAME, RECOMMENDED_ASSISTANT_NAME)
+        # Get assistant name with mode-specific default
+        if self.mode == "code":
+            default_name = self.data.get(
+                CONF_ASSISTANT_NAME, DEFAULT_CODE_FAST_ASSISTANT_NAME
+            )
+        else:
+            default_name = self.data.get(
+                CONF_ASSISTANT_NAME, RECOMMENDED_ASSISTANT_NAME
+            )
+        assistant_name = default_name
+
         store_messages = self.data.get(CONF_STORE_MESSAGES, True)
         allow_control = not self.is_chat_only_mode()
         custom_rules = self.get_user_custom_prompt()
 
         blocks = []
 
-        # 1. Identity and Role
+        # 1. Identity (always present)
         blocks.append(PROMPT_IDENTITY.format(assistant_name=assistant_name))
-        blocks.append(PROMPT_ROLE_BASE)
 
-        # 2. Memory Instructions
+        # 2. Role Base (only for conversation modes: pipeline/tools)
+        if self.mode in ("pipeline", "tools"):
+            blocks.append(PROMPT_ROLE_BASE)
+
+        # 3. Memory Instructions (all modes support memory)
         if store_messages:
             blocks.append(PROMPT_MEMORY_SERVERSIDE)
-        elif self.mode == "tools":
-            # Only add client-side memory block in tools mode when server memory is off
+        elif self.mode in ("tools", "code"):
+            # Only add client-side memory block in tools/code modes when server memory is off
             blocks.append(PROMPT_MEMORY_CLIENTSIDE)
 
-        # 3. Mode-Specific Blocks (delegated to helper methods)
-        if allow_control:
+        # 4. Mode-Specific Blocks (delegated to helper methods)
+        if self.mode == "code":
+            # Code mode: special handling with code-specific blocks
+            blocks.extend(self._build_code_prompt_blocks(custom_rules))
+        elif allow_control:
             if self.mode == "pipeline":
                 blocks.extend(self._build_pipeline_control_prompt_blocks(custom_rules))
             else:  # tools mode
@@ -148,21 +191,23 @@ class PromptManager:
                     )
                 )
         else:
+            # Chat-only mode (conversation with control disabled)
             blocks.extend(self._build_chat_only_prompt_blocks())
 
-        # 4. User Instructions (only appended if control is enabled)
-        if custom_rules and allow_control:
-            blocks.append(f"# --- USER INSTRUCTIONS (appended to default) ---\n{custom_rules}")
+        # 5. User Instructions (only for conversation modes with control enabled)
+        if custom_rules and allow_control and self.mode in ("pipeline", "tools"):
+            blocks.append(
+                f"# --- USER INSTRUCTIONS (appended to default) ---\n{custom_rules}"
+            )
 
-        # 5. Output Format
-        blocks.append(PROMPT_OUTPUT_FORMAT)
+        # 6. Output Format (only for conversation modes, code mode has its own)
+        if self.mode in ("pipeline", "tools"):
+            blocks.append(PROMPT_OUTPUT_FORMAT)
 
         return "\n\n".join(blocks)
 
     def build_base_prompt_with_user_instructions(
-        self,
-        static_context: str = "",
-        tool_definitions: str = ""
+        self, static_context: str = "", tool_definitions: str = ""
     ) -> str:
         """Build base system prompt + user custom instructions using modular system.
 
@@ -180,6 +225,5 @@ class PromptManager:
         """
         # Use new modular system
         return self.build_system_prompt(
-            static_context=static_context,
-            tool_definitions=tool_definitions
+            static_context=static_context, tool_definitions=tool_definitions
         )

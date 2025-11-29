@@ -1,4 +1,5 @@
 """Config flow for xAI Conversation integration."""
+
 from __future__ import annotations
 
 # Standard library imports
@@ -7,15 +8,20 @@ from typing import Any
 # Third-party imports
 import voluptuous as vol
 
-from homeassistant.config_entries import OptionsFlow
-
-from .__init__ import (
-    ha_callback, ha_llm,
-    CONF_API_KEY, CONF_LLM_HASS_API,
-    ConfigEntry, ConfigEntryState, ConfigFlow, ConfigFlowResult,
-    ConfigSubentryFlow, SubentryFlowResult, selector,
-    async_validate_api_key,
+from homeassistant.config_entries import (
+    ConfigEntry,
+    ConfigEntryState,
+    ConfigFlow,
+    ConfigFlowResult,
+    ConfigSubentryFlow,
+    SubentryFlowResult,
+    OptionsFlow,
 )
+from homeassistant.const import CONF_API_KEY, CONF_LLM_HASS_API
+from homeassistant.core import callback as ha_callback
+from homeassistant.helpers import llm as ha_llm, selector
+
+from .helpers.xai_gateway import XAIGateway
 
 from .const import (
     CONF_API_HOST,
@@ -32,6 +38,7 @@ from .const import (
     CONF_MEMORY_DEVICE_MAX_TURNS,
     CONF_MEMORY_DEVICE_TTL_HOURS,
     CONF_PROMPT,
+    CONF_PROMPT_CODE,
     CONF_VISION_PROMPT,
     CONF_PROMPT_PIPELINE,
     CONF_REASONING_EFFORT,
@@ -42,6 +49,7 @@ from .const import (
     CONF_USE_INTELLIGENT_PIPELINE,
     DEFAULT_AI_TASK_NAME,
     DEFAULT_API_HOST,
+    DEFAULT_CODE_FAST_ASSISTANT_NAME,
     DEFAULT_CONVERSATION_NAME,
     DEFAULT_DEVICE_NAME,
     DEFAULT_GROK_CODE_FAST_NAME,
@@ -70,8 +78,6 @@ from .const import (
 )
 
 
-
-
 class XAIConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for xAI Conversation."""
 
@@ -87,9 +93,18 @@ class XAIConfigFlow(ConfigFlow, domain=DOMAIN):
                 data_schema=vol.Schema(
                     {
                         vol.Required(CONF_API_KEY): str,
-                        vol.Optional(CONF_API_HOST, default=RECOMMENDED_TOOLS_OPTIONS.get(CONF_API_HOST, DEFAULT_API_HOST)): str,
-                        vol.Optional(CONF_ASSISTANT_NAME, default=RECOMMENDED_ASSISTANT_NAME): str,
-                        vol.Optional(CONF_LIVE_SEARCH, default=RECOMMENDED_LIVE_SEARCH): selector.SelectSelector(
+                        vol.Optional(
+                            CONF_API_HOST,
+                            default=RECOMMENDED_TOOLS_OPTIONS.get(
+                                CONF_API_HOST, DEFAULT_API_HOST
+                            ),
+                        ): str,
+                        vol.Optional(
+                            CONF_ASSISTANT_NAME, default=RECOMMENDED_ASSISTANT_NAME
+                        ): str,
+                        vol.Optional(
+                            CONF_LIVE_SEARCH, default=RECOMMENDED_LIVE_SEARCH
+                        ): selector.SelectSelector(
                             selector.SelectSelectorConfig(
                                 options=["off", "auto", "on"],
                                 mode=selector.SelectSelectorMode.DROPDOWN,
@@ -102,8 +117,8 @@ class XAIConfigFlow(ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         try:
-            # Validate API key
-            await async_validate_api_key(self.hass, user_input["api_key"])
+            # Validate API key using gateway
+            await XAIGateway.async_validate_api_key(user_input["api_key"])
         except ValueError as err:
             if "xai_sdk not installed" in str(err):
                 errors["base"] = "missing_dependency"
@@ -122,17 +137,21 @@ class XAIConfigFlow(ConfigFlow, domain=DOMAIN):
                 conv_defaults[CONF_API_HOST] = user_api_host
 
             # Set live search from user input
-            conv_defaults[CONF_LIVE_SEARCH] = user_input.get(CONF_LIVE_SEARCH, RECOMMENDED_LIVE_SEARCH)
+            conv_defaults[CONF_LIVE_SEARCH] = user_input.get(
+                CONF_LIVE_SEARCH, RECOMMENDED_LIVE_SEARCH
+            )
 
             # Add memory configuration to entry data (shared by all entities)
             entry_data = user_input.copy()
-            entry_data.update({
-                CONF_MEMORY_USER_TTL_HOURS: RECOMMENDED_MEMORY_USER_TTL_HOURS,
-                CONF_MEMORY_USER_MAX_TURNS: RECOMMENDED_MEMORY_USER_MAX_TURNS,
-                CONF_MEMORY_DEVICE_TTL_HOURS: RECOMMENDED_MEMORY_DEVICE_TTL_HOURS,
-                CONF_MEMORY_DEVICE_MAX_TURNS: RECOMMENDED_MEMORY_DEVICE_MAX_TURNS,
-                CONF_MEMORY_CLEANUP_INTERVAL_HOURS: RECOMMENDED_MEMORY_CLEANUP_INTERVAL_HOURS,
-            })
+            entry_data.update(
+                {
+                    CONF_MEMORY_USER_TTL_HOURS: RECOMMENDED_MEMORY_USER_TTL_HOURS,
+                    CONF_MEMORY_USER_MAX_TURNS: RECOMMENDED_MEMORY_USER_MAX_TURNS,
+                    CONF_MEMORY_DEVICE_TTL_HOURS: RECOMMENDED_MEMORY_DEVICE_TTL_HOURS,
+                    CONF_MEMORY_DEVICE_MAX_TURNS: RECOMMENDED_MEMORY_DEVICE_MAX_TURNS,
+                    CONF_MEMORY_CLEANUP_INTERVAL_HOURS: RECOMMENDED_MEMORY_CLEANUP_INTERVAL_HOURS,
+                }
+            )
 
             return self.async_create_entry(
                 title=DEFAULT_DEVICE_NAME,
@@ -145,13 +164,13 @@ class XAIConfigFlow(ConfigFlow, domain=DOMAIN):
                         "unique_id": f"{DOMAIN}:conversation",
                     },
                     {
-                        "subentry_type": "ai_task_data",
+                        "subentry_type": "ai_task",
                         "data": RECOMMENDED_AI_TASK_OPTIONS,
                         "title": DEFAULT_AI_TASK_NAME,
                         "unique_id": f"{DOMAIN}:ai_task",
                     },
                     {
-                        "subentry_type": "code_task",
+                        "subentry_type": "code_fast",
                         "data": RECOMMENDED_GROK_CODE_FAST_OPTIONS,
                         "title": DEFAULT_GROK_CODE_FAST_NAME,
                         "unique_id": f"{DOMAIN}:grok_code_fast",
@@ -170,7 +189,12 @@ class XAIConfigFlow(ConfigFlow, domain=DOMAIN):
             data_schema=vol.Schema(
                 {
                     vol.Required(CONF_API_KEY): str,
-                    vol.Optional(CONF_API_HOST, default=RECOMMENDED_TOOLS_OPTIONS.get(CONF_API_HOST, DEFAULT_API_HOST)): str,
+                    vol.Optional(
+                        CONF_API_HOST,
+                        default=RECOMMENDED_TOOLS_OPTIONS.get(
+                            CONF_API_HOST, DEFAULT_API_HOST
+                        ),
+                    ): str,
                 }
             ),
             errors=errors,
@@ -178,7 +202,9 @@ class XAIConfigFlow(ConfigFlow, domain=DOMAIN):
 
     @staticmethod
     @ha_callback
-    def async_get_options_flow(config_entry: ConfigEntry) -> "XAIIntegrationOptionsFlow":
+    def async_get_options_flow(
+        config_entry: ConfigEntry,
+    ) -> "XAIIntegrationOptionsFlow":
         """Get the options flow for this integration."""
         return XAIIntegrationOptionsFlow()
 
@@ -190,8 +216,8 @@ class XAIConfigFlow(ConfigFlow, domain=DOMAIN):
         """Return subentries supported by this integration."""
         return {
             "conversation": XAIOptionsFlow,
-            "ai_task_data": XAIOptionsFlow,
-            "code_task": XAIOptionsFlow,
+            "ai_task": XAIOptionsFlow,
+            "code_fast": XAIOptionsFlow,
             "sensors": XAIOptionsFlow,
         }
 
@@ -212,61 +238,75 @@ class XAIIntegrationOptionsFlow(OptionsFlow):
             return self.async_create_entry(title="", data={})
 
         # Build schema with current values
-        schema = vol.Schema({
-            vol.Optional(
-                CONF_MEMORY_USER_TTL_HOURS,
-                default=self.config_entry.data.get(
-                    CONF_MEMORY_USER_TTL_HOURS, RECOMMENDED_MEMORY_USER_TTL_HOURS
+        schema = vol.Schema(
+            {
+                vol.Optional(
+                    CONF_MEMORY_USER_TTL_HOURS,
+                    default=self.config_entry.data.get(
+                        CONF_MEMORY_USER_TTL_HOURS, RECOMMENDED_MEMORY_USER_TTL_HOURS
+                    ),
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        min=1,
+                        max=24 * 365,
+                        step=24,
+                        mode=selector.NumberSelectorMode.BOX,
+                        unit_of_measurement="hours",
+                    )
                 ),
-            ): selector.NumberSelector(
-                selector.NumberSelectorConfig(
-                    min=1, max=24*365, step=24, mode=selector.NumberSelectorMode.BOX,
-                    unit_of_measurement="hours"
-                )
-            ),
-            vol.Optional(
-                CONF_MEMORY_USER_MAX_TURNS,
-                default=self.config_entry.data.get(
-                    CONF_MEMORY_USER_MAX_TURNS, RECOMMENDED_MEMORY_USER_MAX_TURNS
+                vol.Optional(
+                    CONF_MEMORY_USER_MAX_TURNS,
+                    default=self.config_entry.data.get(
+                        CONF_MEMORY_USER_MAX_TURNS, RECOMMENDED_MEMORY_USER_MAX_TURNS
+                    ),
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        min=1, max=10000, step=1, mode=selector.NumberSelectorMode.BOX
+                    )
                 ),
-            ): selector.NumberSelector(
-                selector.NumberSelectorConfig(
-                    min=1, max=10000, step=1, mode=selector.NumberSelectorMode.BOX
-                )
-            ),
-            vol.Optional(
-                CONF_MEMORY_DEVICE_TTL_HOURS,
-                default=self.config_entry.data.get(
-                    CONF_MEMORY_DEVICE_TTL_HOURS, RECOMMENDED_MEMORY_DEVICE_TTL_HOURS
+                vol.Optional(
+                    CONF_MEMORY_DEVICE_TTL_HOURS,
+                    default=self.config_entry.data.get(
+                        CONF_MEMORY_DEVICE_TTL_HOURS,
+                        RECOMMENDED_MEMORY_DEVICE_TTL_HOURS,
+                    ),
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        min=1,
+                        max=24 * 30,
+                        step=24,
+                        mode=selector.NumberSelectorMode.BOX,
+                        unit_of_measurement="hours",
+                    )
                 ),
-            ): selector.NumberSelector(
-                selector.NumberSelectorConfig(
-                    min=1, max=24*30, step=24, mode=selector.NumberSelectorMode.BOX,
-                    unit_of_measurement="hours"
-                )
-            ),
-            vol.Optional(
-                CONF_MEMORY_DEVICE_MAX_TURNS,
-                default=self.config_entry.data.get(
-                    CONF_MEMORY_DEVICE_MAX_TURNS, RECOMMENDED_MEMORY_DEVICE_MAX_TURNS
+                vol.Optional(
+                    CONF_MEMORY_DEVICE_MAX_TURNS,
+                    default=self.config_entry.data.get(
+                        CONF_MEMORY_DEVICE_MAX_TURNS,
+                        RECOMMENDED_MEMORY_DEVICE_MAX_TURNS,
+                    ),
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        min=1, max=1000, step=1, mode=selector.NumberSelectorMode.BOX
+                    )
                 ),
-            ): selector.NumberSelector(
-                selector.NumberSelectorConfig(
-                    min=1, max=1000, step=1, mode=selector.NumberSelectorMode.BOX
-                )
-            ),
-            vol.Optional(
-                CONF_MEMORY_CLEANUP_INTERVAL_HOURS,
-                default=self.config_entry.data.get(
-                    CONF_MEMORY_CLEANUP_INTERVAL_HOURS, RECOMMENDED_MEMORY_CLEANUP_INTERVAL_HOURS
+                vol.Optional(
+                    CONF_MEMORY_CLEANUP_INTERVAL_HOURS,
+                    default=self.config_entry.data.get(
+                        CONF_MEMORY_CLEANUP_INTERVAL_HOURS,
+                        RECOMMENDED_MEMORY_CLEANUP_INTERVAL_HOURS,
+                    ),
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        min=0.25,
+                        max=168,
+                        step=1,
+                        mode=selector.NumberSelectorMode.BOX,
+                        unit_of_measurement="hours",
+                    )
                 ),
-            ): selector.NumberSelector(
-                selector.NumberSelectorConfig(
-                    min=0.25, max=168, step=1, mode=selector.NumberSelectorMode.BOX,
-                    unit_of_measurement="hours"
-                )
-            ),
-        })
+            }
+        )
 
         return self.async_show_form(step_id="init", data_schema=schema)
 
@@ -285,9 +325,9 @@ class XAIOptionsFlow(ConfigSubentryFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> SubentryFlowResult:
         """Add a subentry."""
-        if self._subentry_type == "ai_task_data":
+        if self._subentry_type == "ai_task":
             self.options = RECOMMENDED_AI_TASK_OPTIONS.copy()
-        elif self._subentry_type == "code_task":
+        elif self._subentry_type == "code_fast":
             self.options = RECOMMENDED_GROK_CODE_FAST_OPTIONS.copy()
         elif self._subentry_type == "sensors":
             # Sensors subentry has no configurable options
@@ -318,9 +358,9 @@ class XAIOptionsFlow(ConfigSubentryFlow):
         step_schema = {}
 
         if self._is_new:
-            if self._subentry_type == "ai_task_data":
+            if self._subentry_type == "ai_task":
                 default_name = DEFAULT_AI_TASK_NAME
-            elif self._subentry_type == "code_task":
+            elif self._subentry_type == "code_fast":
                 default_name = DEFAULT_GROK_CODE_FAST_NAME
             elif self._subentry_type == "sensors":
                 default_name = DEFAULT_SENSORS_NAME
@@ -334,19 +374,22 @@ class XAIOptionsFlow(ConfigSubentryFlow):
             xai_models_data = self.hass.data[DOMAIN].get("xai_models_data")
             if not xai_models_data:
                 # Fallback to empty schema or error, though data should always be present at this stage
-                LOGGER.warning("xAI model data not available in hass.data. Cannot generate dynamic pricing fields for sensors.")
+                LOGGER.warning(
+                    "xAI model data not available in hass.data. Cannot generate dynamic pricing fields for sensors."
+                )
                 # Return an error schema that explains the issue
                 step_schema["_warning_no_model_data"] = selector.TextSelector(
                     selector.TextSelectorConfig(
                         type=selector.TextSelectorType.TEXT,
                         multiple=False,
-                        suffix="Could not load model pricing data. Please check integration logs and ensure API key is valid."
+                        suffix="Could not load model pricing data. Please check integration logs and ensure API key is valid.",
                     )
                 )
-                return self.async_show_form(step_id="init", data_schema=vol.Schema(step_schema), errors={"base": "no_model_data"})
-
-
-
+                return self.async_show_form(
+                    step_id="init",
+                    data_schema=vol.Schema(step_schema),
+                    errors={"base": "no_model_data"},
+                )
 
             if user_input is not None:
                 options.update(user_input)
@@ -371,255 +414,32 @@ class XAIOptionsFlow(ConfigSubentryFlow):
 
         if self._subentry_type == "conversation":
             # Unified parameters (appear for both pipeline and tools modes)
-            step_schema.update({
-                vol.Optional(
-                    CONF_USE_INTELLIGENT_PIPELINE,
-                    default=options.get(CONF_USE_INTELLIGENT_PIPELINE, True),
-                ): selector.BooleanSelector(),
-                vol.Optional(
-                    CONF_ALLOW_SMART_HOME_CONTROL,
-                    default=options.get(CONF_ALLOW_SMART_HOME_CONTROL, True),
-                ): selector.BooleanSelector(),
-                vol.Optional(
-                    CONF_STORE_MESSAGES,
-                    default=options.get(CONF_STORE_MESSAGES, RECOMMENDED_STORE_MESSAGES),
-                ): selector.BooleanSelector(),
-                vol.Optional(
-                    CONF_SEND_USER_NAME,
-                    default=options.get(CONF_SEND_USER_NAME, False),
-                ): selector.BooleanSelector(),
-                vol.Optional(
-                    CONF_ASSISTANT_NAME,
-                    default=options.get(CONF_ASSISTANT_NAME, RECOMMENDED_ASSISTANT_NAME),
-                ): str,
-                vol.Optional(
-                    CONF_LIVE_SEARCH,
-                    default=options.get(CONF_LIVE_SEARCH, RECOMMENDED_LIVE_SEARCH),
-                ): selector.SelectSelector(
-                    selector.SelectSelectorConfig(
-                        options=["off", "auto", "on"],
-                        mode=selector.SelectSelectorMode.DROPDOWN,
-                    )
-                ),
-            })
-            
-            use_pipeline = options.get(CONF_USE_INTELLIGENT_PIPELINE, True)
-
-            if use_pipeline:
-                # Intelligent Pipeline default config
-                step_schema.update({
+            step_schema.update(
+                {
                     vol.Optional(
-                        CONF_PROMPT_PIPELINE,
-                        description={"suggested_value": options.get(CONF_PROMPT_PIPELINE, "")},
-                    ): selector.TemplateSelector(),
+                        CONF_USE_INTELLIGENT_PIPELINE,
+                        default=options.get(CONF_USE_INTELLIGENT_PIPELINE, True),
+                    ): selector.BooleanSelector(),
                     vol.Optional(
-                        CONF_API_HOST,
-                        default=options.get(CONF_API_HOST, DEFAULT_API_HOST),
-                    ): str,
-                    vol.Optional(
-                        CONF_CHAT_MODEL,
-                        description={"suggested_value": model},
-                    ): selector.SelectSelector(
-                        selector.SelectSelectorConfig(
-                            options=SUPPORTED_MODELS,
-                            mode=selector.SelectSelectorMode.DROPDOWN,
-                        )
-                    ),
-                    vol.Optional(
-                        CONF_MAX_TOKENS,
-                        default=options.get(CONF_MAX_TOKENS, RECOMMENDED_PIPELINE_OPTIONS.get(CONF_MAX_TOKENS)),
-                    ): selector.NumberSelector(
-                        selector.NumberSelectorConfig(
-                            min=1, max=8192, mode=selector.NumberSelectorMode.BOX
-                        )
-                    ),
-                    vol.Optional(
-                        CONF_TEMPERATURE,
-                        default=options.get(CONF_TEMPERATURE, RECOMMENDED_PIPELINE_OPTIONS.get(CONF_TEMPERATURE)),
-                    ): selector.NumberSelector(
-                        selector.NumberSelectorConfig(
-                            min=0.0, max=2.0, step=0.1, mode=selector.NumberSelectorMode.BOX
-                        )
-                    ),
-                    vol.Optional(
-                        CONF_TOP_P,
-                        default=options.get(CONF_TOP_P, RECOMMENDED_PIPELINE_OPTIONS.get(CONF_TOP_P)),
-                    ): selector.NumberSelector(
-                        selector.NumberSelectorConfig(
-                            min=0.0, max=1.0, step=0.05, mode=selector.NumberSelectorMode.BOX
-                        )
-                    ),
-                })
-
-                if model in REASONING_EFFORT_MODELS:
-                    step_schema.update({
-                        vol.Optional(
-                            CONF_REASONING_EFFORT,
-                            default=options.get(CONF_REASONING_EFFORT, RECOMMENDED_REASONING_EFFORT),
-                        ): selector.SelectSelector(
-                            selector.SelectSelectorConfig(
-                                options=["low", "medium", "high", "max"],
-                                mode=selector.SelectSelectorMode.DROPDOWN,
-                            )
-                        ),
-                    })
-            else:
-                # Home Assistant LLM API mode (Tools mode)
-                step_schema.update({
-                    vol.Optional(
-                        CONF_API_HOST, default=options.get(CONF_API_HOST, RECOMMENDED_TOOLS_OPTIONS.get(CONF_API_HOST, "api.x.ai")),
-                    ): str,
-                    vol.Optional(
-                        CONF_PROMPT,
-                        description={"suggested_value": options.get(CONF_PROMPT, "")},
-                    ): selector.TemplateSelector(),
-                    vol.Optional(
-                        CONF_CHAT_MODEL,
-                        description={"suggested_value": model},
-                    ): selector.SelectSelector(
-                        selector.SelectSelectorConfig(
-                            options=SUPPORTED_MODELS,
-                            mode=selector.SelectSelectorMode.DROPDOWN,
-                        )
-                    ),
-                    vol.Optional(
-                        CONF_MAX_TOKENS,
-                        default=options.get(CONF_MAX_TOKENS, RECOMMENDED_TOOLS_OPTIONS.get(CONF_MAX_TOKENS)),
-                    ): selector.NumberSelector(
-                        selector.NumberSelectorConfig(
-                            min=1, max=8192, mode=selector.NumberSelectorMode.BOX
-                        )
-                    ),
-                    vol.Optional(
-                        CONF_TEMPERATURE,
-                        default=options.get(CONF_TEMPERATURE, RECOMMENDED_TOOLS_OPTIONS.get(CONF_TEMPERATURE)),
-                    ): selector.NumberSelector(
-                        selector.NumberSelectorConfig(
-                            min=0.0, max=2.0, step=0.1, mode=selector.NumberSelectorMode.BOX
-                        )
-                    ),
-                    vol.Optional(
-                        CONF_TOP_P,
-                        default=options.get(CONF_TOP_P, RECOMMENDED_TOOLS_OPTIONS.get(CONF_TOP_P)),
-                    ): selector.NumberSelector(
-                        selector.NumberSelectorConfig(
-                            min=0.0, max=1.0, step=0.05, mode=selector.NumberSelectorMode.BOX
-                        )
-                    ),
-                })
-
-                if model in REASONING_EFFORT_MODELS:
-                    step_schema.update({
-                        vol.Optional(
-                            CONF_REASONING_EFFORT,
-                            default=options.get(CONF_REASONING_EFFORT, RECOMMENDED_REASONING_EFFORT),
-                        ): selector.SelectSelector(
-                            selector.SelectSelectorConfig(
-                                options=["low", "medium", "high", "max"],
-                                mode=selector.SelectSelectorMode.DROPDOWN,
-                            )
-                        ),
-                    })
-
-            # Memory settings are now at integration level, not subentry level
-            # Only CONF_STORE_MESSAGES remains as a per-conversation toggle
-        else:
-            # ai_task_data and code_task schemas stay as they are
-            model = options.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL)
-
-            # Build base schema
-            base_fields = {
-                vol.Optional(
-                    CONF_PROMPT,
-                    description={"suggested_value": options.get(CONF_PROMPT, "")},
-                ): selector.TemplateSelector(),
-            }
-
-            # Add vision_prompt field only for ai_task_data
-            if self._subentry_type == "ai_task_data":
-                base_fields[vol.Optional(
-                    CONF_VISION_PROMPT,
-                    description={"suggested_value": options.get(CONF_VISION_PROMPT, RECOMMENDED_AI_TASK_OPTIONS[CONF_VISION_PROMPT])},
-                )] = selector.TemplateSelector()
-
-            # Continue with common fields
-            base_fields.update({
-                vol.Optional(
-                    CONF_API_HOST,
-                    default=options.get(CONF_API_HOST, DEFAULT_API_HOST),
-                ): str,
-                vol.Optional(
-                    CONF_CHAT_MODEL,
-                    default=model,
-                ): selector.SelectSelector(
-                    selector.SelectSelectorConfig(
-                        options=SUPPORTED_MODELS,
-                        mode=selector.SelectSelectorMode.DROPDOWN,
-                    )
-                ),
-            })
-
-            # Add image and vision model fields for ai_task_data right after chat model
-            if self._subentry_type == "ai_task_data":
-                image_model = options.get(CONF_IMAGE_MODEL, RECOMMENDED_AI_TASK_OPTIONS[CONF_IMAGE_MODEL])
-                base_fields[vol.Optional(
-                    CONF_IMAGE_MODEL,
-                    default=image_model,
-                )] = selector.SelectSelector(
-                    selector.SelectSelectorConfig(
-                        options=SUPPORTED_MODELS,
-                        mode=selector.SelectSelectorMode.DROPDOWN,
-                    )
-                )
-
-                vision_model = options.get(CONF_VISION_MODEL, RECOMMENDED_AI_TASK_OPTIONS[CONF_VISION_MODEL])
-                base_fields[vol.Optional(
-                    CONF_VISION_MODEL,
-                    default=vision_model,
-                )] = selector.SelectSelector(
-                    selector.SelectSelectorConfig(
-                        options=SUPPORTED_MODELS,
-                        mode=selector.SelectSelectorMode.DROPDOWN,
-                    )
-                )
-
-            # Add remaining common fields
-            base_fields.update({
-                vol.Optional(
-                    CONF_MAX_TOKENS,
-                    default=options.get(CONF_MAX_TOKENS),
-                ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(
-                        min=1, max=8192, mode=selector.NumberSelectorMode.BOX
-                    )
-                ),
-                vol.Optional(
-                    CONF_TEMPERATURE,
-                    default=options.get(CONF_TEMPERATURE),
-                ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(
-                        min=0.0, max=2.0, step=0.1, mode=selector.NumberSelectorMode.BOX
-                    )
-                ),
-                vol.Optional(
-                    CONF_TOP_P,
-                    default=options.get(CONF_TOP_P),
-                ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(
-                        min=0.0, max=1.0, step=0.05, mode=selector.NumberSelectorMode.BOX
-                    )
-                ),
-            })
-
-            step_schema.update(base_fields)
-
-            # Add code_task specific fields
-            if self._subentry_type == "code_task":
-                step_schema.update({
+                        CONF_ALLOW_SMART_HOME_CONTROL,
+                        default=options.get(CONF_ALLOW_SMART_HOME_CONTROL, True),
+                    ): selector.BooleanSelector(),
                     vol.Optional(
                         CONF_STORE_MESSAGES,
-                        default=options.get(CONF_STORE_MESSAGES, True),
+                        default=options.get(
+                            CONF_STORE_MESSAGES, RECOMMENDED_STORE_MESSAGES
+                        ),
                     ): selector.BooleanSelector(),
+                    vol.Optional(
+                        CONF_SEND_USER_NAME,
+                        default=options.get(CONF_SEND_USER_NAME, False),
+                    ): selector.BooleanSelector(),
+                    vol.Optional(
+                        CONF_ASSISTANT_NAME,
+                        default=options.get(
+                            CONF_ASSISTANT_NAME, RECOMMENDED_ASSISTANT_NAME
+                        ),
+                    ): str,
                     vol.Optional(
                         CONF_LIVE_SEARCH,
                         default=options.get(CONF_LIVE_SEARCH, RECOMMENDED_LIVE_SEARCH),
@@ -629,44 +449,374 @@ class XAIOptionsFlow(ConfigSubentryFlow):
                             mode=selector.SelectSelectorMode.DROPDOWN,
                         )
                     ),
-                })
+                }
+            )
 
-            # Add reasoning_effort for models that support it
-            if model in REASONING_EFFORT_MODELS:
-                step_schema.update({
+            use_pipeline = options.get(CONF_USE_INTELLIGENT_PIPELINE, True)
+
+            if use_pipeline:
+                # Intelligent Pipeline default config
+                step_schema.update(
+                    {
+                        vol.Optional(
+                            CONF_PROMPT_PIPELINE,
+                            description={
+                                "suggested_value": options.get(CONF_PROMPT_PIPELINE, "")
+                            },
+                        ): selector.TemplateSelector(),
+                        vol.Optional(
+                            CONF_API_HOST,
+                            default=options.get(CONF_API_HOST, DEFAULT_API_HOST),
+                        ): str,
+                        vol.Optional(
+                            CONF_CHAT_MODEL,
+                            description={"suggested_value": model},
+                        ): selector.SelectSelector(
+                            selector.SelectSelectorConfig(
+                                options=SUPPORTED_MODELS,
+                                mode=selector.SelectSelectorMode.DROPDOWN,
+                            )
+                        ),
+                        vol.Optional(
+                            CONF_MAX_TOKENS,
+                            default=options.get(
+                                CONF_MAX_TOKENS,
+                                RECOMMENDED_PIPELINE_OPTIONS.get(CONF_MAX_TOKENS),
+                            ),
+                        ): selector.NumberSelector(
+                            selector.NumberSelectorConfig(
+                                min=1, max=8192, mode=selector.NumberSelectorMode.BOX
+                            )
+                        ),
+                        vol.Optional(
+                            CONF_TEMPERATURE,
+                            default=options.get(
+                                CONF_TEMPERATURE,
+                                RECOMMENDED_PIPELINE_OPTIONS.get(CONF_TEMPERATURE),
+                            ),
+                        ): selector.NumberSelector(
+                            selector.NumberSelectorConfig(
+                                min=0.0,
+                                max=2.0,
+                                step=0.1,
+                                mode=selector.NumberSelectorMode.BOX,
+                            )
+                        ),
+                        vol.Optional(
+                            CONF_TOP_P,
+                            default=options.get(
+                                CONF_TOP_P, RECOMMENDED_PIPELINE_OPTIONS.get(CONF_TOP_P)
+                            ),
+                        ): selector.NumberSelector(
+                            selector.NumberSelectorConfig(
+                                min=0.0,
+                                max=1.0,
+                                step=0.05,
+                                mode=selector.NumberSelectorMode.BOX,
+                            )
+                        ),
+                    }
+                )
+
+                if model in REASONING_EFFORT_MODELS:
+                    step_schema.update(
+                        {
+                            vol.Optional(
+                                CONF_REASONING_EFFORT,
+                                default=options.get(
+                                    CONF_REASONING_EFFORT, RECOMMENDED_REASONING_EFFORT
+                                ),
+                            ): selector.SelectSelector(
+                                selector.SelectSelectorConfig(
+                                    options=["low", "medium", "high", "max"],
+                                    mode=selector.SelectSelectorMode.DROPDOWN,
+                                )
+                            ),
+                        }
+                    )
+            else:
+                # Home Assistant LLM API mode (Tools mode)
+                step_schema.update(
+                    {
+                        vol.Optional(
+                            CONF_API_HOST,
+                            default=options.get(
+                                CONF_API_HOST,
+                                RECOMMENDED_TOOLS_OPTIONS.get(
+                                    CONF_API_HOST, "api.x.ai"
+                                ),
+                            ),
+                        ): str,
+                        vol.Optional(
+                            CONF_PROMPT,
+                            description={
+                                "suggested_value": options.get(CONF_PROMPT, "")
+                            },
+                        ): selector.TemplateSelector(),
+                        vol.Optional(
+                            CONF_CHAT_MODEL,
+                            description={"suggested_value": model},
+                        ): selector.SelectSelector(
+                            selector.SelectSelectorConfig(
+                                options=SUPPORTED_MODELS,
+                                mode=selector.SelectSelectorMode.DROPDOWN,
+                            )
+                        ),
+                        vol.Optional(
+                            CONF_MAX_TOKENS,
+                            default=options.get(
+                                CONF_MAX_TOKENS,
+                                RECOMMENDED_TOOLS_OPTIONS.get(CONF_MAX_TOKENS),
+                            ),
+                        ): selector.NumberSelector(
+                            selector.NumberSelectorConfig(
+                                min=1, max=8192, mode=selector.NumberSelectorMode.BOX
+                            )
+                        ),
+                        vol.Optional(
+                            CONF_TEMPERATURE,
+                            default=options.get(
+                                CONF_TEMPERATURE,
+                                RECOMMENDED_TOOLS_OPTIONS.get(CONF_TEMPERATURE),
+                            ),
+                        ): selector.NumberSelector(
+                            selector.NumberSelectorConfig(
+                                min=0.0,
+                                max=2.0,
+                                step=0.1,
+                                mode=selector.NumberSelectorMode.BOX,
+                            )
+                        ),
+                        vol.Optional(
+                            CONF_TOP_P,
+                            default=options.get(
+                                CONF_TOP_P, RECOMMENDED_TOOLS_OPTIONS.get(CONF_TOP_P)
+                            ),
+                        ): selector.NumberSelector(
+                            selector.NumberSelectorConfig(
+                                min=0.0,
+                                max=1.0,
+                                step=0.05,
+                                mode=selector.NumberSelectorMode.BOX,
+                            )
+                        ),
+                    }
+                )
+
+                if model in REASONING_EFFORT_MODELS:
+                    step_schema.update(
+                        {
+                            vol.Optional(
+                                CONF_REASONING_EFFORT,
+                                default=options.get(
+                                    CONF_REASONING_EFFORT, RECOMMENDED_REASONING_EFFORT
+                                ),
+                            ): selector.SelectSelector(
+                                selector.SelectSelectorConfig(
+                                    options=["low", "medium", "high", "max"],
+                                    mode=selector.SelectSelectorMode.DROPDOWN,
+                                )
+                            ),
+                        }
+                    )
+
+            # Memory settings are now at integration level, not subentry level
+            # Only CONF_STORE_MESSAGES remains as a per-conversation toggle
+        else:
+            # ai_task_data and code_task schemas stay as they are
+            model = options.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL)
+
+            # Build base schema with service-specific prompt field
+            if self._subentry_type == "code_fast":
+                prompt_key = CONF_PROMPT_CODE
+            else:
+                prompt_key = CONF_PROMPT
+
+            base_fields = {
+                vol.Optional(
+                    prompt_key,
+                    description={"suggested_value": options.get(prompt_key, "")},
+                ): selector.TemplateSelector(),
+            }
+
+            # Add vision_prompt field only for ai_task
+            if self._subentry_type == "ai_task":
+                base_fields[
                     vol.Optional(
-                        CONF_REASONING_EFFORT,
-                        default=options.get(CONF_REASONING_EFFORT, RECOMMENDED_REASONING_EFFORT),
+                        CONF_VISION_PROMPT,
+                        description={
+                            "suggested_value": options.get(
+                                CONF_VISION_PROMPT,
+                                RECOMMENDED_AI_TASK_OPTIONS[CONF_VISION_PROMPT],
+                            )
+                        },
+                    )
+                ] = selector.TemplateSelector()
+
+            # Continue with common fields
+            base_fields.update(
+                {
+                    vol.Optional(
+                        CONF_API_HOST,
+                        default=options.get(CONF_API_HOST, DEFAULT_API_HOST),
+                    ): str,
+                    vol.Optional(
+                        CONF_CHAT_MODEL,
+                        default=model,
                     ): selector.SelectSelector(
                         selector.SelectSelectorConfig(
-                            options=["low", "medium", "high", "max"],
+                            options=SUPPORTED_MODELS,
                             mode=selector.SelectSelectorMode.DROPDOWN,
                         )
                     ),
-                })
+                }
+            )
+
+            # Add image and vision model fields for ai_task right after chat model
+            if self._subentry_type == "ai_task":
+                image_model = options.get(
+                    CONF_IMAGE_MODEL, RECOMMENDED_AI_TASK_OPTIONS[CONF_IMAGE_MODEL]
+                )
+                base_fields[
+                    vol.Optional(
+                        CONF_IMAGE_MODEL,
+                        default=image_model,
+                    )
+                ] = selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=SUPPORTED_MODELS,
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                )
+
+                vision_model = options.get(
+                    CONF_VISION_MODEL, RECOMMENDED_AI_TASK_OPTIONS[CONF_VISION_MODEL]
+                )
+                base_fields[
+                    vol.Optional(
+                        CONF_VISION_MODEL,
+                        default=vision_model,
+                    )
+                ] = selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=SUPPORTED_MODELS,
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                )
+
+            # Add remaining common fields
+            base_fields.update(
+                {
+                    vol.Optional(
+                        CONF_MAX_TOKENS,
+                        default=options.get(CONF_MAX_TOKENS),
+                    ): selector.NumberSelector(
+                        selector.NumberSelectorConfig(
+                            min=1, max=8192, mode=selector.NumberSelectorMode.BOX
+                        )
+                    ),
+                    vol.Optional(
+                        CONF_TEMPERATURE,
+                        default=options.get(CONF_TEMPERATURE),
+                    ): selector.NumberSelector(
+                        selector.NumberSelectorConfig(
+                            min=0.0,
+                            max=2.0,
+                            step=0.1,
+                            mode=selector.NumberSelectorMode.BOX,
+                        )
+                    ),
+                    vol.Optional(
+                        CONF_TOP_P,
+                        default=options.get(CONF_TOP_P),
+                    ): selector.NumberSelector(
+                        selector.NumberSelectorConfig(
+                            min=0.0,
+                            max=1.0,
+                            step=0.05,
+                            mode=selector.NumberSelectorMode.BOX,
+                        )
+                    ),
+                }
+            )
+
+            step_schema.update(base_fields)
+
+            # Add code_fast specific fields
+            if self._subentry_type == "code_fast":
+                step_schema.update(
+                    {
+                        vol.Optional(
+                            CONF_STORE_MESSAGES,
+                            default=options.get(CONF_STORE_MESSAGES, True),
+                        ): selector.BooleanSelector(),
+                        vol.Optional(
+                            CONF_ASSISTANT_NAME,
+                            default=options.get(
+                                CONF_ASSISTANT_NAME, DEFAULT_CODE_FAST_ASSISTANT_NAME
+                            ),
+                        ): str,
+                        vol.Optional(
+                            CONF_LIVE_SEARCH,
+                            default=options.get(
+                                CONF_LIVE_SEARCH, RECOMMENDED_LIVE_SEARCH
+                            ),
+                        ): selector.SelectSelector(
+                            selector.SelectSelectorConfig(
+                                options=["off", "auto", "on"],
+                                mode=selector.SelectSelectorMode.DROPDOWN,
+                            )
+                        ),
+                    }
+                )
+
+            # Add reasoning_effort for models that support it
+            if model in REASONING_EFFORT_MODELS:
+                step_schema.update(
+                    {
+                        vol.Optional(
+                            CONF_REASONING_EFFORT,
+                            default=options.get(
+                                CONF_REASONING_EFFORT, RECOMMENDED_REASONING_EFFORT
+                            ),
+                        ): selector.SelectSelector(
+                            selector.SelectSelectorConfig(
+                                options=["low", "medium", "high", "max"],
+                                mode=selector.SelectSelectorMode.DROPDOWN,
+                            )
+                        ),
+                    }
+                )
 
         if user_input is not None:
             # Handle conversation subentry specific logic
             if self._subentry_type == "conversation":
                 # Get current and new values
                 current_use_pipeline = options.get(CONF_USE_INTELLIGENT_PIPELINE, True)
-                new_use_pipeline = user_input.get(CONF_USE_INTELLIGENT_PIPELINE, current_use_pipeline)
+                new_use_pipeline = user_input.get(
+                    CONF_USE_INTELLIGENT_PIPELINE, current_use_pipeline
+                )
 
                 current_model = options.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL)
                 new_model = user_input.get(CONF_CHAT_MODEL, current_model)
 
                 current_allow_control = options.get(CONF_ALLOW_SMART_HOME_CONTROL, True)
-                new_allow_control = user_input.get(CONF_ALLOW_SMART_HOME_CONTROL, current_allow_control)
+                new_allow_control = user_input.get(
+                    CONF_ALLOW_SMART_HOME_CONTROL, current_allow_control
+                )
 
                 # Map CONF_ALLOW_SMART_HOME_CONTROL to CONF_LLM_HASS_API when in tools mode
                 if not new_use_pipeline:
-                    user_input[CONF_LLM_HASS_API] = [ha_llm.LLM_API_ASSIST] if new_allow_control else []
+                    user_input[CONF_LLM_HASS_API] = (
+                        [ha_llm.LLM_API_ASSIST] if new_allow_control else []
+                    )
 
                 # Reload form if any dynamic field changed
                 needs_reload = (
-                    current_use_pipeline != new_use_pipeline or
-                    current_allow_control != new_allow_control or
-                    (current_model in REASONING_EFFORT_MODELS) != (new_model in REASONING_EFFORT_MODELS)
+                    current_use_pipeline != new_use_pipeline
+                    or current_allow_control != new_allow_control
+                    or (current_model in REASONING_EFFORT_MODELS)
+                    != (new_model in REASONING_EFFORT_MODELS)
                 )
 
                 if needs_reload:
@@ -676,6 +826,7 @@ class XAIOptionsFlow(ConfigSubentryFlow):
 
             # Update options and save
             options.update(user_input)
+
             if self._is_new:
                 return self.async_create_entry(
                     title=options.pop("name", default_name),

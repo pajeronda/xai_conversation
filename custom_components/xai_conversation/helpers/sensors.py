@@ -1,4 +1,5 @@
 """Helper functions for sensor management."""
+
 from __future__ import annotations
 
 from homeassistant.core import HomeAssistant, callback
@@ -34,17 +35,15 @@ def update_token_sensors(
         LOGGER.debug("update_token_sensors: no sensors found for entry %s", entry_id)
         return
 
-    LOGGER.debug(
-        "Updating %d sensors for entry %s, service=%s, model=%s",
-        len(sensors), entry_id, service_type, model
-    )
+    # Count sensors that will actually be updated
+    updated_count = 0
 
     for sensor in sensors:
         # Skip sensors that don't have update_token_usage (e.g., pricing sensors)
-        if not hasattr(sensor, 'update_token_usage'):
+        if not hasattr(sensor, "update_token_usage"):
             continue
 
-        sensor_service_type = getattr(sensor, '_service_type', None)
+        sensor_service_type = getattr(sensor, "_service_type", None)
 
         if sensor_service_type is None or sensor_service_type == service_type:
             try:
@@ -54,7 +53,22 @@ def update_token_sensors(
                     mode=mode,
                     is_fallback=is_fallback,
                     store_messages=store_messages,
+                    skip_save=True,  # Skip individual saves during loop
                 )
+                updated_count += 1
             except (ValueError, TypeError, AttributeError) as e:
-                entity_id = getattr(sensor, 'entity_id', 'unknown')
-                LOGGER.error("Failed to update sensor %s: %s", entity_id, e, exc_info=True)
+                entity_id = getattr(sensor, "entity_id", "unknown")
+                LOGGER.error(
+                    "Failed to update sensor %s: %s", entity_id, e, exc_info=True
+                )
+
+    LOGGER.debug(
+        "Updated %d/%d sensors for entry %s, service=%s, model=%s",
+        updated_count,
+        len(sensors),
+        entry_id,
+        service_type,
+        model,
+    )
+
+    # NOTE: Batch save is handled by save_response_metadata() after this function returns

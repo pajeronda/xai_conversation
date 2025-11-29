@@ -3,6 +3,7 @@
 This module contains all service implementations, keeping __init__.py clean.
 Each service is implemented as a dedicated class for better organization and testability.
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -19,58 +20,90 @@ from .const import (
     CONF_STORE_MESSAGES,
     CONF_TEMPERATURE,
     DOMAIN,
-    GROK_CODE_FAST_PROMPT,
     LOGGER,
     RECOMMENDED_HISTORY_LIMIT_TURNS,
     SUBENTRY_TYPE_CODE_TASK,
+    RECOMMENDED_TIMEOUT,
 )
 from .exceptions import raise_generic_error, raise_validation_error
-from .helpers import parse_grok_code_response, parse_id_list
-from .helpers.sensors import update_token_sensors
+from .helpers import (
+    parse_grok_code_response,
+    parse_id_list,
+    LogTimeServices,
+    save_response_metadata,
+    XAIGateway,
+)
 from .sensor import (
     XAITokenSensorBase,
     XAINewModelsDetectorSensor,
     async_update_pricing_sensors_periodically,
 )
 
-
 # gRPC imports for error handling
 try:
     from grpc import StatusCode
     from grpc._channel import _InactiveRpcError
+
     GRPC_AVAILABLE = True
 except ImportError:
     StatusCode = None
     _InactiveRpcError = None
     GRPC_AVAILABLE = False
 
-# Import shared objects from __init__.py (loaded once, shared across integration)
-from . import (
-    base64,
-    datetime,
-    json,
-    time,
-    HA_ServiceCall,
-    HA_ServiceResponse,
-    SupportsResponse,
-    XAI_SDK_AVAILABLE,
-    ha_entity_registry,
-    ha_json_loads,
-    xai_assistant,
-    xai_system,
-    xai_user,
-)
+import base64
+from datetime import datetime
+import json
+import time
+from homeassistant.core import ServiceCall as HA_ServiceCall, ServiceResponse as HA_ServiceResponse, SupportsResponse
+from homeassistant.helpers import entity_registry as ha_entity_registry
+from homeassistant.util.json import json_loads as ha_json_loads
 
-# xAI SDK Client (conditional import)
-if XAI_SDK_AVAILABLE:
-    from . import XAI_CLIENT_CLASS as XAIClient
-else:
-    XAIClient = None
+
+# ==============================================================================
+# HELPER FUNCTIONS
+# ==============================================================================
+
+
+def _get_conversation_entity(hass: HA_HomeAssistant):
+    """Get xAI conversation entity for gateway access.
+
+    Shared helper used by multiple services (clear_memory, clear_code_memory, etc.)
+
+    Args:
+        hass: Home Assistant instance
+
+    Returns:
+        XAI conversation entity
+
+    Raises:
+        ServiceValidationError: If no xAI conversation entity found
+        XAIError: If target entity not found
+    """
+    ent_reg = ha_entity_registry.async_get(hass)
+    xai_entities = [
+        e
+        for e in ent_reg.entities.values()
+        if e.platform == DOMAIN and e.domain == "conversation"
+    ]
+
+    if not xai_entities:
+        raise_validation_error("No xAI conversation entity found")
+
+    target_entity = (
+        hass.data.get("entity_components", {})
+        .get("conversation")
+        .get_entity(xai_entities[0].entity_id)
+    )
+    if not target_entity:
+        raise_generic_error("Target entity not found")
+
+    return target_entity
 
 
 # ==============================================================================
 # SERVICE: grok_code_fast
 # ==============================================================================
+
 
 class GrokCodeFastService:
     """Service handler for grok_code_fast - Direct API proxy to xAI for code generation."""
@@ -96,142 +129,181 @@ class GrokCodeFastService:
             Service response with response_text, response_code, and metadata
         """
         context_id = call.context.id
-        total_start_time = time.time()
-        LOGGER.debug(f"[Context: {context_id}] Service 'grok_code_fast' called.")
 
-        try:
-            if not XAI_SDK_AVAILABLE:
-                raise_generic_error("xAI SDK not available")
-
-            # Parse and validate request data
-            request_data = self._parse_request(call, context_id)
-            user_prompt = request_data["prompt"]
-            previous_response_id = request_data.get("previous_response_id")
-            current_code = request_data.get("code")
-            attachments = request_data.get("attachments", [])
-            user_id = request_data["user_id"]
-
-            # Get configuration
-            config = self._get_service_config()
-            store_messages = config["store_messages"]
-
-            # Validate and recover previous_response_id
-            previous_response_id = await self._validate_and_recover_response_id(
-                user_id, previous_response_id, store_messages, context_id
-            )
-
-            LOGGER.debug(
-                f"[Context: {context_id}] Request data: "
-                f"prompt_length={len(user_prompt)}, "
-                f"previous_response_id={previous_response_id[:8] if previous_response_id else 'None'}, "
-                f"has_code={bool(current_code)}, "
-                f"attachments={len(attachments)}"
-            )
-
-            # Create xAI client and chat
-            api_start_time = time.time()
-            api_key = self.entry.data.get("api_key")
-            if not api_key:
-                raise_generic_error("xAI API key not configured")
-
-            client = None
+        async with LogTimeServices(LOGGER, "grok_code_fast") as timer:
             try:
-                client = XAIClient(api_key=api_key)
+                # Parse and validate request data
+                request_data = self._parse_request(call, context_id)
+                user_prompt = request_data["prompt"]
+                user_id = request_data["user_id"]
+                previous_response_id = request_data.get("previous_response_id")
+                current_code = request_data.get("code")
+                attachments = request_data.get("attachments", [])
 
-                response = None
-                for attempt in range(2):  # Allow one retry
-                    try:
-                        chat = client.chat.create(
-                            model=config["model"],
-                            max_tokens=config["max_tokens"],
-                            temperature=config["temperature"],
-                            store_messages=config["store_messages"],
-                            previous_response_id=previous_response_id if store_messages else None
+                # Get configuration
+                config = self._get_service_config()
+                store_messages = config["store_messages"]
+
+                # Get subentry data for memory key calculation
+                subentry_data = self._get_code_fast_subentry_data()
+
+                # Calculate conv_key and recover previous_response_id if not provided
+                conv_key = None
+                if user_id:
+                    from .helpers.prompt_manager import PromptManager
+                    prompt_mgr = PromptManager(subentry_data, mode="code")
+                    base_prompt = prompt_mgr.build_base_prompt_with_user_instructions()
+                    conv_key = self.code_memory.calculate_conv_key_simple(user_id, "code", base_prompt)
+
+                if not previous_response_id and store_messages and conv_key:
+                    previous_response_id = (
+                        await self.code_memory.get_response_id_by_key(conv_key)
+                    )
+                    if previous_response_id:
+                        LOGGER.debug(
+                            f"[Context: {context_id}] Recovered previous_response_id from memory: {previous_response_id[:8]}"
                         )
 
-                        # Build and send messages
-                        await self._build_and_send_messages(
-                            chat,
-                            user_prompt,
-                            current_code,
-                            attachments,
-                            user_id,
-                            previous_response_id if store_messages else None,
-                            store_messages,
-                            context_id
-                        )
-
-                        # Call xAI API
-                        response = await self._call_xai_api(chat, config["model"], context_id)
-                        break  # Success, exit loop
-
-                    except _InactiveRpcError as err:
-                        if GRPC_AVAILABLE and err.code() == StatusCode.NOT_FOUND and attempt == 0:
-                            LOGGER.warning(
-                                f"[Context: {context_id}] Conversation context not found on server. "
-                                "Clearing local memory and retrying with a new conversation."
-                            )
-                            if user_id:
-                                await self.code_memory.clear_memory(user_id, "code")
-                            previous_response_id = None  # Ensure next attempt is a fresh start
-                            continue  # Retry
-                        # It's a different gRPC error or the second attempt failed, so raise
-                        raise
-
-                # This part is reached after a successful attempt (or if the loop finishes)
-                if response is None:
-                    raise_generic_error("Failed to get a response from xAI API after retries.")
-
-                api_elapsed = time.time() - api_start_time
-                LOGGER.debug("xai_api_end: service=code_fast duration=%.2fs", api_elapsed)
-
-                content = getattr(response, "content", "")
-                response_id = getattr(response, "id", None)
-                usage = getattr(response, "usage", None)
-
-                # Update token sensors
-                update_token_sensors(
-                    self.hass,
-                    self.entry.entry_id,
-                    usage,
-                    model=config["model"],
-                    service_type="code_fast"
+                LOGGER.debug(
+                    f"[Context: {context_id}] Request data: "
+                    f"prompt_length={len(user_prompt)}, "
+                    f"previous_response_id={previous_response_id[:8] if previous_response_id else 'None'}, "
+                    f"conv_key={conv_key if conv_key else 'None'}, "
+                    f"has_code={bool(current_code)}, "
+                    f"attachments={len(attachments)}"
                 )
 
-                # Save response_id
-                await self._save_response_id(user_id, response_id, store_messages, context_id)
+                # Create xAI client using gateway helper
+                api_key = self.entry.data.get("api_key")
+                if not api_key:
+                    raise_generic_error("xAI API key not configured")
 
-                # Parse response
-                response_text, response_code = self._parse_response(content, context_id)
+                client = None
+                try:
+                    # Use gateway to create client with proper configuration
+                    client = XAIGateway.create_standalone_client(
+                        api_key=api_key,
+                        timeout=config.get("timeout", RECOMMENDED_TIMEOUT),
+                    )
 
-                # Save to chat history
-                await self._save_to_chat_history(user_id, response_text, response_code)
+                    response = None
+                    for attempt in range(2):  # Allow one retry
+                        try:
+                            # Use gateway to create chat with proper configuration
+                            chat = XAIGateway.create_standalone_chat(
+                                client=client,
+                                model=config["model"],
+                                max_tokens=config["max_tokens"],
+                                temperature=config["temperature"],
+                                store_messages=config["store_messages"],
+                                previous_response_id=previous_response_id
+                                if store_messages
+                                else None,
+                            )
 
-                # Fire event for frontend
-                self._fire_response_event(user_prompt, response_text, response_code)
+                            # Build and send messages
+                            await self._build_and_send_messages(
+                                chat,
+                                user_prompt,
+                                current_code,
+                                attachments,
+                                user_id,
+                                previous_response_id if store_messages else None,
+                                store_messages,
+                                subentry_data,
+                                context_id,
+                            )
 
-                total_elapsed = time.time() - total_start_time
-                LOGGER.info("grok_code_fast_end: service=code_fast total_duration=%.2fs api_duration=%.2fs", total_elapsed, api_elapsed)
+                            # Call xAI API, wrapped with the timer
+                            async with timer.record_api_call():
+                                response = await self._call_xai_api(
+                                    chat, config["model"], context_id
+                                )
 
-                return {
-                    "response_text": response_text,
-                    "response_code": response_code,
-                    "response_id": response_id or "",
-                    "timestamp": datetime.now().isoformat(),
-                }
-            finally:
-                # Close client using context manager protocol (SDK v1.4.0+)
-                if client is not None:
-                    try:
-                        if hasattr(client, '__exit__'):
-                            client.__exit__(None, None, None)
-                            LOGGER.debug(f"[Context: {context_id}] xAI client closed successfully")
-                    except Exception as close_err:
-                        LOGGER.warning(f"[Context: {context_id}] Error closing xAI client: %s", close_err)
+                            break  # Success, exit loop
 
-        except Exception as err:
-            LOGGER.error(f"[Context: {context_id}] Error in Grok Code Fast service: %s", err, exc_info=True)
-            return {"error": str(err)}
+                        except _InactiveRpcError as err:
+                            if (
+                                GRPC_AVAILABLE
+                                and err.code() == StatusCode.NOT_FOUND
+                                and attempt == 0
+                            ):
+                                LOGGER.warning(
+                                    f"[Context: {context_id}] Conversation context not found on server. "
+                                    "Clearing local memory and retrying with a new conversation."
+                                )
+                                if user_id:
+                                    await self.code_memory.clear_memory(user_id, "code")
+                                previous_response_id = (
+                                    None  # Ensure next attempt is a fresh start
+                                )
+                                continue  # Retry
+                            raise
+
+                    if response is None:
+                        raise_generic_error(
+                            "Failed to get a response from xAI API after retries."
+                        )
+
+                    content = getattr(response, "content", "")
+                    response_id = getattr(response, "id", None)
+                    usage = getattr(response, "usage", None)
+
+                    # Save response metadata
+                    await save_response_metadata(
+                        hass=self.hass,
+                        entry_id=self.entry.entry_id,
+                        usage=usage,
+                        model=config["model"],
+                        service_type="code_fast",
+                    )
+
+                    # Save response_id using conv_key
+                    await self._save_response_id(
+                        conv_key, response_id, store_messages, context_id
+                    )
+
+                    # Parse response
+                    response_text, response_code = self._parse_response(
+                        content, context_id
+                    )
+
+                    # Save to chat history
+                    await self._save_to_chat_history(
+                        user_id, response_text, response_code
+                    )
+
+                    # Fire event for frontend
+                    self._fire_response_event(user_prompt, response_text, response_code)
+
+                    return {
+                        "response_text": response_text,
+                        "response_code": response_code,
+                        "response_id": response_id or "",
+                        "timestamp": datetime.now().isoformat(),
+                    }
+                finally:
+                    if client is not None:
+                        try:
+                            if hasattr(client, "__exit__"):
+                                client.__exit__(None, None, None)
+                                LOGGER.debug(
+                                    f"[Context: {context_id}] xAI client closed successfully"
+                                )
+                        except Exception as close_err:
+                            LOGGER.warning(
+                                f"[Context: {context_id}] Error closing xAI client: %s",
+                                close_err,
+                            )
+
+            except Exception as err:
+                LOGGER.error(
+                    f"[Context: {context_id}] Error in Grok Code Fast service: %s",
+                    err,
+                    exc_info=True,
+                )
+                # Re-raise the exception to be caught by the LogTimeServices context manager
+                raise err
 
     def _parse_request(self, call: HA_ServiceCall, context_id: str) -> dict:
         """Parse and validate service call request data."""
@@ -248,7 +320,9 @@ class GrokCodeFastService:
         # Get user_id
         user_id = request_data.get("user_id") or call.context.user_id
         if user_id and not request_data.get("user_id"):
-            LOGGER.debug(f"[Context: {context_id}] Using user_id from context: {user_id}")
+            LOGGER.debug(
+                f"[Context: {context_id}] Using user_id from context: {user_id}"
+            )
 
         request_data["user_id"] = user_id
         request_data["prompt"] = user_prompt
@@ -259,45 +333,29 @@ class GrokCodeFastService:
         for subentry in self.entry.subentries.values():
             if subentry.subentry_type == SUBENTRY_TYPE_CODE_TASK:
                 return {
-                    "prompt": subentry.data.get(CONF_PROMPT, GROK_CODE_FAST_PROMPT),
                     "model": subentry.data.get(CONF_CHAT_MODEL, "grok-code-fast-1"),
                     "temperature": float(subentry.data.get(CONF_TEMPERATURE, 0.1)),
                     "max_tokens": int(subentry.data.get(CONF_MAX_TOKENS, 4000)),
-                    "store_messages": bool(subentry.data.get(CONF_STORE_MESSAGES, True)),
+                    "store_messages": bool(
+                        subentry.data.get(CONF_STORE_MESSAGES, True)
+                    ),
                 }
-        raise_generic_error("No code_task configuration found. Please configure Grok Code Fast in xAI integration settings.")
+        raise_generic_error(
+            "No code_task configuration found. Please configure Grok Code Fast in xAI integration settings."
+        )
 
-    async def _validate_and_recover_response_id(
-        self,
-        user_id: str | None,
-        previous_response_id: str | None,
-        store_messages: bool,
-        context_id: str
-    ) -> str | None:
-        """Validate response_id compatibility and recover from memory if needed."""
-        if not user_id:
-            return previous_response_id
+    def _get_code_fast_subentry_data(self) -> dict:
+        """Get code_fast subentry data for PromptManager.
 
-        # Try to recover from memory if not provided (only if store_messages is enabled)
-        if not previous_response_id and store_messages:
-            previous_response_id = await self.code_memory.get_response_id(user_id, "code")
-            if previous_response_id:
-                LOGGER.debug(f"[Context: {context_id}] Recovered previous_response_id from memory: {previous_response_id[:8]}")
-
-        # Validate compatibility with current mode
-        if previous_response_id:
-            is_valid = await self.code_memory.validate_response_id(
-                user_id, "code", previous_response_id, store_messages
-            )
-            if not is_valid:
-                LOGGER.warning(
-                    f"[Context: {context_id}] Invalidating previous_response_id={previous_response_id[:8]} "
-                    f"(incompatible with current store_messages={store_messages}). "
-                    "Starting fresh conversation."
-                )
-                return None
-
-        return previous_response_id
+        Returns:
+            Dictionary with subentry.data for code_fast configuration
+        """
+        for subentry in self.entry.subentries.values():
+            if subentry.subentry_type == SUBENTRY_TYPE_CODE_TASK:
+                return dict(subentry.data)
+        raise_generic_error(
+            "No code_task configuration found. Please configure Grok Code Fast in xAI integration settings."
+        )
 
     async def _build_and_send_messages(
         self,
@@ -308,17 +366,25 @@ class GrokCodeFastService:
         user_id: str | None,
         previous_response_id: str | None,
         store_messages: bool,
-        context_id: str
+        subentry_data: dict,
+        context_id: str,
     ) -> None:
         """Build system/user messages and append to chat."""
         config = self._get_service_config()
 
         # Add system prompt (only on first message in server-side mode)
         if not previous_response_id:
-            chat.append(xai_system(config["prompt"]))
-            LOGGER.debug(f"[Context: {context_id}] Server-side mode - FIRST MESSAGE: Sending system prompt")
+            from .helpers import PromptManager
+            prompt_mgr = PromptManager(subentry_data, mode="code")
+            base_prompt = prompt_mgr.build_base_prompt_with_user_instructions()
+            chat.append(XAIGateway.system_msg(base_prompt))
+            LOGGER.debug(
+                f"[Context: {context_id}] Server-side mode - FIRST MESSAGE: Sending system prompt (built with PromptManager)"
+            )
         else:
-            LOGGER.debug(f"[Context: {context_id}] Server-side mode - SUBSEQUENT MESSAGE: Skipping system prompt (using previous_response_id)")
+            LOGGER.debug(
+                f"[Context: {context_id}] Server-side mode - SUBSEQUENT MESSAGE: Skipping system prompt (using previous_response_id)"
+            )
 
         # Load history for client-side mode
         if not store_messages and user_id:
@@ -347,34 +413,50 @@ class GrokCodeFastService:
                 except Exception:
                     content = att_content_base64
 
-                LOGGER.debug(f"[Context: {context_id}] Processing attachment: {att_name}, content_length={len(content)}")
+                LOGGER.debug(
+                    f"[Context: {context_id}] Processing attachment: {att_name}, content_length={len(content)}"
+                )
                 user_message += f"\n\nFile: {att_name}\n```\n{content}\n```"
             except Exception as e:
-                LOGGER.warning(f"[Context: {context_id}] Failed to process attachment %s: %s", att.get("filename", att.get("name")), e)
+                LOGGER.warning(
+                    f"[Context: {context_id}] Failed to process attachment %s: %s",
+                    att.get("filename", att.get("name")),
+                    e,
+                )
 
-        chat.append(xai_user(user_message))
+        chat.append(XAIGateway.user_msg(user_message))
 
         # Save user message to chat history in a structured format
         if user_id:
             chat_history = self.hass.data.get(DOMAIN, {}).get("chat_history")
             if chat_history:
-                user_message_for_history = json.dumps({
-                    "response_text": user_prompt,
-                    "response_code": current_code if current_code else ""
-                })
-                chat_history.save_message_async(user_id, "code", "user", user_message_for_history)
+                user_message_for_history = json.dumps(
+                    {
+                        "response_text": user_prompt,
+                        "response_code": current_code if current_code else "",
+                    }
+                )
+                chat_history.save_message_async(
+                    user_id, "code", "user", user_message_for_history
+                )
 
-    async def _load_client_side_history(self, chat, user_id: str, context_id: str) -> None:
+    async def _load_client_side_history(
+        self, chat, user_id: str, context_id: str
+    ) -> None:
         """Load conversation history for client-side mode."""
         chat_history = self.hass.data.get(DOMAIN, {}).get("chat_history")
         if not chat_history:
-            LOGGER.warning(f"[Context: {context_id}] Client-side mode but chat_history service not available")
+            LOGGER.warning(
+                f"[Context: {context_id}] Client-side mode but chat_history service not available"
+            )
             return
 
         limit = RECOMMENDED_HISTORY_LIMIT_TURNS * 2
         messages = await chat_history.load_history(user_id, "code", limit)
 
-        LOGGER.debug(f"[Context: {context_id}] Client-side mode: loading {len(messages)} messages from history")
+        LOGGER.debug(
+            f"[Context: {context_id}] Client-side mode: loading {len(messages)} messages from history"
+        )
 
         for msg in messages:
             full_content = ""
@@ -396,14 +478,16 @@ class GrokCodeFastService:
 
             except (json.JSONDecodeError, TypeError):
                 # Fallback for old plain-text messages
-                LOGGER.warning(f"[Context: {context_id}] Failed to parse message as JSON, using raw content. Role: {msg['role']}")
+                LOGGER.warning(
+                    f"[Context: {context_id}] Failed to parse message as JSON, using raw content. Role: {msg['role']}"
+                )
                 full_content = msg["content"]
 
             # Append to the chat object for the API call
             if msg["role"] == "user":
-                chat.append(xai_user(full_content))
+                chat.append(XAIGateway.user_msg(full_content))
             elif msg["role"] == "assistant":
-                chat.append(xai_assistant(full_content))
+                chat.append(XAIGateway.assistant_msg(full_content))
 
     async def _call_xai_api(self, chat, model: str, context_id: str):
         """Call xAI API and return response."""
@@ -417,42 +501,51 @@ class GrokCodeFastService:
 
         return response
 
-
     async def _save_response_id(
         self,
-        user_id: str | None,
+        conv_key: str | None,
         response_id: str | None,
         store_messages: bool,
-        context_id: str
+        context_id: str,
     ) -> None:
-        """Save response_id to memory."""
-        if not response_id or not user_id:
-            if not user_id:
-                LOGGER.warning(f"[Context: {context_id}] No user_id provided, cannot save conversation")
+        """Save response_id to memory using conv_key."""
+        if not response_id or not conv_key:
+            if not conv_key:
+                LOGGER.warning(
+                    f"[Context: {context_id}] No conv_key provided, cannot save conversation"
+                )
             return
 
         # Only save if store_messages is enabled (server-side memory)
         if not store_messages:
-            LOGGER.debug(f"[Context: {context_id}] Skipping save (store_messages=False, client-side mode)")
+            LOGGER.debug(
+                f"[Context: {context_id}] Skipping save (store_messages=False, client-side mode)"
+            )
             return
 
-        await self.code_memory.save_response_id(user_id, "code", response_id, store_messages=store_messages)
-        LOGGER.debug(f"[Context: {context_id}] Saved response_id={response_id[:8]} for user={user_id[:8]} mode=code (server-side)")
+        await self.code_memory.save_response_id_by_key(conv_key, response_id)
+        LOGGER.debug(
+            f"[Context: {context_id}] Saved response_id={response_id[:8]} with conv_key={conv_key[:30]}... (server-side)"
+        )
 
     def _parse_response(self, content: str, context_id: str) -> tuple[str, str]:
         """Parse Grok Code Fast response content using modular strategies."""
-        LOGGER.debug(f"[Context: {context_id}] Raw xAI response content (full): %s", content)
+        LOGGER.debug(
+            f"[Context: {context_id}] Raw xAI response content (full): %s", content
+        )
         response_text, response_code = parse_grok_code_response(content)
-        LOGGER.debug(f"[Context: {context_id}] Parsed - text_length={len(response_text)}, code_length={len(response_code)}")
+        LOGGER.debug(
+            f"[Context: {context_id}] Parsed - text_length={len(response_text)}, code_length={len(response_code)}"
+        )
         if response_code:
-            LOGGER.debug(f"[Context: {context_id}] Response code (first 200 chars): %s", response_code[:200])
+            LOGGER.debug(
+                f"[Context: {context_id}] Response code (first 200 chars): %s",
+                response_code[:200],
+            )
         return response_text, response_code
 
     async def _save_to_chat_history(
-        self,
-        user_id: str | None,
-        response_text: str,
-        response_code: str
+        self, user_id: str | None, response_text: str, response_code: str
     ) -> None:
         """Save assistant response to chat history."""
         if not user_id:
@@ -460,17 +553,15 @@ class GrokCodeFastService:
 
         chat_history = self.hass.data.get(DOMAIN, {}).get("chat_history")
         if chat_history:
-            assistant_json = json.dumps({
-                "response_text": response_text,
-                "response_code": response_code
-            })
-            chat_history.save_message_async(user_id, "code", "assistant", assistant_json)
+            assistant_json = json.dumps(
+                {"response_text": response_text, "response_code": response_code}
+            )
+            chat_history.save_message_async(
+                user_id, "code", "assistant", assistant_json
+            )
 
     def _fire_response_event(
-        self,
-        prompt: str,
-        response_text: str,
-        response_code: str
+        self, prompt: str, response_text: str, response_code: str
     ) -> None:
         """Fire event for frontend listeners."""
         self.hass.bus.async_fire(
@@ -488,6 +579,7 @@ class GrokCodeFastService:
 # SERVICE: clear_memory
 # ==============================================================================
 
+
 class ClearMemoryService:
     """Service handler for clear_memory - Clear conversation memory for users/satellites."""
 
@@ -498,7 +590,7 @@ class ClearMemoryService:
     async def async_handle(self, call: HA_ServiceCall) -> HA_ServiceResponse:
         """Handle the clear_memory service call."""
         # Find xAI conversation entity (for gateway access)
-        target_entity = self._get_conversation_entity()
+        target_entity = _get_conversation_entity(self.hass)
 
         # Get global ConversationMemory instance
         conversation_memory = self.hass.data[DOMAIN]["conversation_memory"]
@@ -506,61 +598,45 @@ class ClearMemoryService:
         # Check for physical delete
         if call.data.get("delete_storage_file", False):
             await self._clear_memory_with_remote_deletion(
-                target_entity,
-                conversation_memory,
-                physical_delete=True
+                target_entity, conversation_memory, physical_delete=True
             )
             return {"status": "ok", "message": "Memory storage file physically deleted"}
 
         # Get user IDs from person entities
-        user_ids, user_names = self._get_user_ids_from_persons(call.data.get("user_id", []))
+        user_ids, user_names = self._get_user_ids_from_persons(
+            call.data.get("user_id", [])
+        )
 
         # Get device IDs from satellite entities
-        satellite_device_ids, satellite_names = self._get_device_ids_from_satellites(call.data.get("satellite_id", []))
+        satellite_device_ids, satellite_names = self._get_device_ids_from_satellites(
+            call.data.get("satellite_id", [])
+        )
 
         # Validate selection
         if not user_ids and not satellite_device_ids:
-            raise_validation_error("Must select users, satellites, or enable 'Delete Storage File'")
+            raise_validation_error(
+                "Must select users, satellites, or enable 'Delete Storage File'"
+            )
 
         # Clear memory for users
         cleared_items = []
         for uid, name in zip(user_ids, user_names):
             await self._clear_memory_with_remote_deletion(
-                target_entity,
-                conversation_memory,
-                scope="user",
-                target_id=uid
+                target_entity, conversation_memory, scope="user", target_id=uid
             )
             cleared_items.append(f"user:{name}")
 
         # Clear memory for satellites
         for did, name in zip(satellite_device_ids, satellite_names):
             await self._clear_memory_with_remote_deletion(
-                target_entity,
-                conversation_memory,
-                scope="device",
-                target_id=did
+                target_entity, conversation_memory, scope="device", target_id=did
             )
             cleared_items.append(f"satellite:{name}")
 
-        return {"status": "ok", "message": f"Memory cleared for: {', '.join(cleared_items)}"}
-
-    def _get_conversation_entity(self):
-        """Get xAI conversation entity."""
-        ent_reg = ha_entity_registry.async_get(self.hass)
-        xai_entities = [
-            e for e in ent_reg.entities.values()
-            if e.platform == DOMAIN and e.domain == "conversation"
-        ]
-
-        if not xai_entities:
-            raise_validation_error("No xAI conversation entity found")
-
-        target_entity = self.hass.data.get("entity_components", {}).get("conversation").get_entity(xai_entities[0].entity_id)
-        if not target_entity:
-            raise_generic_error("Target entity not found")
-
-        return target_entity
+        return {
+            "status": "ok",
+            "message": f"Memory cleared for: {', '.join(cleared_items)}",
+        }
 
     def _get_user_ids_from_persons(self, person_entity_ids) -> tuple[list, list]:
         """Convert person entity IDs to user IDs."""
@@ -573,11 +649,15 @@ class ClearMemoryService:
             person_state = self.hass.states.get(person_entity_id)
             if person_state and person_state.attributes.get("user_id"):
                 user_ids.append(person_state.attributes["user_id"])
-                user_names.append(person_state.attributes.get("friendly_name") or person_state.name)
+                user_names.append(
+                    person_state.attributes.get("friendly_name") or person_state.name
+                )
 
         return user_ids, user_names
 
-    def _get_device_ids_from_satellites(self, satellite_entity_ids) -> tuple[list, list]:
+    def _get_device_ids_from_satellites(
+        self, satellite_entity_ids
+    ) -> tuple[list, list]:
         """Extract device IDs from satellite entity IDs."""
         satellite_entity_ids = parse_id_list(satellite_entity_ids)
         satellite_device_ids = []
@@ -590,7 +670,10 @@ class ClearMemoryService:
                 entity_entry = ent_reg.async_get(satellite_entity_id)
                 if entity_entry and entity_entry.device_id:
                     satellite_device_ids.append(entity_entry.device_id)
-                    satellite_names.append(satellite_state.attributes.get("friendly_name") or satellite_state.name)
+                    satellite_names.append(
+                        satellite_state.attributes.get("friendly_name")
+                        or satellite_state.name
+                    )
 
         return satellite_device_ids, satellite_names
 
@@ -631,19 +714,27 @@ class ClearMemoryService:
                 if scope not in ("user", "device"):
                     raise_validation_error("invalid scope, must be 'user' or 'device'")
                 if not target_id:
-                    raise_validation_error("target_id is required when scope is user or device")
+                    raise_validation_error(
+                        "target_id is required when scope is user or device"
+                    )
 
-                response_ids = await conversation_memory.clear_memory_by_scope(scope, target_id)
+                response_ids = await conversation_memory.clear_memory_by_scope(
+                    scope, target_id
+                )
                 context = "clear_memory"
 
             # Attempt remote deletion via gateway
             if response_ids:
-                await entity.gateway.delete_remote_completions(response_ids, context=context)
+                await entity.gateway.delete_remote_completions(
+                    response_ids, context=context
+                )
 
             # Log success
             scope_desc = (
-                "physical_delete" if physical_delete
-                else "all" if clear_all
+                "physical_delete"
+                if physical_delete
+                else "all"
+                if clear_all
                 else f"{scope}:{target_id}"
             )
             LOGGER.info("Memory cleared successfully for scope: %s", scope_desc)
@@ -658,6 +749,7 @@ class ClearMemoryService:
 # ==============================================================================
 # SERVICE: clear_code_memory
 # ==============================================================================
+
 
 class ClearCodeMemoryService:
     """Service handler for clear_code_memory - Clear Grok Code Fast conversation memory."""
@@ -678,7 +770,7 @@ class ClearCodeMemoryService:
             raise_validation_error("user_id is required (not found in data or context)")
 
         # Get conversation entity for gateway access
-        target_entity = self._get_conversation_entity()
+        target_entity = _get_conversation_entity(self.hass)
 
         # Clear memory and get response_ids for remote deletion
         response_ids = await self.code_memory.clear_memory(user_id, "code")
@@ -694,30 +786,19 @@ class ClearCodeMemoryService:
         if chat_history:
             await chat_history.clear_history(user_id, "code")
 
-        LOGGER.info(f"Cleared code conversation memory and chat history for user {user_id[:8]}")
-        return {"status": "ok", "message": "Code conversation memory and chat history cleared"}
-
-    def _get_conversation_entity(self):
-        """Get xAI conversation entity for gateway access."""
-        ent_reg = ha_entity_registry.async_get(self.hass)
-        xai_entities = [
-            e for e in ent_reg.entities.values()
-            if e.platform == DOMAIN and e.domain == "conversation"
-        ]
-
-        if not xai_entities:
-            raise_validation_error("No xAI conversation entity found")
-
-        target_entity = self.hass.data.get("entity_components", {}).get("conversation").get_entity(xai_entities[0].entity_id)
-        if not target_entity:
-            raise_generic_error("Target entity not found")
-
-        return target_entity
+        LOGGER.info(
+            f"Cleared code conversation memory and chat history for user {user_id[:8]}"
+        )
+        return {
+            "status": "ok",
+            "message": "Code conversation memory and chat history cleared",
+        }
 
 
 # ==============================================================================
 # SERVICE: sync_chat_history
 # ==============================================================================
+
 
 class SyncChatHistoryService:
     """Service handler for sync_chat_history - Sync chat history from server.
@@ -725,8 +806,6 @@ class SyncChatHistoryService:
     Primarily used by Grok Code Fast frontend to restore conversation across devices.
     Can sync history for any mode (code, pipeline, tools) but currently only 'code' is used.
     """
-
-
 
     def __init__(self, hass: HA_HomeAssistant):
         """Initialize the service."""
@@ -753,7 +832,9 @@ class SyncChatHistoryService:
 
         messages = await chat_history.load_history(user_id, mode, limit)
 
-        LOGGER.info(f"Synced chat history for user {user_id[:8]}, mode={mode}, messages={len(messages)}")
+        LOGGER.info(
+            f"Synced chat history for user {user_id[:8]}, mode={mode}, messages={len(messages)}"
+        )
         return {"status": "ok", "messages": messages, "count": len(messages)}
 
 
@@ -776,48 +857,76 @@ class ResetTokenStatsService:
         if not config_entries:
             raise_validation_error("No xAI Conversation integration entries found")
 
-        sensors_reset = 0
+        sensors_reset_count = 0
+        sensors_to_reset = []
 
         for entry in config_entries:
             sensors = self.hass.data.get(DOMAIN, {}).get(f"{entry.entry_id}_sensors")
             if not sensors:
-                LOGGER.debug("reset_token_stats: no sensors found for entry %s", entry.entry_id)
+                LOGGER.debug(
+                    "reset_token_stats: no sensors found for entry %s", entry.entry_id
+                )
                 continue
 
-            for sensor in sensors:
-                # Reset token counters
-                if isinstance(sensor, XAITokenSensorBase):
-                    try:
-                        sensor.reset_statistics()
-                        LOGGER.debug("reset_token_stats: reset sensor %s", sensor.entity_id)
-                        sensors_reset += 1
-                    except Exception as err:
-                        LOGGER.error(
-                            "reset_token_stats: failed to reset sensor %s: %s",
-                            getattr(sensor, "entity_id", "unknown"), err
-                        )
-                # Also dismiss new models detector
-                elif isinstance(sensor, XAINewModelsDetectorSensor):
-                    try:
-                        sensor.dismiss_new_models()
-                        LOGGER.debug("reset_token_stats: dismissed new models detector")
-                    except Exception as err:
-                        LOGGER.error("reset_token_stats: failed to dismiss new models: %s", err)
+            # Collect all resettable sensors first
+            sensors_to_reset.extend(
+                [s for s in sensors if isinstance(s, XAITokenSensorBase)]
+            )
 
-        if sensors_reset == 0:
+        if not sensors_to_reset:
             LOGGER.warning("reset_token_stats: no token sensors found to reset")
-            return {"status": "ok", "sensors_reset": 0, "message": "No token sensors found"}
+            return {
+                "status": "ok",
+                "sensors_reset": 0,
+                "message": "No token sensors found",
+            }
+
+        # Step 1: Reset all sensors in memory without saving
+        for sensor in sensors_to_reset:
+            try:
+                sensor.reset_statistics(skip_save=True)
+                LOGGER.debug(
+                    "reset_token_stats: reset sensor %s in memory", sensor.entity_id
+                )
+                sensors_reset_count += 1
+            except Exception as err:
+                LOGGER.error(
+                    "reset_token_stats: failed to reset sensor %s in memory: %s",
+                    getattr(sensor, "entity_id", "unknown"),
+                    err,
+                )
+
+        # Step 2: Save the reset state to storage ONCE using the first sensor
+        try:
+            # This sensor's in-memory state is now reset, so saving it will clear storage
+            await sensors_to_reset[0]._async_save_to_storage()
+            LOGGER.info(
+                "reset_token_stats: successfully reset %d sensors and saved state to storage.",
+                sensors_reset_count,
+            )
+        except Exception as err:
+            LOGGER.error(
+                "reset_token_stats: failed to save final reset state to storage: %s",
+                err,
+            )
+            # Still return a partial success message
+            return {
+                "status": "partial_error",
+                "sensors_reset": sensors_reset_count,
+                "message": f"Successfully reset {sensors_reset_count} sensors in memory, but failed to save state to storage.",
+            }
 
         return {
             "status": "ok",
-            "sensors_reset": sensors_reset,
-            "message": f"Successfully reset {sensors_reset} token sensors"
+            "sensors_reset": sensors_reset_count,
+            "message": f"Successfully reset {sensors_reset_count} token sensors",
         }
 
 
 # ==============================================================================
 # SERVICE: reload_pricing
 # ==============================================================================
+
 
 class ReloadPricingService:
     """Service handler for reload_pricing - Force refresh of model pricing data."""
@@ -849,15 +958,12 @@ class ReloadPricingService:
 
             return {
                 "status": "ok",
-                "message": "Pricing data refreshed successfully from xAI API"
+                "message": "Pricing data refreshed successfully from xAI API",
             }
 
         except Exception as err:
             LOGGER.error("Failed to reload pricing data: %s", err, exc_info=True)
-            return {
-                "status": "error",
-                "message": f"Failed to reload pricing: {err}"
-            }
+            return {"status": "error", "message": f"Failed to reload pricing: {err}"}
 
 
 class DismissNewModelsService:
@@ -873,7 +979,10 @@ class DismissNewModelsService:
 
         # Find the new models detector sensor
         from .sensor import XAINewModelsDetectorSensor
-        sensors = self.hass.data.get(DOMAIN, {}).get(f"{self.entry.entry_id}_sensors", [])
+
+        sensors = self.hass.data.get(DOMAIN, {}).get(
+            f"{self.entry.entry_id}_sensors", []
+        )
 
         detector_sensor = None
         for sensor in sensors:
@@ -885,19 +994,20 @@ class DismissNewModelsService:
             LOGGER.warning("New models detector sensor not found")
             return {
                 "status": "error",
-                "message": "New models detector sensor not found"
+                "message": "New models detector sensor not found",
             }
 
         detector_sensor.dismiss_new_models()
         return {
             "status": "ok",
-            "message": "New models notification dismissed successfully"
+            "message": "New models notification dismissed successfully",
         }
 
 
 # ==============================================================================
 # SERVICE: photo_analysis
 # ==============================================================================
+
 
 class PhotoAnalysisService:
     """Service handler for photo_analysis - Analyze images using Grok Vision."""
@@ -926,9 +1036,6 @@ class PhotoAnalysisService:
         LOGGER.debug(f"[Context: {context_id}] Service 'photo_analysis' called")
 
         try:
-            if not XAI_SDK_AVAILABLE:
-                raise_generic_error("xAI SDK not available")
-
             # Parse request data
             prompt = call.data.get("prompt", "").strip()
             if not prompt:
@@ -944,7 +1051,9 @@ class PhotoAnalysisService:
 
             # Validate at least one image source
             if not images and not attachments:
-                raise_validation_error("At least one image (path/URL or attachment) is required")
+                raise_validation_error(
+                    "At least one image (path/URL or attachment) is required"
+                )
 
             LOGGER.debug(
                 f"[Context: {context_id}] Request data: "
@@ -955,8 +1064,8 @@ class PhotoAnalysisService:
             # Get AI Task entity (uses its config for vision_model, temperature, etc.)
             ai_task_entity = self._get_ai_task_entity()
 
-            # Call gateway for photo analysis
-            analysis_text = await ai_task_entity.gateway.analyze_photo(
+            # Call entity method for photo analysis
+            analysis_text = await ai_task_entity.analyze_photo(
                 prompt=prompt,
                 images=images if images else None,
                 attachments=attachments,
@@ -966,7 +1075,7 @@ class PhotoAnalysisService:
             LOGGER.info(
                 "photo_analysis_end: total_duration=%.2fs images=%d",
                 elapsed,
-                len(images) + (len(attachments) if attachments else 0)
+                len(images) + (len(attachments) if attachments else 0),
             )
 
             return {
@@ -979,12 +1088,9 @@ class PhotoAnalysisService:
             LOGGER.error(
                 f"[Context: {context_id}] Error in photo analysis service: %s",
                 err,
-                exc_info=True
+                exc_info=True,
             )
-            return {
-                "status": "error",
-                "error": str(err)
-            }
+            return {"status": "error", "error": str(err)}
 
     def _get_ai_task_entity(self):
         """Get AI Task entity to access gateway and config."""
@@ -1009,8 +1115,12 @@ class PhotoAnalysisService:
 
         # Find entity by matching entry and subentry
         for entity in entity_component.entities:
-            if (hasattr(entity, 'entry') and entity.entry.entry_id == self.entry.entry_id and
-                hasattr(entity, 'subentry') and entity.subentry.subentry_id == ai_task_subentry.subentry_id):
+            if (
+                hasattr(entity, "entry")
+                and entity.entry.entry_id == self.entry.entry_id
+                and hasattr(entity, "subentry")
+                and entity.subentry.subentry_id == ai_task_subentry.subentry_id
+            ):
                 return entity
 
         raise_generic_error(
@@ -1021,6 +1131,7 @@ class PhotoAnalysisService:
 # ==============================================================================
 # HELPER: Service Registration
 # ==============================================================================
+
 
 def register_services(hass: HA_HomeAssistant, entry: HA_ConfigEntry) -> None:
     """Register all xAI services.

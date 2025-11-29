@@ -11,6 +11,7 @@ Used by:
 Not used by conversation agents (pipeline/tools modes) which only use ConversationMemory
 for response_id storage.
 """
+
 from __future__ import annotations
 
 import time
@@ -101,28 +102,29 @@ class ChatHistoryService:
             self._history[history_key] = {
                 "messages": [],
                 "created_at": time.time(),
-                "last_updated": time.time()
+                "last_updated": time.time(),
             }
 
         # Add message with timestamp
-        self._history[history_key]["messages"].append({
-            "role": role,
-            "content": content,
-            "timestamp": time.time()
-        })
+        self._history[history_key]["messages"].append(
+            {"role": role, "content": content, "timestamp": time.time()}
+        )
         self._history[history_key]["last_updated"] = time.time()
 
         # Apply limits (keep last N messages max)
-        if len(self._history[history_key]["messages"]) > RECOMMENDED_CHAT_HISTORY_MAX_MESSAGES:
-            self._history[history_key]["messages"] = \
-                self._history[history_key]["messages"][-RECOMMENDED_CHAT_HISTORY_MAX_MESSAGES:]
+        if (
+            len(self._history[history_key]["messages"])
+            > RECOMMENDED_CHAT_HISTORY_MAX_MESSAGES
+        ):
+            self._history[history_key]["messages"] = self._history[history_key][
+                "messages"
+            ][-RECOMMENDED_CHAT_HISTORY_MAX_MESSAGES:]
 
         # Save to disk (async, non-blocking)
         try:
             await self._store.async_save(self._history)
             LOGGER.debug(
-                "Chat history saved: %s role=%s len=%d",
-                history_key, role, len(content)
+                "Chat history saved: %s role=%s len=%d", history_key, role, len(content)
             )
         except Exception as err:
             LOGGER.error("Failed to save chat history: %s", err)
@@ -139,15 +141,10 @@ class ChatHistoryService:
             role: Message role (user/assistant)
             content: Message content
         """
-        self.hass.async_create_task(
-            self._do_save(user_id, mode, role, content)
-        )
+        self.hass.async_create_task(self._do_save(user_id, mode, role, content))
 
     async def load_history(
-        self,
-        user_id: str,
-        mode: str,
-        limit: int = 50
+        self, user_id: str, mode: str, limit: int = 50
     ) -> list[dict[str, Any]]:
         """Load chat history synchronously (for frontend sync).
 
@@ -175,7 +172,9 @@ class ChatHistoryService:
 
         LOGGER.debug(
             "Chat history loaded: %s messages=%d (limited to %d)",
-            history_key, len(messages), len(result)
+            history_key,
+            len(messages),
+            len(result),
         )
 
         return result
@@ -233,12 +232,11 @@ class ChatHistoryService:
 
         total_conversations = len(self._history)
         total_messages = sum(
-            len(entry.get("messages", []))
-            for entry in self._history.values()
+            len(entry.get("messages", [])) for entry in self._history.values()
         )
 
         return {
             "total_conversations": total_conversations,
             "total_messages": total_messages,
-            "conversations": list(self._history.keys())
+            "conversations": list(self._history.keys()),
         }
