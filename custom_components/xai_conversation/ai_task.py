@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+
 # Standard library imports
 from json import JSONDecodeError
 from typing import TYPE_CHECKING, Any
@@ -10,7 +11,9 @@ from typing import TYPE_CHECKING, Any
 # Local application imports
 from .__init__ import ConfigEntry
 from homeassistant.core import HomeAssistant as HA_HomeAssistant
-from homeassistant.helpers.entity_platform import AddEntitiesCallback as HA_AddConfigEntryEntitiesCallback
+from homeassistant.helpers.entity_platform import (
+    AddEntitiesCallback as HA_AddConfigEntryEntitiesCallback,
+)
 from homeassistant.components import ai_task as ha_ai_task
 from homeassistant.components import conversation as ha_conversation
 
@@ -76,7 +79,9 @@ class XAITaskEntity(
             | ha_ai_task.AITaskEntityFeature.SUPPORT_ATTACHMENTS
         )
 
-    async def _prepare_attachments(self, attachments: list | None, images: list[str] | None = None) -> list[Any]:
+    async def _prepare_attachments(
+        self, attachments: list | None, images: list[str] | None = None
+    ) -> list[Any]:
         """Prepare image messages from attachments and image paths.
 
         Handles file I/O and base64 conversion.
@@ -98,11 +103,14 @@ class XAITaskEntity(
                         messages.append(XAIGateway.img_msg(img))
                     else:
                         try:
+
                             def _read_file_sync(p):
                                 with open(p, "rb") as f:
                                     return f.read()
 
-                            image_bytes = await self.hass.async_add_executor_job(_read_file_sync, img)
+                            image_bytes = await self.hass.async_add_executor_job(
+                                _read_file_sync, img
+                            )
                             base64_image = base64.b64encode(image_bytes).decode("utf-8")
                             # Simple mime type detection
                             mime_type = "image/jpeg"
@@ -110,7 +118,7 @@ class XAITaskEntity(
                                 mime_type = "image/png"
                             elif img.lower().endswith(".webp"):
                                 mime_type = "image/webp"
-                            
+
                             data_uri = f"data:{mime_type};base64,{base64_image}"
                             messages.append(XAIGateway.img_msg(data_uri))
                         except Exception as err:
@@ -120,17 +128,22 @@ class XAITaskEntity(
         if attachments:
             for attachment in attachments:
                 try:
+
                     def _read_att_sync(p):
                         with open(p, "rb") as f:
                             return f.read()
 
-                    image_bytes = await self.hass.async_add_executor_job(_read_att_sync, attachment.path)
+                    image_bytes = await self.hass.async_add_executor_job(
+                        _read_att_sync, attachment.path
+                    )
                     base64_image = base64.b64encode(image_bytes).decode("utf-8")
                     data_uri = f"data:{attachment.mime_type};base64,{base64_image}"
                     messages.append(XAIGateway.img_msg(data_uri))
                 except Exception as err:
-                    LOGGER.warning("Failed to process attachment %s: %s", attachment.path, err)
-        
+                    LOGGER.warning(
+                        "Failed to process attachment %s: %s", attachment.path, err
+                    )
+
         return messages
 
     async def _async_generate_data(
@@ -306,7 +319,9 @@ class XAITaskEntity(
         if not prompt or not prompt.strip():
             raise_validation_error("Photo analysis prompt cannot be empty")
         if not images and not attachments:
-            raise_validation_error("At least one image (path/URL or attachment) is required")
+            raise_validation_error(
+                "At least one image (path/URL or attachment) is required"
+            )
 
         if model is None:
             model = self._get_option(CONF_VISION_MODEL, RECOMMENDED_VISION_MODEL)
@@ -319,11 +334,9 @@ class XAITaskEntity(
             # Use gateway helper to create chat with standard config
             client = self.gateway.create_client()
             chat = self.gateway.create_chat(
-                client=client,
-                tools=None,
-                previous_response_id=None
+                client=client, tools=None, previous_response_id=None
             )
-            
+
             vision_prompt = self._get_option(CONF_VISION_PROMPT, VISION_ANALYSIS_PROMPT)
             if vision_prompt:
                 chat.append(XAIGateway.system_msg(vision_prompt))
@@ -331,7 +344,7 @@ class XAITaskEntity(
             # Construct user message: [text, img1, img2...]
             message_content = [prompt]
             message_content.extend(image_messages)
-            
+
             # Add single user message with mixed content
             chat.append(XAIGateway.user_msg(message_content))
 
@@ -340,7 +353,7 @@ class XAITaskEntity(
 
             content_text = getattr(response, "content", "")
             usage = getattr(response, "usage", None)
-            
+
             # Use correct metadata saver
             await save_response_metadata(
                 hass=self.hass,
@@ -348,7 +361,7 @@ class XAITaskEntity(
                 usage=usage,
                 model=model,
                 service_type="photo_analysis",
-                store_messages=False
+                store_messages=False,
             )
 
             return content_text

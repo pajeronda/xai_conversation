@@ -898,7 +898,7 @@ class XAICostSensor(XAITokenSensorBase):
 
         # Calculate individual cost components
         prompt_cost = (tokens["prompt"] / TOKENS_PER_MILLION) * input_price
-        
+
         if is_image_model:
             # For image models, output_price is price per image, and completion tokens are number of images
             completion_cost = tokens["completion"] * output_price
@@ -1210,7 +1210,7 @@ async def async_update_pricing_sensors_periodically(
     """Fetch latest model pricing from the xAI API and update all XAIPricingSensor entities."""
     # Instantiate the model manager directly
     manager = XAIModelManager(hass)
-    
+
     # Get known models from persistent storage (new models detector sensor state)
     sensors = hass.data.get(DOMAIN, {}).get(f"{entry.entry_id}_sensors")
     detector_sensor = None
@@ -1243,22 +1243,27 @@ async def async_update_pricing_sensors_periodically(
             # Fetch data using the manager
             api_key = entry.data["api_key"]
             xai_models_data = await manager.async_get_models_data(api_key)
-            
+
             if xai_models_data:
                 # Store in hass.data for global access
                 if DOMAIN not in hass.data:
                     hass.data[DOMAIN] = {}
                 hass.data[DOMAIN]["xai_models_data"] = xai_models_data
                 hass.data[DOMAIN]["xai_models_data_timestamp"] = now
-                LOGGER.info("Successfully updated xAI model pricing data via periodic task.")
+                LOGGER.info(
+                    "Successfully updated xAI model pricing data via periodic task."
+                )
             else:
                 LOGGER.warning("Periodic pricing update failed: No data returned.")
                 # Even if API fails, update detector sensor with existing data to prevent false positives
-                xai_models_data_existing = hass.data.get(DOMAIN, {}).get("xai_models_data", {})
+                xai_models_data_existing = hass.data.get(DOMAIN, {}).get(
+                    "xai_models_data", {}
+                )
                 if detector_sensor and xai_models_data_existing:
                     # Filter to include only canonical models (exclude aliases)
                     canonical_existing = {
-                        k for k, v in xai_models_data_existing.items() 
+                        k
+                        for k, v in xai_models_data_existing.items()
                         if v.get("name") == k
                     }
                     current_models = canonical_existing
@@ -1268,19 +1273,16 @@ async def async_update_pricing_sensors_periodically(
                 return
 
     except Exception as err:
-        LOGGER.error(
-            "Failed to update xAI model pricing data: %s", err, exc_info=True
-        )
+        LOGGER.error("Failed to update xAI model pricing data: %s", err, exc_info=True)
         return
 
     # Detect new models by comparing with acknowledged models
     xai_models_data_after = hass.data.get(DOMAIN, {}).get("xai_models_data", {})
-    
+
     # Filter to include only canonical models (exclude aliases) to prevent duplicate counting
     # Canonical models have their key equal to the "name" field in their data
     canonical_models = {
-        k for k, v in xai_models_data_after.items() 
-        if v.get("name") == k
+        k for k, v in xai_models_data_after.items() if v.get("name") == k
     }
     current_models = canonical_models
     new_models = sorted(list(current_models - acknowledged_models))

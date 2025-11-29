@@ -106,7 +106,9 @@ async def async_setup_entry(hass: HA_HomeAssistant, entry: XAIConfigEntry) -> bo
     # Fetch dynamic model data using the centralized manager
     # Note: The manager automatically populates SUPPORTED_MODELS and REASONING_EFFORT_MODELS
     model_manager = XAIModelManager(hass)
-    xai_models_data = await model_manager.async_get_models_data(entry.data[CONF_API_KEY])
+    xai_models_data = await model_manager.async_get_models_data(
+        entry.data[CONF_API_KEY]
+    )
 
     if not xai_models_data:
         LOGGER.error("Failed to fetch xAI model data. Aborting setup.")

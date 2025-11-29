@@ -289,7 +289,9 @@ RECOMMENDED_GROK_CODE_FAST_OPTIONS = {
 
 # Token pricing and cost calculation
 TOKENS_PER_MILLION = 1_000_000  # Division factor for token pricing calculations
-XAI_PRICING_CONVERSION_FACTOR = 10000.0 # API returns prices in units of 0.0001 USD per 1M tokens
+XAI_PRICING_CONVERSION_FACTOR = (
+    10000.0  # API returns prices in units of 0.0001 USD per 1M tokens
+)
 # Sensor update intervals
 PRICING_UPDATE_INTERVAL_HOURS = (
     48  # How often to fetch model pricing from xAI API (prices rarely change)

@@ -81,7 +81,9 @@ class XAIToolsProcessor:
         self._cached_llm_context: ha_llm.LLMContext | None = (
             None  # Cache for llm_context
         )
-        self._cached_active_domains: set[str] | None = None # Cache for active domains to trigger tool rebuild
+        self._cached_active_domains: set[str] | None = (
+            None  # Cache for active domains to trigger tool rebuild
+        )
         # Instance of HA's AssistAPI
         self._assist_api: ha_llm.AssistAPI | None = None
         # Calculate and cache tools enabled/disabled state once
@@ -125,7 +127,11 @@ class XAIToolsProcessor:
                     current_prev_id[:8] if current_prev_id else None,
                 )
             else:
-                current_prev_id = await self._entity._conversation_memory.get_response_id_by_key(conv_key)
+                current_prev_id = (
+                    await self._entity._conversation_memory.get_response_id_by_key(
+                        conv_key
+                    )
+                )
 
             # Prepare chat object (but don't call API yet - that happens in streaming)
             chat = await self._prepare_chat_for_tools(
@@ -312,24 +318,35 @@ class XAIToolsProcessor:
 
         # Build LLMContext independently from chat_log
         llm_context = self._build_llm_context(user_input)
-        
+
         # Get exposed entities - always check this to dynamically rebuild tools if domains change
-        assist_api = ha_llm._async_get_apis(self._entity.hass).get(ha_llm.LLM_API_ASSIST)
+        assist_api = ha_llm._async_get_apis(self._entity.hass).get(
+            ha_llm.LLM_API_ASSIST
+        )
         if not assist_api:
             raise_generic_error("AssistAPI is not available in Home Assistant.")
         exposed_entities_result = ha_llm._get_exposed_entities(
             self._entity.hass, "conversation", include_state=False
         )
-        
+
         # Extract current active domains for comparison
-        current_active_domains = {
-            entity_id.split(".")[0] for entity_id in exposed_entities_result["entities"]
-        } if exposed_entities_result and "entities" in exposed_entities_result else set()
+        current_active_domains = (
+            {
+                entity_id.split(".")[0]
+                for entity_id in exposed_entities_result["entities"]
+            }
+            if exposed_entities_result and "entities" in exposed_entities_result
+            else set()
+        )
 
         # If cache is not empty, check if active domains have changed
         if not needs_cache_rebuild and self._cached_active_domains is not None:
             if current_active_domains != self._cached_active_domains:
-                LOGGER.debug("cache_rebuild: Active domains changed from %s to %s", self._cached_active_domains, current_active_domains)
+                LOGGER.debug(
+                    "cache_rebuild: Active domains changed from %s to %s",
+                    self._cached_active_domains,
+                    current_active_domains,
+                )
                 needs_cache_rebuild = True
 
         if needs_cache_rebuild:
@@ -372,7 +389,9 @@ class XAIToolsProcessor:
                 self._cached_ha_tools = ha_tools
                 self._cached_ha_tools_dict = {tool.name: tool for tool in ha_tools}
                 # Use XAIGateway.tool_def for tool definition wrapper
-                self._cached_xai_tools = format_tools_for_xai(ha_tools, XAIGateway.tool_def)
+                self._cached_xai_tools = format_tools_for_xai(
+                    ha_tools, XAIGateway.tool_def
+                )
 
                 # Build textual description of tools
                 tool_descriptions = []
@@ -623,20 +642,25 @@ class XAIToolsProcessor:
             if isinstance(content, ha_conversation.UserContent):
                 # Only the LAST user message gets full metadata (user/device lookup, timestamp)
                 # Historical messages are plain text to avoid expensive async lookups
-                is_last_user_msg = (i == last_user_msg_index)
+                is_last_user_msg = i == last_user_msg_index
 
                 formatted_msg = await format_user_message_with_metadata(
                     content.content or "",
                     user_input,
                     self._entity.hass,
-                    send_user_name and is_last_user_msg,  # Only lookup user/device for last message
+                    send_user_name
+                    and is_last_user_msg,  # Only lookup user/device for last message
                     include_timestamp=is_last_user_msg,  # Only timestamp on last message
                 )
                 chat.append(XAIGateway.user_msg(formatted_msg))
             elif isinstance(content, ha_conversation.AssistantContent):
                 tool_calls = getattr(content, "tool_calls", None)
                 if tool_calls:
-                    chat.append(XAIGateway.assistant_msg(content.content or "", tool_calls=tool_calls))
+                    chat.append(
+                        XAIGateway.assistant_msg(
+                            content.content or "", tool_calls=tool_calls
+                        )
+                    )
                 else:
                     chat.append(XAIGateway.assistant_msg(content.content or ""))
 

@@ -206,8 +206,11 @@ class IntelligentPipeline:
                             streaming_active = False
                             buffer = suspicious_buffer + content_chunk
                             suspicious_buffer = ""
-                            LOGGER.debug("pipeline_stream: suspended at split '[[', buffer: %s", buffer[:20])
-                            continue # Skip normal processing for this chunk
+                            LOGGER.debug(
+                                "pipeline_stream: suspended at split '[[', buffer: %s",
+                                buffer[:20],
+                            )
+                            continue  # Skip normal processing for this chunk
                         else:
                             # False alarm: was just a single "[", stream it now
                             yield {"content": suspicious_buffer}
@@ -219,18 +222,21 @@ class IntelligentPipeline:
                         idx = content_chunk.index("[[")
                         if idx > 0:
                             yield {"content": content_chunk[:idx]}
-                        
+
                         streaming_active = False
                         buffer = content_chunk[idx:]
-                        LOGGER.debug("pipeline_stream: suspended at '[[', buffer: %s", buffer[:20])
-                    
+                        LOGGER.debug(
+                            "pipeline_stream: suspended at '[[', buffer: %s",
+                            buffer[:20],
+                        )
+
                     elif content_chunk.endswith("["):
                         # Possible start of command split across chunks
                         # Stream everything except the last "["
                         if len(content_chunk) > 1:
                             yield {"content": content_chunk[:-1]}
                         suspicious_buffer = "["
-                    
+
                     else:
                         # Normal content, just stream it
                         yield {"content": content_chunk}

@@ -10,7 +10,9 @@ from homeassistant.const import MATCH_ALL
 from homeassistant.helpers import device_registry as ha_device_registry
 from homeassistant.core import HomeAssistant as HA_HomeAssistant
 from homeassistant.config_entries import ConfigSubentry as HA_ConfigSubentry
-from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback as HA_AddConfigEntryEntitiesCallback
+from homeassistant.helpers.entity_platform import (
+    AddConfigEntryEntitiesCallback as HA_AddConfigEntryEntitiesCallback,
+)
 
 # Local application imports
 from .__init__ import (

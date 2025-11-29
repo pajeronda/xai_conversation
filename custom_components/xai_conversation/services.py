@@ -54,7 +54,11 @@ import base64
 from datetime import datetime
 import json
 import time
-from homeassistant.core import ServiceCall as HA_ServiceCall, ServiceResponse as HA_ServiceResponse, SupportsResponse
+from homeassistant.core import (
+    ServiceCall as HA_ServiceCall,
+    ServiceResponse as HA_ServiceResponse,
+    SupportsResponse,
+)
 from homeassistant.helpers import entity_registry as ha_entity_registry
 from homeassistant.util.json import json_loads as ha_json_loads
 
@@ -151,9 +155,12 @@ class GrokCodeFastService:
                 conv_key = None
                 if user_id:
                     from .helpers.prompt_manager import PromptManager
+
                     prompt_mgr = PromptManager(subentry_data, mode="code")
                     base_prompt = prompt_mgr.build_base_prompt_with_user_instructions()
-                    conv_key = self.code_memory.calculate_conv_key_simple(user_id, "code", base_prompt)
+                    conv_key = self.code_memory.calculate_conv_key_simple(
+                        user_id, "code", base_prompt
+                    )
 
                 if not previous_response_id and store_messages and conv_key:
                     previous_response_id = (
@@ -375,6 +382,7 @@ class GrokCodeFastService:
         # Add system prompt (only on first message in server-side mode)
         if not previous_response_id:
             from .helpers import PromptManager
+
             prompt_mgr = PromptManager(subentry_data, mode="code")
             base_prompt = prompt_mgr.build_base_prompt_with_user_instructions()
             chat.append(XAIGateway.system_msg(base_prompt))
