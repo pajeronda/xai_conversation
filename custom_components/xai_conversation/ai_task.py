@@ -20,13 +20,14 @@ from homeassistant.components import conversation as ha_conversation
 from .const import (
     LOGGER,
     SUBENTRY_TYPE_AI_TASK,
+    CONF_IMAGE_MODEL,
     CONF_VISION_MODEL,
     RECOMMENDED_VISION_MODEL,
+    RECOMMENDED_IMAGE_MODEL,
     CONF_VISION_PROMPT,
     VISION_ANALYSIS_PROMPT,
     CONF_MAX_TOKENS,
     CONF_TEMPERATURE,
-    RECOMMENDED_IMAGE_MODEL,
 )
 from .helpers import (
     parse_with_strategies,
@@ -241,13 +242,13 @@ class XAITaskEntity(
         Args:
             prompt: Image generation prompt
             chat_log: Chat log for context
-            model: Optional model override, defaults to RECOMMENDED_IMAGE_MODEL
+            model: Optional model override, defaults to configured image_model
 
         Returns:
             Dict with image_data, mime_type, model, revised_prompt
         """
         if model is None:
-            model = RECOMMENDED_IMAGE_MODEL
+            model = self._get_option(CONF_IMAGE_MODEL, RECOMMENDED_IMAGE_MODEL)
 
         if not prompt or not prompt.strip():
             raise_validation_error("Image generation prompt cannot be empty")
@@ -263,15 +264,20 @@ class XAITaskEntity(
                     image_format="base64",
                 )
 
-            if not hasattr(response, "image") or not response.image:
+            # Get image data (response.image is a coroutine property in SDK)
+            try:
+                image_bytes = await response.image
+            except AttributeError:
                 raise_generic_error("xAI API returned invalid image response")
 
-            if not isinstance(response.image, bytes):
+            if not image_bytes:
+                raise_generic_error("xAI API returned empty image data")
+
+            if not isinstance(image_bytes, bytes):
                 raise_generic_error(
-                    f"Expected bytes, got {type(response.image).__name__}"
+                    f"Expected bytes, got {type(image_bytes).__name__}"
                 )
 
-            image_bytes = response.image
             revised_prompt = getattr(response, "prompt", None)
             timer.context_info["image_size_bytes"] = len(image_bytes)
 
@@ -331,10 +337,10 @@ class XAITaskEntity(
 
         context = {"model": model, "images_count": len(image_messages)}
         async with LogTimeServices(LOGGER, "photo_analysis", context) as timer:
-            # Use gateway helper to create chat with standard config
+            # Use gateway helper to create chat with vision model
             client = self.gateway.create_client()
             chat = self.gateway.create_chat(
-                client=client, tools=None, previous_response_id=None
+                client=client, tools=None, previous_response_id=None, model=model
             )
 
             vision_prompt = self._get_option(CONF_VISION_PROMPT, VISION_ANALYSIS_PROMPT)

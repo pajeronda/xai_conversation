@@ -353,6 +353,7 @@ class XAIGateway:
         client: XAIClient,
         tools: list | None = None,
         previous_response_id: str | None = None,
+        model: str | None = None,
     ) -> Any:
         """Create an xAI chat object with the correct model and parameters.
 
@@ -360,11 +361,13 @@ class XAIGateway:
             client: The xAI client instance
             tools: Optional list of tools for tools mode
             previous_response_id: Optional ID for conversation chaining
+            model: Optional model override (for vision, image gen, etc.)
 
         Returns:
             xAI Chat object configured with entity's settings
         """
-        model = self.entity._get_option(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL)
+        if model is None:
+            model = self.entity._get_option(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL)
         max_tokens = self.entity._get_int_option(
             CONF_MAX_TOKENS, RECOMMENDED_MAX_TOKENS
         )
