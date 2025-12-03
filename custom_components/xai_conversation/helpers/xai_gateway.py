@@ -166,8 +166,10 @@ class XAIGateway:
         Raises:
             ValueError: If SDK not available or API key invalid
         """
+        if not XAI_SDK_AVAILABLE or xai_user is None:
+            raise ValueError("xai_sdk not installed")
+
         from ..const import RECOMMENDED_CHAT_MODEL, RECOMMENDED_TIMEOUT
-        from .. import xai_user
 
         try:
             client = XAIGateway.create_standalone_client(

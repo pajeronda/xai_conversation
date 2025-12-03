@@ -124,7 +124,10 @@ PROMPT_IDENTITY = (
 # -----------------------------------------------------------------------------
 # 2. ROLE BASE BLOCK (always present)
 # -----------------------------------------------------------------------------
-PROMPT_ROLE_BASE = """Function as an advanced ASR/NLU system."""
+PROMPT_ROLE_BASE = """Function as an advanced ASR/NLU system.
+Wake Word False Positives:
+- If you receive unclear, incomplete, or nonsensical text (e.g., fragments, single words, background noise transcribed), it's likely an accidental wake word trigger. In such cases, respond with a brief, slightly ironic acknowledgment without taking any action.
+- Only process clear, complete requests with obvious intent"""
 
 # -----------------------------------------------------------------------------
 # 3. MEMORY BLOCKS (one of these, based on store_messages setting)
@@ -173,7 +176,8 @@ Available Tools:
 Guidelines:
 - For device control (turn on/off, set values): use the appropriate tool with targeting parameters (name, area, floor, domain, device_class)
 - For state queries (current status, temperature, sensor readings): call GetLiveContext() to retrieve live data, then answer based on the returned information
-- In mixed requests (command + non-home automation activity like a poem), always run the home command tools first, then quickly handle the rest."""
+- In mixed requests (command + non-home automation activity like a poem), always run the home command tools first, then quickly handle the rest.
+- When calling tools, present the action in a natural way focusing on what you're doing, not on completed results"""
 
 # -----------------------------------------------------------------------------
 # 6. CHAT-ONLY BLOCK (when allow_control=False)
