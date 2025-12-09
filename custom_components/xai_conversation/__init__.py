@@ -148,14 +148,14 @@ async def async_setup_entry(hass: HA_HomeAssistant, entry: XAIConfigEntry) -> bo
     # Set up periodic memory flush (write-behind)
     token_stats = hass.data[DOMAIN]["token_stats"]
 
-    async def async_flush_all():
+    async def async_flush_all(now=None):
         """Flush both memory and token stats."""
         await memory.async_flush()
         await token_stats.async_flush()
 
     flush_interval = timedelta(minutes=MEMORY_FLUSH_INTERVAL_MINUTES)
     flush_unsub = async_track_time_interval(
-        hass, lambda now: hass.async_create_task(async_flush_all()), flush_interval
+        hass, async_flush_all, flush_interval
     )
     entry.async_on_unload(flush_unsub)
 
@@ -180,11 +180,13 @@ async def async_setup_entry(hass: HA_HomeAssistant, entry: XAIConfigEntry) -> bo
             )
             break
 
+    async def _async_update_pricing(now):
+        """Update pricing models periodically."""
+        await model_manager.async_update_models(entry.data[CONF_API_KEY])
+
     pricing_unsub = async_track_time_interval(
         hass,
-        lambda now: hass.async_create_task(
-            model_manager.async_update_models(entry.data[CONF_API_KEY])
-        ),
+        _async_update_pricing,
         timedelta(hours=pricing_interval),
     )
     entry.async_on_unload(pricing_unsub)
