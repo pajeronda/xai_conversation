@@ -201,9 +201,9 @@ Rules: Keep explanations in response_text, raw code in response_code (no ``` fen
 # -----------------------------------------------------------------------------
 # 8. OUTPUT FORMAT BLOCK (conversation/pipeline/tools modes)
 # -----------------------------------------------------------------------------
-PROMPT_OUTPUT_FORMAT = """Output Format:
+PROMPT_OUTPUT_FORMAT = """OUTPUT FORMAT - MANDATORY:
 - Follow the user's language and communication style.
-- Use plain text only for text to speech: no markdown, no emoji."""
+- Plain text only. NO markdown (*, #, `, -, •). Output is for TTS - symbols are spoken literally. Write in natural sentences."""
 
 # ==============================================================================
 # END OF MODULAR PROMPT SYSTEM
