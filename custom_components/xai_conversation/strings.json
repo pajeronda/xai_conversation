@@ -14,7 +14,7 @@
           "api_key": "Your xAI API key (starts with 'xai-')",
           "api_host": "API hostname endpoint. Use 'api.x.ai' for global routing with automatic redirection to a regional host or use a specific regional host directly.",
           "assistant_name": "The name your assistant will use to identify itself (e.g., 'Jarvis', 'Alexa', 'HAL').",
-          "live_search": "Enable web search capabilities: 'off' (disabled), 'auto' (model decides), 'on' (always enabled)"
+          "live_search": "Enable agentic search capabilities: 'off' (disabled), 'web search', 'x search', 'full' (web + x + code)"
         }
       }
     },
@@ -74,6 +74,7 @@
             "live_search": "Live Search Mode",
             "store_messages": "Store messages",
             "send_user_name": "Include user name in messages",
+            "show_citations": "Show citations in chat",
             "reasoning_effort": "Reasoning effort"
           },
           "data_description": {
@@ -88,7 +89,8 @@
             "allow_smart_home_control": "When enabled, your assistant can execute smart home commands. When disabled, your assistant responds conversationally without controlling devices. Changing this setting will start a new conversation.",
             "store_messages": "Use xAI's server-side memory, which allows you to reduce the number of tokens sent with each request. Memory parameters (TTL, max turns) are configured at integration level.",
             "send_user_name": "Add the Home Assistant user name or Assist voice device name to the chat with Grok.",
-            "live_search": "Enable web search capabilities: 'off' (disabled), 'auto' (model decides), 'on' (always enabled). Applies to both pipeline and tools modes.",
+            "show_citations": "Append search citations to chat responses. Useful for UI/chat interfaces but can be noisy for voice assistants. Default: OFF (recommended for voice).",
+            "live_search": "Enable agentic search capabilities: 'off' (disabled), 'web search', 'x search', 'full' (web + x + code). Applies to both pipeline and tools modes.",
             "prompt": "Custom instructions for the agent (tools mode only).",
             "reasoning_effort": "Level of reasoning effort for models that support it (low, medium, high, max). Only available for grok-4 and grok-4-fast models."
           }
@@ -108,10 +110,18 @@
         "init": {
           "title": "xAI Token Sensors",
           "data": {
-            "name": "Name"
+            "name": "Name",
+            "tokens_per_million": "Tokens per million",
+            "xai_pricing_conversion_factor": "xAI pricing conversion factor",
+            "pricing_update_interval_hours": "Pricing update interval (hours)",
+            "cost_per_tool_call": "Cost per tool invocation (USD)"
           },
           "data_description": {
-            "name": "Descriptive name for the token sensors. Pricing is automatically fetched from xAI API and displayed in dedicated pricing sensors."
+            "name": "Descriptive name for the token sensors.",
+            "tokens_per_million": "Division factor for token pricing calculations. Default: 1,000,000.",
+            "xai_pricing_conversion_factor": "xAI API returns prices in units that need conversion to USD per million tokens. Default: 10,000.",
+            "pricing_update_interval_hours": "How often to fetch updated pricing from xAI API. Default: 48 hours.",
+            "cost_per_tool_call": "Default cost per server-side tool invocation (used as fallback if tool not in pricing map). Most tools cost $5.00/1k calls = 0.005, Collections Search costs $2.50/1k = 0.0025. Default: 0.005."
           }
         }
       },
@@ -188,7 +198,7 @@
             "max_tokens": "Maximum number of tokens to generate",
             "temperature": "Controls randomness in responses (0.0 = deterministic, 2.0 = very creative)",
             "top_p": "Controls diversity via nucleus sampling (not supported by grok-4)",
-            "live_search": "Enable web search capabilities: 'off' (disabled), 'auto' (model decides), 'on' (always enabled)",
+            "live_search": "Enable agentic search capabilities: 'off' (disabled), 'web search', 'x search', 'full' (web + x + code)",
             "store_messages": "Use xAI's server-side memory to maintain conversation context. Memory parameters (TTL, max turns) are configured at integration level and automatically detect user vs device requests.",
             "assistant_name": "The name the assistant will use to identify itself (e.g., 'Grok Code Fast', 'CodeBot', 'DevAssistant'). Changing this value will start a new conversation, and previous history will become inaccessible.",
             "reasoning_effort": "Level of reasoning effort for models that support it (low, medium, high)"

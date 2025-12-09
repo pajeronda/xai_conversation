@@ -14,29 +14,19 @@ if TYPE_CHECKING:
 
 # Local application imports
 from .const import (
-    CONF_CHAT_MODEL,
-    CONF_MAX_TOKENS,
-    CONF_PROMPT,
-    CONF_STORE_MESSAGES,
-    CONF_TEMPERATURE,
     DOMAIN,
     LOGGER,
     RECOMMENDED_HISTORY_LIMIT_TURNS,
     SUBENTRY_TYPE_CODE_TASK,
-    RECOMMENDED_TIMEOUT,
 )
 from .exceptions import raise_generic_error, raise_validation_error
 from .helpers import (
     parse_grok_code_response,
     parse_id_list,
     LogTimeServices,
+    PromptManager,
     save_response_metadata,
     XAIGateway,
-)
-from .sensor import (
-    XAITokenSensorBase,
-    XAINewModelsDetectorSensor,
-    async_update_pricing_sensors_periodically,
 )
 
 # gRPC imports for error handling
@@ -53,7 +43,6 @@ except ImportError:
 import base64
 from datetime import datetime
 import json
-import time
 from homeassistant.core import (
     ServiceCall as HA_ServiceCall,
     ServiceResponse as HA_ServiceResponse,
@@ -61,6 +50,80 @@ from homeassistant.core import (
 )
 from homeassistant.helpers import entity_registry as ha_entity_registry
 from homeassistant.util.json import json_loads as ha_json_loads
+
+
+# ==============================================================================
+# HELPER: Service Registration
+# ==============================================================================
+
+
+def register_services(hass: HA_HomeAssistant, entry: HA_ConfigEntry) -> None:
+    """Register all xAI services.
+
+    Args:
+        hass: Home Assistant instance
+        entry: Config entry for xAI Conversation
+    """
+    # Initialize service handlers
+    grok_code_fast = GrokCodeFastService(hass, entry)
+    clear_memory = ClearMemoryService(hass)
+    clear_code_memory = ClearCodeMemoryService(hass)
+    sync_chat_history = SyncChatHistoryService(hass)
+    reset_token_stats = ResetTokenStatsService(hass)
+    reload_pricing = ReloadPricingService(hass, entry)
+    photo_analysis = PhotoAnalysisService(hass, entry)
+
+    # Register services
+    hass.services.async_register(
+        DOMAIN,
+        "grok_code_fast",
+        grok_code_fast.async_handle,
+        supports_response=SupportsResponse.ONLY,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        "clear_memory",
+        clear_memory.async_handle,
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        "clear_code_memory",
+        clear_code_memory.async_handle,
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        "sync_chat_history",
+        sync_chat_history.async_handle,
+        supports_response=SupportsResponse.ONLY,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        "reset_token_stats",
+        reset_token_stats.async_handle,
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        "reload_pricing",
+        reload_pricing.async_handle,
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
+        "photo_analysis",
+        photo_analysis.async_handle,
+        supports_response=SupportsResponse.ONLY,
+    )
+
+    LOGGER.debug("All xAI services registered successfully")
 
 
 # ==============================================================================
@@ -105,6 +168,112 @@ def _get_conversation_entity(hass: HA_HomeAssistant):
 
 
 # ==============================================================================
+# SERVICE: photo_analysis
+# ==============================================================================
+
+
+class PhotoAnalysisService:
+    """Service handler for photo_analysis - Analyze images using Grok Vision."""
+
+    def __init__(self, hass: HA_HomeAssistant, entry: HA_ConfigEntry):
+        """Initialize the service.
+
+        Args:
+            hass: Home Assistant instance
+            entry: Config entry for xAI Conversation
+        """
+        self.hass = hass
+        self.entry = entry
+
+    async def async_handle(self, call: HA_ServiceCall) -> HA_ServiceResponse:
+        """Handle the photo_analysis service call.
+
+        Args:
+            call: Service call with prompt, images, and optional user_id
+
+        Returns:
+            Service response with analysis text and metadata
+        """
+        context_id = call.context.id
+
+        async with LogTimeServices(LOGGER, "photo_analysis"):
+            # Parse request data
+            prompt = call.data.get("prompt", "").strip()
+            if not prompt:
+                raise_validation_error("Prompt is required for photo analysis")
+
+            # Get images from multiple sources
+            images = call.data.get("images", [])
+            if isinstance(images, str):
+                images = [images]  # Single image string to list
+
+            # Get attachments if provided (from HA automation context)
+            attachments = call.data.get("attachments")
+
+            # Validate at least one image source
+            if not images and not attachments:
+                raise_validation_error(
+                    "At least one image (path/URL or attachment) is required"
+                )
+
+            LOGGER.debug(
+                f"[Context: {context_id}] Request data: "
+                f"prompt_length={len(prompt)}, images={len(images)}, "
+                f"has_attachments={bool(attachments)}"
+            )
+
+            # Get AI Task entity (uses its config for vision_model, temperature, etc.)
+            ai_task_entity = self._get_ai_task_entity()
+
+            # Call entity method for photo analysis
+            analysis_text = await ai_task_entity.analyze_photo(
+                prompt=prompt,
+                images=images if images else None,
+                attachments=attachments,
+            )
+
+            return {
+                "analysis": analysis_text,
+                "timestamp": datetime.now().isoformat(),
+            }
+
+    def _get_ai_task_entity(self):
+        """Get AI Task entity to access gateway and config."""
+        from .const import SUBENTRY_TYPE_AI_TASK
+
+        # Find ai_task subentry
+        ai_task_subentry = None
+        for subentry in self.entry.subentries.values():
+            if subentry.subentry_type == SUBENTRY_TYPE_AI_TASK:
+                ai_task_subentry = subentry
+                break
+
+        if not ai_task_subentry:
+            raise_generic_error(
+                "AI Task not configured. Please add AI Task in xAI integration settings."
+            )
+
+        # Get entity from entity component
+        entity_component = self.hass.data.get("entity_components", {}).get("ai_task")
+        if not entity_component:
+            raise_generic_error("AI Task component not loaded")
+
+        # Find entity by matching entry and subentry
+        for entity in entity_component.entities:
+            if (
+                hasattr(entity, "entry")
+                and entity.entry.entry_id == self.entry.entry_id
+                and hasattr(entity, "subentry")
+                and entity.subentry.subentry_id == ai_task_subentry.subentry_id
+            ):
+                return entity
+
+        raise_generic_error(
+            "AI Task entity not found. Please reload the xAI integration."
+        )
+
+
+# ==============================================================================
 # SERVICE: grok_code_fast
 # ==============================================================================
 
@@ -122,6 +291,7 @@ class GrokCodeFastService:
         self.hass = hass
         self.entry = entry
         self.code_memory = hass.data[DOMAIN]["conversation_memory"]
+        self.gateway = XAIGateway(hass, entry)
 
     async def async_handle(self, call: HA_ServiceCall) -> HA_ServiceResponse:
         """Handle the Grok Code Fast service call.
@@ -144,18 +314,17 @@ class GrokCodeFastService:
                 current_code = request_data.get("code")
                 attachments = request_data.get("attachments", [])
 
-                # Get configuration
-                config = self._get_service_config()
+                # Get configuration via Gateway
+                config = self.gateway.get_service_config("code_fast")
                 store_messages = config["store_messages"]
 
                 # Get subentry data for memory key calculation
+                # We retain this helper as PromptManager might need raw access to subentry fields
                 subentry_data = self._get_code_fast_subentry_data()
 
                 # Calculate conv_key and recover previous_response_id if not provided
                 conv_key = None
                 if user_id:
-                    from .helpers.prompt_manager import PromptManager
-
                     prompt_mgr = PromptManager(subentry_data, mode="code")
                     base_prompt = prompt_mgr.build_base_prompt_with_user_instructions()
                     conv_key = self.code_memory.calculate_conv_key_simple(
@@ -180,129 +349,111 @@ class GrokCodeFastService:
                     f"attachments={len(attachments)}"
                 )
 
-                # Create xAI client using gateway helper
-                api_key = self.entry.data.get("api_key")
-                if not api_key:
+                # Validate API key explicitly
+                if not self.entry.data.get("api_key"):
                     raise_generic_error("xAI API key not configured")
 
-                client = None
-                try:
-                    # Use gateway to create client with proper configuration
-                    client = XAIGateway.create_standalone_client(
-                        api_key=api_key,
-                        timeout=config.get("timeout", RECOMMENDED_TIMEOUT),
-                    )
+                # No standalone client creation needed manually anymore
+                # Gateway handles client caching and creation internally
 
-                    response = None
-                    for attempt in range(2):  # Allow one retry
-                        try:
-                            # Use gateway to create chat with proper configuration
-                            chat = XAIGateway.create_standalone_chat(
-                                client=client,
-                                model=config["model"],
-                                max_tokens=config["max_tokens"],
-                                temperature=config["temperature"],
-                                store_messages=config["store_messages"],
-                                previous_response_id=previous_response_id
-                                if store_messages
-                                else None,
-                            )
-
-                            # Build and send messages
-                            await self._build_and_send_messages(
-                                chat,
-                                user_prompt,
-                                current_code,
-                                attachments,
-                                user_id,
-                                previous_response_id if store_messages else None,
-                                store_messages,
-                                subentry_data,
-                                context_id,
-                            )
-
-                            # Call xAI API, wrapped with the timer
-                            async with timer.record_api_call():
-                                response = await self._call_xai_api(
-                                    chat, config["model"], context_id
-                                )
-
-                            break  # Success, exit loop
-
-                        except _InactiveRpcError as err:
-                            if (
-                                GRPC_AVAILABLE
-                                and err.code() == StatusCode.NOT_FOUND
-                                and attempt == 0
-                            ):
-                                LOGGER.warning(
-                                    f"[Context: {context_id}] Conversation context not found on server. "
-                                    "Clearing local memory and retrying with a new conversation."
-                                )
-                                if user_id:
-                                    await self.code_memory.clear_memory(user_id, "code")
-                                previous_response_id = (
-                                    None  # Ensure next attempt is a fresh start
-                                )
-                                continue  # Retry
-                            raise
-
-                    if response is None:
-                        raise_generic_error(
-                            "Failed to get a response from xAI API after retries."
+                response = None
+                for attempt in range(2):  # Allow one retry
+                    try:
+                        # Use unified create_chat from Gateway
+                        # This automatically handles tools injection (web search) if configured!
+                        chat = self.gateway.create_chat(
+                            service_type="code_fast",
+                            previous_response_id=previous_response_id
+                            if store_messages
+                            else None,
+                            # No client_tools for code_fast
                         )
 
-                    content = getattr(response, "content", "")
-                    response_id = getattr(response, "id", None)
-                    usage = getattr(response, "usage", None)
+                        # Build and send messages
+                        await self._build_and_send_messages(
+                            chat,
+                            user_prompt,
+                            current_code,
+                            attachments,
+                            user_id,
+                            previous_response_id if store_messages else None,
+                            store_messages,
+                            subentry_data,
+                            context_id,
+                        )
 
-                    # Save response metadata
-                    await save_response_metadata(
-                        hass=self.hass,
-                        entry_id=self.entry.entry_id,
-                        usage=usage,
-                        model=config["model"],
-                        service_type="code_fast",
-                    )
-
-                    # Save response_id using conv_key
-                    await self._save_response_id(
-                        conv_key, response_id, store_messages, context_id
-                    )
-
-                    # Parse response
-                    response_text, response_code = self._parse_response(
-                        content, context_id
-                    )
-
-                    # Save to chat history
-                    await self._save_to_chat_history(
-                        user_id, response_text, response_code
-                    )
-
-                    # Fire event for frontend
-                    self._fire_response_event(user_prompt, response_text, response_code)
-
-                    return {
-                        "response_text": response_text,
-                        "response_code": response_code,
-                        "response_id": response_id or "",
-                        "timestamp": datetime.now().isoformat(),
-                    }
-                finally:
-                    if client is not None:
-                        try:
-                            if hasattr(client, "__exit__"):
-                                client.__exit__(None, None, None)
-                                LOGGER.debug(
-                                    f"[Context: {context_id}] xAI client closed successfully"
-                                )
-                        except Exception as close_err:
-                            LOGGER.warning(
-                                f"[Context: {context_id}] Error closing xAI client: %s",
-                                close_err,
+                        # Call xAI API, wrapped with the timer
+                        async with timer.record_api_call():
+                            response = await self._call_xai_api(
+                                chat, config["model"], context_id
                             )
 
+                        break  # Success, exit loop
+
+                    except _InactiveRpcError as err:
+                        # Use centralized handler for NOT_FOUND errors
+                        from .helpers.response import (
+                            handle_response_not_found_error,
+                        )
+
+                        should_retry = await handle_response_not_found_error(
+                            err=err,
+                            attempt=attempt,
+                            memory=self.code_memory,
+                            conv_key=conv_key,
+                            mode="code",
+                            context_id=context_id,
+                        )
+
+                        if should_retry:
+                            previous_response_id = None  # Fresh start
+                            continue  # Retry
+                        raise
+
+                if response is None:
+                    raise_generic_error(
+                        "Failed to get a response from xAI API after retries."
+                    )
+
+                content = getattr(response, "content", "")
+                response_id = getattr(response, "id", None)
+                usage = getattr(response, "usage", None)
+                server_tool_usage = getattr(response, "server_side_tool_usage", None)
+
+                # Save response metadata
+                await save_response_metadata(
+                    hass=self.hass,
+                    entry_id=self.entry.entry_id,
+                    usage=usage,
+                    model=config["model"],
+                    service_type="code_fast",
+                    server_side_tool_usage=server_tool_usage,
+                )
+
+                # Save response_id using conv_key
+                await self._save_response_id(
+                    conv_key, response_id, store_messages, context_id
+                )
+
+                # Parse response
+                response_text, response_code = self._parse_response(
+                    content, context_id
+                )
+
+                # Save to chat history
+                await self._save_to_chat_history(
+                    user_id, response_text, response_code
+                )
+
+                # Fire event for frontend
+                self._fire_response_event(user_prompt, response_text, response_code)
+
+                return {
+                    "response_text": response_text,
+                    "response_code": response_code,
+                    "response_id": response_id or "",
+                    "timestamp": datetime.now().isoformat(),
+                }
             except Exception as err:
                 LOGGER.error(
                     f"[Context: {context_id}] Error in Grok Code Fast service: %s",
@@ -335,21 +486,6 @@ class GrokCodeFastService:
         request_data["prompt"] = user_prompt
         return request_data
 
-    def _get_service_config(self) -> dict:
-        """Get code_task subentry configuration."""
-        for subentry in self.entry.subentries.values():
-            if subentry.subentry_type == SUBENTRY_TYPE_CODE_TASK:
-                return {
-                    "model": subentry.data.get(CONF_CHAT_MODEL, "grok-code-fast-1"),
-                    "temperature": float(subentry.data.get(CONF_TEMPERATURE, 0.1)),
-                    "max_tokens": int(subentry.data.get(CONF_MAX_TOKENS, 4000)),
-                    "store_messages": bool(
-                        subentry.data.get(CONF_STORE_MESSAGES, True)
-                    ),
-                }
-        raise_generic_error(
-            "No code_task configuration found. Please configure Grok Code Fast in xAI integration settings."
-        )
 
     def _get_code_fast_subentry_data(self) -> dict:
         """Get code_fast subentry data for PromptManager.
@@ -377,12 +513,9 @@ class GrokCodeFastService:
         context_id: str,
     ) -> None:
         """Build system/user messages and append to chat."""
-        config = self._get_service_config()
 
         # Add system prompt (only on first message in server-side mode)
         if not previous_response_id:
-            from .helpers import PromptManager
-
             prompt_mgr = PromptManager(subentry_data, mode="code")
             base_prompt = prompt_mgr.build_base_prompt_with_user_instructions()
             chat.append(XAIGateway.system_msg(base_prompt))
@@ -860,75 +993,34 @@ class ResetTokenStatsService:
 
     async def async_handle(self, call: HA_ServiceCall) -> HA_ServiceResponse:
         """Handle the reset_token_stats service call."""
-        config_entries = self.hass.config_entries.async_entries(DOMAIN)
+        # V2: Use new TokenStats class
+        storage = self.hass.data.get(DOMAIN, {}).get("token_stats")
 
-        if not config_entries:
-            raise_validation_error("No xAI Conversation integration entries found")
+        if not storage:
+            raise_generic_error("Token storage not initialized")
 
-        sensors_reset_count = 0
-        sensors_to_reset = []
+        try:
+            # Reset all data in storage.
+            # The storage will notify all registered sensors (listeners) to update.
+            await storage.reset_stats()
 
-        for entry in config_entries:
-            sensors = self.hass.data.get(DOMAIN, {}).get(f"{entry.entry_id}_sensors")
-            if not sensors:
-                LOGGER.debug(
-                    "reset_token_stats: no sensors found for entry %s", entry.entry_id
-                )
-                continue
-
-            # Collect all resettable sensors first
-            sensors_to_reset.extend(
-                [s for s in sensors if isinstance(s, XAITokenSensorBase)]
+            LOGGER.info(
+                "reset_token_stats: Successfully reset all token statistics via storage."
             )
 
-        if not sensors_to_reset:
-            LOGGER.warning("reset_token_stats: no token sensors found to reset")
             return {
                 "status": "ok",
-                "sensors_reset": 0,
-                "message": "No token sensors found",
+                "message": "Successfully reset all token statistics",
             }
 
-        # Step 1: Reset all sensors in memory without saving
-        for sensor in sensors_to_reset:
-            try:
-                sensor.reset_statistics(skip_save=True)
-                LOGGER.debug(
-                    "reset_token_stats: reset sensor %s in memory", sensor.entity_id
-                )
-                sensors_reset_count += 1
-            except Exception as err:
-                LOGGER.error(
-                    "reset_token_stats: failed to reset sensor %s in memory: %s",
-                    getattr(sensor, "entity_id", "unknown"),
-                    err,
-                )
-
-        # Step 2: Save the reset state to storage ONCE using the first sensor
-        try:
-            # This sensor's in-memory state is now reset, so saving it will clear storage
-            await sensors_to_reset[0]._async_save_to_storage()
-            LOGGER.info(
-                "reset_token_stats: successfully reset %d sensors and saved state to storage.",
-                sensors_reset_count,
-            )
         except Exception as err:
             LOGGER.error(
-                "reset_token_stats: failed to save final reset state to storage: %s",
-                err,
+                "reset_token_stats: failed to clear storage: %s", err, exc_info=True
             )
-            # Still return a partial success message
             return {
-                "status": "partial_error",
-                "sensors_reset": sensors_reset_count,
-                "message": f"Successfully reset {sensors_reset_count} sensors in memory, but failed to save state to storage.",
+                "status": "error",
+                "message": f"Failed to reset token stats: {err}",
             }
-
-        return {
-            "status": "ok",
-            "sensors_reset": sensors_reset_count,
-            "message": f"Successfully reset {sensors_reset_count} token sensors",
-        }
 
 
 # ==============================================================================
@@ -958,261 +1050,33 @@ class ReloadPricingService:
         Returns:
             Service response with status and message
         """
-        LOGGER.info("reload_pricing service called - forcing pricing update")
+        LOGGER.info(
+            "reload_pricing service called - forcing model and pricing update from API"
+        )
 
         try:
-            # Call the existing periodic update function which does all the work
-            await async_update_pricing_sensors_periodically(self.hass, self.entry)
+            # Get ModelManager
+            model_manager = self.hass.data.get(DOMAIN, {}).get("model_manager")
+            if not model_manager:
+                return {"status": "error", "message": "XAIModelManager not available"}
+
+            # Get API Key
+            api_key = self.entry.data.get("api_key")
+            if not api_key:
+                return {"status": "error", "message": "API Key not configured"}
+
+            # Force update via manager (fetches from API, updates hass.data and TokenStats)
+            await model_manager.async_update_models(api_key)
+
+            # Check updated data count
+            xai_data = self.hass.data.get(DOMAIN, {}).get("xai_models_data", {})
+            model_count = len(xai_data)
 
             return {
                 "status": "ok",
-                "message": "Pricing data refreshed successfully from xAI API",
+                "message": f"Successfully refreshed data for {model_count} models from xAI API",
             }
 
         except Exception as err:
             LOGGER.error("Failed to reload pricing data: %s", err, exc_info=True)
             return {"status": "error", "message": f"Failed to reload pricing: {err}"}
-
-
-class DismissNewModelsService:
-    """Service handler for dismiss_new_models - Manually dismiss new models notification."""
-
-    def __init__(self, hass: HA_HomeAssistant, entry: HA_ConfigEntry):
-        self.hass = hass
-        self.entry = entry
-
-    async def async_handle(self, call: HA_ServiceCall) -> HA_ServiceResponse:
-        """Handle the dismiss_new_models service call."""
-        LOGGER.info("dismiss_new_models service called")
-
-        # Find the new models detector sensor
-        from .sensor import XAINewModelsDetectorSensor
-
-        sensors = self.hass.data.get(DOMAIN, {}).get(
-            f"{self.entry.entry_id}_sensors", []
-        )
-
-        detector_sensor = None
-        for sensor in sensors:
-            if isinstance(sensor, XAINewModelsDetectorSensor):
-                detector_sensor = sensor
-                break
-
-        if not detector_sensor:
-            LOGGER.warning("New models detector sensor not found")
-            return {
-                "status": "error",
-                "message": "New models detector sensor not found",
-            }
-
-        detector_sensor.dismiss_new_models()
-        return {
-            "status": "ok",
-            "message": "New models notification dismissed successfully",
-        }
-
-
-# ==============================================================================
-# SERVICE: photo_analysis
-# ==============================================================================
-
-
-class PhotoAnalysisService:
-    """Service handler for photo_analysis - Analyze images using Grok Vision."""
-
-    def __init__(self, hass: HA_HomeAssistant, entry: HA_ConfigEntry):
-        """Initialize the service.
-
-        Args:
-            hass: Home Assistant instance
-            entry: Config entry for xAI Conversation
-        """
-        self.hass = hass
-        self.entry = entry
-
-    async def async_handle(self, call: HA_ServiceCall) -> HA_ServiceResponse:
-        """Handle the photo_analysis service call.
-
-        Args:
-            call: Service call with prompt, images, and optional user_id
-
-        Returns:
-            Service response with analysis text and metadata
-        """
-        start_time = time.time()
-        context_id = call.context.id
-        LOGGER.debug(f"[Context: {context_id}] Service 'photo_analysis' called")
-
-        try:
-            # Parse request data
-            prompt = call.data.get("prompt", "").strip()
-            if not prompt:
-                raise_validation_error("Prompt is required for photo analysis")
-
-            # Get images from multiple sources
-            images = call.data.get("images", [])
-            if isinstance(images, str):
-                images = [images]  # Single image string to list
-
-            # Get attachments if provided (from HA automation context)
-            attachments = call.data.get("attachments")
-
-            # Validate at least one image source
-            if not images and not attachments:
-                raise_validation_error(
-                    "At least one image (path/URL or attachment) is required"
-                )
-
-            LOGGER.debug(
-                f"[Context: {context_id}] Request data: "
-                f"prompt_length={len(prompt)}, images={len(images)}, "
-                f"has_attachments={bool(attachments)}"
-            )
-
-            # Get AI Task entity (uses its config for vision_model, temperature, etc.)
-            ai_task_entity = self._get_ai_task_entity()
-
-            # Call entity method for photo analysis
-            analysis_text = await ai_task_entity.analyze_photo(
-                prompt=prompt,
-                images=images if images else None,
-                attachments=attachments,
-            )
-
-            elapsed = time.time() - start_time
-            LOGGER.info(
-                "photo_analysis_end: total_duration=%.2fs images=%d",
-                elapsed,
-                len(images) + (len(attachments) if attachments else 0),
-            )
-
-            return {
-                "analysis": analysis_text,
-                "timestamp": datetime.now().isoformat(),
-                "status": "ok",
-            }
-
-        except Exception as err:
-            LOGGER.error(
-                f"[Context: {context_id}] Error in photo analysis service: %s",
-                err,
-                exc_info=True,
-            )
-            return {"status": "error", "error": str(err)}
-
-    def _get_ai_task_entity(self):
-        """Get AI Task entity to access gateway and config."""
-        from .const import SUBENTRY_TYPE_AI_TASK
-
-        # Find ai_task subentry
-        ai_task_subentry = None
-        for subentry in self.entry.subentries.values():
-            if subentry.subentry_type == SUBENTRY_TYPE_AI_TASK:
-                ai_task_subentry = subentry
-                break
-
-        if not ai_task_subentry:
-            raise_generic_error(
-                "AI Task not configured. Please add AI Task in xAI integration settings."
-            )
-
-        # Get entity from entity component
-        entity_component = self.hass.data.get("entity_components", {}).get("ai_task")
-        if not entity_component:
-            raise_generic_error("AI Task component not loaded")
-
-        # Find entity by matching entry and subentry
-        for entity in entity_component.entities:
-            if (
-                hasattr(entity, "entry")
-                and entity.entry.entry_id == self.entry.entry_id
-                and hasattr(entity, "subentry")
-                and entity.subentry.subentry_id == ai_task_subentry.subentry_id
-            ):
-                return entity
-
-        raise_generic_error(
-            "AI Task entity not found. Please reload the xAI integration."
-        )
-
-
-# ==============================================================================
-# HELPER: Service Registration
-# ==============================================================================
-
-
-def register_services(hass: HA_HomeAssistant, entry: HA_ConfigEntry) -> None:
-    """Register all xAI services.
-
-    Args:
-        hass: Home Assistant instance
-        entry: Config entry for xAI Conversation
-    """
-    # Initialize service handlers
-    grok_code_fast = GrokCodeFastService(hass, entry)
-    clear_memory = ClearMemoryService(hass)
-    clear_code_memory = ClearCodeMemoryService(hass)
-    sync_chat_history = SyncChatHistoryService(hass)
-    reset_token_stats = ResetTokenStatsService(hass)
-    reload_pricing = ReloadPricingService(hass, entry)
-    dismiss_new_models = DismissNewModelsService(hass, entry)
-    photo_analysis = PhotoAnalysisService(hass, entry)
-
-    # Register services
-    hass.services.async_register(
-        DOMAIN,
-        "grok_code_fast",
-        grok_code_fast.async_handle,
-        supports_response=SupportsResponse.ONLY,
-    )
-
-    hass.services.async_register(
-        DOMAIN,
-        "clear_memory",
-        clear_memory.async_handle,
-        supports_response=SupportsResponse.OPTIONAL,
-    )
-
-    hass.services.async_register(
-        DOMAIN,
-        "clear_code_memory",
-        clear_code_memory.async_handle,
-        supports_response=SupportsResponse.OPTIONAL,
-    )
-
-    hass.services.async_register(
-        DOMAIN,
-        "sync_chat_history",
-        sync_chat_history.async_handle,
-        supports_response=SupportsResponse.ONLY,
-    )
-
-    hass.services.async_register(
-        DOMAIN,
-        "reset_token_stats",
-        reset_token_stats.async_handle,
-        supports_response=SupportsResponse.OPTIONAL,
-    )
-
-    hass.services.async_register(
-        DOMAIN,
-        "reload_pricing",
-        reload_pricing.async_handle,
-        supports_response=SupportsResponse.OPTIONAL,
-    )
-
-    hass.services.async_register(
-        DOMAIN,
-        "dismiss_new_models",
-        dismiss_new_models.async_handle,
-        supports_response=SupportsResponse.OPTIONAL,
-    )
-
-    hass.services.async_register(
-        DOMAIN,
-        "photo_analysis",
-        photo_analysis.async_handle,
-        supports_response=SupportsResponse.ONLY,
-    )
-
-    LOGGER.debug("All xAI services registered successfully")

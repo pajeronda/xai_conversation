@@ -74,6 +74,7 @@
             "live_search": "实时搜索模式",
             "store_messages": "存储消息",
             "send_user_name": "在消息中包含用户名",
+            "show_citations": "在聊天中显示引用",
             "reasoning_effort": "推理级别"
           },
           "data_description": {
@@ -88,6 +89,7 @@
             "allow_smart_home_control": "如果启用，助手可以执行智能家居命令。如果禁用，仅以对话方式响应。更改此设置将开始新对话。",
             "store_messages": "使用 xAI 的服务器端内存，以减少每个请求需要发送的令牌。内存参数（持续时间、轮次数）在集成级别配置。",
             "send_user_name": "将 Home Assistant 用户名或 Assist 语音设备名称添加到与 Grok 的聊天中。",
+            "show_citations": "将搜索引用添加到聊天响应。对 UI/聊天界面有用，但对语音助手可能会很嘈杂。默认：关闭（建议用于语音）。",
             "live_search": "启用网络搜索功能：'off'（禁用）、'auto'（模型决定）、'on'（始终启用）。适用于管道和工具模式。",
             "prompt": "代理的自定义指令（仅工具模式）。",
             "reasoning_effort": "支持此功能的模型的推理级别（低、中、高、最大）。仅适用于 grok-4 和 grok-4-fast 模型。"
@@ -108,11 +110,18 @@
         "init": {
           "title": "xAI 令牌传感器",
           "data": {
-            "name": "名称"
+            "name": "名称",
+            "tokens_per_million": "每百万令牌",
+            "xai_pricing_conversion_factor": "xAI 价格转换系数",
+            "pricing_update_interval_hours": "价格更新间隔（小时）",
+            "cost_per_tool_call": "工具调用成本 (USD)"
           },
           "data_description": {
             "name": "令牌传感器的描述性名称。",
-            "model_pricing_override": "这些字段允许您覆盖每个模型动态获取的官方令牌价格（输入、缓存输入、输出）。保留默认值以使用官方价格。"
+            "tokens_per_million": "令牌价格计算的除数。默认：1,000,000。",
+            "xai_pricing_conversion_factor": "xAI API 返回需要转换为每百万令牌 USD 的价格单位。默认：10,000。",
+            "pricing_update_interval_hours": "从 xAI API 获取更新价格的频率。默认：48 小时。",
+            "cost_per_tool_call": "服务器端工具调用的默认成本（如果工具不在价格表中则用作后备）。大多数工具成本为 $5.00/1k 次调用 = 0.005，Collections Search 成本为 $2.50/1k = 0.0025。默认：0.005。"
           }
         }
       },

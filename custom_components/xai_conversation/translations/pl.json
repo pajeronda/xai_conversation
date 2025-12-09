@@ -75,6 +75,7 @@
             "store_messages": "Przechowuj wiadomości",
             "assistant_name": "Nazwa asystenta",
             "send_user_name": "Dołącz nazwę użytkownika w wiadomościach",
+            "show_citations": "Pokaż cytaty w czacie",
             "reasoning_effort": "Poziom rozumowania"
           },
           "data_description": {
@@ -90,6 +91,7 @@
             "store_messages": "Użyj pamięci po stronie serwera xAI, aby zmniejszyć liczbę tokenów do wysłania w każdym żądaniu. Parametry pamięci (czas trwania, liczba tur) są konfigurowane na poziomie integracji.",
             "assistant_name": "Nazwa, którą asystent będzie używał do identyfikacji (np. 'Jarvis', 'Alexa', 'HAL'). Zmiana tej wartości rozpocznie nową konwersację, a poprzednia historia nie będzie już dostępna.",
             "send_user_name": "Dołącz nazwę użytkownika Home Assistant lub nazwę urządzenia Assist voice do czatu z Grok.",
+            "show_citations": "Dołącz cytaty wyszukiwania do odpowiedzi czatu. Przydatne dla interfejsów UI/czatu, ale może być głośne dla asystentów głosowych. Domyślnie: WYŁ. (zalecane dla głosu).",
             "live_search": "Włącz możliwości wyszukiwania w sieci: 'off' (wyłączone), 'auto' (model decyduje), 'on' (zawsze włączone). Dotyczy zarówno trybu potoku, jak i narzędzi.",
             "prompt": "Niestandardowe instrukcje dla agenta (tylko tryb narzędzi).",
             "reasoning_effort": "Poziom wysiłku rozumowania dla modeli, które to obsługują (niski, średni, wysoki, maksymalny). Dostępne tylko dla modeli grok-4 i grok-4-fast."
@@ -110,11 +112,18 @@
         "init": {
           "title": "Czujniki tokenów xAI",
           "data": {
-            "name": "Nazwa"
+            "name": "Nazwa",
+            "tokens_per_million": "Tokeny na milion",
+            "xai_pricing_conversion_factor": "Współczynnik konwersji cen xAI",
+            "pricing_update_interval_hours": "Interwał aktualizacji cen (godziny)",
+            "cost_per_tool_call": "Koszt wywołania narzędzia (USD)"
           },
           "data_description": {
             "name": "Opisowa nazwa czujników tokenów.",
-            "model_pricing_override": "Pola te umożliwiają nadpisanie oficjalnych cen tokenów (wejściowych, buforowanych wejściowych, wyjściowych) pobieranych dynamicznie dla każdego modelu. Pozostaw wartość domyślną, aby użyć oficjalnych cen."
+            "tokens_per_million": "Współczynnik podziału dla obliczeń cen tokenów. Domyślnie: 1 000 000.",
+            "xai_pricing_conversion_factor": "API xAI zwraca ceny w jednostkach wymagających konwersji na USD za milion tokenów. Domyślnie: 10 000.",
+            "pricing_update_interval_hours": "Jak często pobierać zaktualizowane ceny z API xAI. Domyślnie: 48 godzin.",
+            "cost_per_tool_call": "Domyślny koszt wywołania narzędzia po stronie serwera (używany jako wartość rezerwowa, jeśli narzędzie nie jest na mapie cen). Większość narzędzi kosztuje $5.00/1k wywołań = 0.005, Collections Search kosztuje $2.50/1k = 0.0025. Domyślnie: 0.005."
           }
         }
       },

@@ -72,6 +72,7 @@ class ConversationMemory:
         self._store = Store(hass, 1, storage_path)
         self._memory: dict = {}
         self._loaded = False
+        self._dirty = False
 
     async def _ensure_loaded(self):
         """Ensure memory is loaded from storage."""
@@ -89,6 +90,18 @@ class ConversationMemory:
             LOGGER.warning("Failed to load conversation memory: %s", err)
             self._memory = {}
             self._loaded = True
+
+    async def async_flush(self):
+        """Flush pending changes to disk."""
+        if not self._dirty:
+            return
+
+        try:
+            await self._store.async_save(self._memory)
+            self._dirty = False
+            LOGGER.debug("Conversation memory flushed to disk")
+        except Exception as err:
+            LOGGER.error("Failed to save conversation memory: %s", err)
 
     async def save_response_id(
         self,
@@ -124,12 +137,7 @@ class ConversationMemory:
             response_entry["store_messages"] = store_messages
 
         self._memory[conv_key]["responses"].append(response_entry)
-
-        # Save to disk
-        try:
-            await self._store.async_save(self._memory)
-        except Exception as err:
-            LOGGER.error("Failed to save conversation memory: %s", err)
+        self._dirty = True
 
     def _get_memory_params(self, conv_key: str) -> tuple[float, int]:
         """Get TTL and max_turns based on conv_key (device vs user).
@@ -287,7 +295,7 @@ class ConversationMemory:
                 if stored_mode is None:
                     # Old format (before this fix) - assume server-side (True)
                     # This provides backward compatibility with existing response_ids
-                    return current_store_messages == True
+                    return current_store_messages
 
                 # Check if modes match
                 return stored_mode == current_store_messages
@@ -313,8 +321,7 @@ class ConversationMemory:
         self._memory[conv_key]["responses"].append(
             {"id": response_id, "timestamp": time.time()}
         )
-
-        await self._store.async_save(self._memory)
+        self._dirty = True
 
     async def clear_memory(self, user_id: str, mode: str) -> list[str]:
         """Clear memory for specific user and mode (all keys matching prefix).
@@ -350,11 +357,8 @@ class ConversationMemory:
             for key in keys_to_delete:
                 del self._memory[key]
 
-            # Save to disk
-            try:
-                await self._store.async_save(self._memory)
-            except Exception as err:
-                LOGGER.error("Failed to save conversation memory after clear: %s", err)
+            self._dirty = True
+            await self.async_flush()
 
         return response_ids
 
@@ -396,11 +400,8 @@ class ConversationMemory:
             for key in keys_to_delete:
                 del self._memory[key]
 
-            # Save to disk
-            try:
-                await self._store.async_save(self._memory)
-            except Exception as err:
-                LOGGER.error("Failed to save conversation memory after clear: %s", err)
+            self._dirty = True
+            await self.async_flush()
 
         return response_ids
 
@@ -422,12 +423,8 @@ class ConversationMemory:
 
         # Clear all entries
         self._memory.clear()
-
-        # Save to disk
-        try:
-            await self._store.async_save(self._memory)
-        except Exception as err:
-            LOGGER.error("Failed to save conversation memory after clear: %s", err)
+        self._dirty = True
+        await self.async_flush()
 
         return response_ids
 
@@ -569,6 +566,7 @@ class ConversationMemory:
             await self._store.async_remove()
             self._memory.clear()
             self._loaded = False
+            self._dirty = False
             LOGGER.info("Memory storage file physically deleted")
         except Exception as err:
             LOGGER.error(f"Failed to physically delete memory storage file: {err}")
@@ -599,7 +597,7 @@ class ConversationMemory:
             )
             stats = await self.async_cleanup_expired()
             if stats["keys_removed"] > 0 or stats["keys_cleaned"] > 0:
-                LOGGER.info(
+                LOGGER.debug(
                     "Memory cleanup: cleaned %d keys, removed %d keys, deleted %d responses",
                     stats["keys_cleaned"],
                     stats["keys_removed"],
@@ -666,7 +664,7 @@ class ConversationMemory:
                 # Some responses expired, update entry
                 memory_entry["responses"] = valid_responses
                 self._memory[conv_key] = memory_entry
-                responses_removed += len(responses) - len(valid_responses)
+                responses_removed += len(responses)
                 keys_cleaned += 1
 
         # Delete empty keys
@@ -675,16 +673,14 @@ class ConversationMemory:
 
         # Save if anything changed
         if keys_cleaned > 0 or keys_removed > 0:
-            try:
-                await self._store.async_save(self._memory)
-                LOGGER.info(
-                    "Memory cleanup completed: %d keys cleaned, %d keys removed, %d responses removed",
-                    keys_cleaned,
-                    keys_removed,
-                    responses_removed,
-                )
-            except Exception as err:
-                LOGGER.error("Failed to save memory after cleanup: %s", err)
+            self._dirty = True
+            await self.async_flush()
+            LOGGER.debug(
+                "Memory cleanup completed: %d keys cleaned, %d keys removed, %d responses removed",
+                keys_cleaned,
+                keys_removed,
+                responses_removed,
+            )
 
         return {
             "keys_cleaned": keys_cleaned,

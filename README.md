@@ -1,7 +1,7 @@
 <div align="center">
   <h1>xAI Conversation</h1>
 
-  <img src="images/logo.svg" alt="xAI Grok Conversation Logo" width="300">
+  <img src="images/logo.png" alt="xAI Grok Conversation Logo" width="300">
   
   <b>A custom Home Assistant integration that brings xAI Grok AI to your smart home.</b>
 
@@ -182,30 +182,39 @@ data:
 
 ## Supported Models
 
-| Model | Recommended Use | Notes |
-|---------|------------------|------|
-| `grok-4` | Complex reasoning | Slower, more accurate and expensive |
-| `grok-4-fast` | Complex reasoning | Balanced speed/quality/cost |
-| `grok-4-fast-non-reasoning` | Great for Home Assistant | Fast, economical |
-| `grok-3` | Complex reasoning | Slower and more expensive |
-| `grok-3-mini` | Great for Home Assistant | Balanced speed/cost |
-| `grok-code-fast-1` | Code generation | Optimized for YAML/Python/Jinja2 |
-| `grok-2-image` | Image generation | Optimized for images |
+The integration **automatically retrieves all available models** from xAI, including their pricing and capabilities. All model information is exposed through dedicated sensors for real-time monitoring.
+
+**Recommended models by service type:**
+
+- **Conversation Agent**: `grok-4-1-fast-non-reasoning` (fast, economical, optimized for Home Assistant)
+- **Grok Code Fast**: `grok-code-fast-1` (optimized for YAML/Python/Jinja2 code generation)
+- **AI Task**: `grok-code-fast-1` (optimized for structured responses and automations)
+- **Image Generation**: `grok-2-image-1212` (Aurora - automatic when using image generation)
+- **Photo Analysis**: `grok-2-vision-1212` (optimized for image analysis)
+
+> **Note:** When xAI releases new models, they are automatically detected and made available in the configuration options.
 
 
-## Pricing and Tokens for Default Models
+## Pricing and Token Monitoring
 
-The integration automatically tracks costs based on xAI pricing (per 1M tokens) updated as of 10/15/2025:
+The integration **automatically retrieves real-time pricing** from the xAI API and exposes it through dedicated sensors.
 
-| Model | Input | Cached Input | Output |
-|---------|-------|--------------|--------|
-| grok-4-fast-non-reasoning (default) | $0.50 | $0.05 | $1.50 |
-| grok-code-fast-1 (default) | $0.20 | $0.02 | $1.50 |
+**Available aggregate sensors:**
+- **Total tokens**: Overall token consumption across all services
+- **Average tokens per message**: Average token usage per interaction
+- **Estimated cost**: Real-time cost estimation based on current pricing
+- **Cache ratio per service**: Cache hit percentage for Conversation, AI Task, and Code Fast
+- **Last tokens per service**: Most recent token usage for each service (Conversation, AI Task, Code Fast)
+- **Server tool invocations**: Count of xAI agent tools usage (web_search, code_execution, etc.)
+- **Stats reset timestamp**: Last statistics reset time
 
-Available sensors:
-- **Token and Cost Sensors**: Total tokens, estimated cost, cache ratio, and last tokens for each service (Conversation, AI Task, Code Fast)
-- **Model Pricing Sensors**: Real-time pricing (input, cached input, output) for all 10 supported models
-- **New Models Detection**: Automatically detects when xAI releases new models and makes them available in configuration options
+**Model pricing sensors:**
+Real-time pricing (input, cached input, output) for all available models, automatically updated from xAI API.
+
+**New models detection:**
+Automatically detects when xAI releases new models and makes them available in configuration options.
+
+All pricing information is fetched dynamically from xAI and kept up-to-date automatically.
 
 ## Troubleshooting
 

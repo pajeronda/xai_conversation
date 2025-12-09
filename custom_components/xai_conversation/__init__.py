@@ -4,52 +4,46 @@ from __future__ import annotations
 
 # Standard library imports
 import asyncio
-import importlib
 import shutil
-import time
+from datetime import timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING
-
-# Third-party imports
-import voluptuous as vol
 
 # Home Assistant imports
-from homeassistant.components import (
-    ai_task as ha_ai_task,
-    conversation as ha_conversation,
-)
-from homeassistant.config_entries import (
-    ConfigEntry,
-    ConfigEntryState,
-)
-from homeassistant.const import CONF_API_KEY, Platform
-from homeassistant.core import HomeAssistant as HA_HomeAssistant
+from homeassistant.config_entries import ConfigEntry
+
+from homeassistant.const import CONF_API_KEY, EVENT_HOMEASSISTANT_STARTED, EVENT_HOMEASSISTANT_STOP, Platform
+from homeassistant.core import HomeAssistant as HA_HomeAssistant, Event
 from homeassistant.helpers import (
     config_validation as cv,
     entity_registry as ha_entity_registry,
     restore_state,
 )
+from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.typing import ConfigType
 
 # Local application imports
-from .exceptions import (
-    HA_ConfigEntryNotReady,
-    HA_HomeAssistantError,
-    ServiceValidationError,
-    raise_config_not_ready,
-    raise_generic_error,
-    raise_validation_error,
-)
-from .sensor import async_update_pricing_sensors_periodically
-
 from .const import (
     CONF_MEMORY_CLEANUP_INTERVAL_HOURS,
+    CONF_PRICING_UPDATE_INTERVAL_HOURS,
     DEFAULT_CONVERSATION_NAME,
     DOMAIN,
     LOGGER,
+    MEMORY_FLUSH_INTERVAL_MINUTES,
     RECOMMENDED_MEMORY_CLEANUP_INTERVAL_HOURS,
+    RECOMMENDED_PRICING_UPDATE_INTERVAL_HOURS,
 )
 
+# Public helper functions - re-exported from helpers module
+from .helpers import (
+    ConversationMemory,
+    ChatHistoryService,
+    TokenStats,
+    XAIModelManager,
+    migrate_subentry_types,
+    ensure_memory_params_in_entry_data,
+    add_subentries_if_needed,
+)
+from .services import register_services
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 PLATFORMS = (
@@ -59,41 +53,7 @@ PLATFORMS = (
 )
 
 
-def _import_platforms() -> None:
-    """Pre-import platforms to avoid blocking imports in event loop."""
-    for platform in PLATFORMS:
-        try:
-            # Handle both Platform enums and string platform names
-            platform_name = platform.value if hasattr(platform, "value") else platform
-            importlib.import_module(f".{platform_name}", __name__)
-            LOGGER.debug("Pre-imported platform: %s", platform_name)
-        except ImportError as err:
-            platform_name = platform.value if hasattr(platform, "value") else platform
-            LOGGER.warning("Failed to pre-import platform %s: %s", platform_name, err)
-
-
-type XAIConfigEntry = ConfigEntry[None]
-
-
-# Public helper functions - re-exported from helpers module
-from .helpers import (
-    format_tools_for_xai,
-    convert_xai_to_ha_tool,
-    get_last_user_message,
-    extract_user_id,
-    extract_device_id,
-    PromptManager,
-    ConversationMemory,
-    ChatHistoryService,
-    TokenStatsStorage,
-    XAIModelManager,
-    XAIGateway,
-    migrate_subentry_types,
-    ensure_memory_params_in_entry_data,
-    add_subentries_if_needed,
-    async_migrate_entry,
-)
-from .services import register_services
+type XAIConfigEntry = ConfigEntry
 
 
 async def async_setup(hass: HA_HomeAssistant, config: ConfigType) -> bool:
@@ -103,26 +63,62 @@ async def async_setup(hass: HA_HomeAssistant, config: ConfigType) -> bool:
 
 async def async_setup_entry(hass: HA_HomeAssistant, entry: XAIConfigEntry) -> bool:
     """Set up xAI Conversation from a config entry."""
-    # Fetch dynamic model data using the centralized manager
-    # Note: The manager automatically populates SUPPORTED_MODELS and REASONING_EFFORT_MODELS
-    model_manager = XAIModelManager(hass)
-    xai_models_data = await model_manager.async_get_models_data(
-        entry.data[CONF_API_KEY]
-    )
-
-    if not xai_models_data:
-        LOGGER.error("Failed to fetch xAI model data. Aborting setup.")
-        raise HA_ConfigEntryNotReady("Failed to fetch xAI model data.")
-
-    # Initialize hass.data for global access
+    # Initialize hass.data for global access early
     if DOMAIN not in hass.data:
         hass.data[DOMAIN] = {}
 
-    hass.data[DOMAIN]["xai_models_data"] = xai_models_data
-    hass.data[DOMAIN]["xai_models_data_timestamp"] = time.time()
-    LOGGER.debug(
-        "Fetched and stored xAI model data for %d models.", len(xai_models_data)
+    # Initialize placeholder for models data
+    if "xai_models_data" not in hass.data[DOMAIN]:
+        hass.data[DOMAIN]["xai_models_data"] = {}
+        hass.data[DOMAIN]["xai_models_data_timestamp"] = 0
+
+    # Create global storage instances for shared access EARLY
+    # TokenStats must exist before ModelManager.async_update_models is called
+    folder_name = DEFAULT_CONVERSATION_NAME.lower().replace(" ", "_")
+    memory_path = f"{folder_name}/{DOMAIN}.memory"
+    chat_history_path = f"{folder_name}/{DOMAIN}.chat_history"
+    token_stats_path = f"{folder_name}/{DOMAIN}.token_stats"
+
+    hass.data[DOMAIN]["conversation_memory"] = ConversationMemory(
+        hass, memory_path, entry
     )
+    hass.data[DOMAIN]["chat_history"] = ChatHistoryService(
+        hass, chat_history_path, entry
+    )
+    # V2: Use new TokenStats class (simplified architecture)
+    hass.data[DOMAIN]["token_stats"] = TokenStats(hass, token_stats_path, entry)
+    LOGGER.debug("Created global ConversationMemory instance at %s", memory_path)
+    LOGGER.debug("Created global ChatHistoryService instance at %s", chat_history_path)
+    LOGGER.debug("Created global TokenStats instance at %s", token_stats_path)
+
+    # Initialize Model Manager (after TokenStats is available)
+    model_manager = XAIModelManager(hass)
+    hass.data[DOMAIN]["model_manager"] = model_manager
+
+    # Perform initial model fetch BEFORE platform setup
+    # This ensures xai_models_data is populated when sensors are created
+    try:
+        await model_manager.async_update_models(entry.data[CONF_API_KEY])
+        LOGGER.debug("Initial xAI model data fetch completed")
+    except Exception as err:
+        LOGGER.warning("Initial xAI model fetch failed (will retry after startup): %s", err)
+
+    # Define startup handler for retry and periodic updates
+    async def async_initial_update(event: Event) -> None:
+        """Retry model data fetch when Home Assistant is fully started."""
+        # Only retry if initial fetch failed (no models data)
+        if not hass.data[DOMAIN].get("xai_models_data"):
+            LOGGER.debug(
+                "Home Assistant started, retrying xAI model data fetch..."
+            )
+            try:
+                await model_manager.async_update_models(entry.data[CONF_API_KEY])
+            except Exception as err:
+                LOGGER.error("Failed to fetch xAI model data: %s", err)
+
+    # Register startup listener for retry
+    # Note: async_listen_once auto-removes the listener after firing, no manual cleanup needed
+    hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, async_initial_update)
 
     # Migrate old subentry_type values to new format (one-time migration)
     # MUST run BEFORE add_subentries_if_needed to avoid conflicts
@@ -141,28 +137,6 @@ async def async_setup_entry(hass: HA_HomeAssistant, entry: XAIConfigEntry) -> bo
         )
     )
 
-    # Pre-import platforms to avoid blocking imports in event loop
-    await hass.async_add_executor_job(_import_platforms)
-
-    # Create global storage instances for shared access
-    folder_name = DEFAULT_CONVERSATION_NAME.lower().replace(" ", "_")
-    memory_path = f"{folder_name}/{DOMAIN}.memory"
-    chat_history_path = f"{folder_name}/{DOMAIN}.chat_history"
-    token_stats_path = f"{folder_name}/{DOMAIN}.token_stats"
-
-    hass.data[DOMAIN]["conversation_memory"] = ConversationMemory(
-        hass, memory_path, entry
-    )
-    hass.data[DOMAIN]["chat_history"] = ChatHistoryService(
-        hass, chat_history_path, entry
-    )
-    hass.data[DOMAIN]["token_stats_storage"] = TokenStatsStorage(
-        hass, token_stats_path, entry
-    )
-    LOGGER.debug("Created global ConversationMemory instance at %s", memory_path)
-    LOGGER.debug("Created global ChatHistoryService instance at %s", chat_history_path)
-    LOGGER.debug("Created global TokenStatsStorage instance at %s", token_stats_path)
-
     # Set up periodic cleanup task for ConversationMemory
     cleanup_interval_hours = entry.data.get(
         CONF_MEMORY_CLEANUP_INTERVAL_HOURS, RECOMMENDED_MEMORY_CLEANUP_INTERVAL_HOURS
@@ -171,45 +145,75 @@ async def async_setup_entry(hass: HA_HomeAssistant, entry: XAIConfigEntry) -> bo
     cleanup_unsub = memory.setup_periodic_cleanup(cleanup_interval_hours)
     entry.async_on_unload(cleanup_unsub)
 
+    # Set up periodic memory flush (write-behind)
+    token_stats = hass.data[DOMAIN]["token_stats"]
+
+    async def async_flush_all():
+        """Flush both memory and token stats."""
+        await memory.async_flush()
+        await token_stats.async_flush()
+
+    flush_interval = timedelta(minutes=MEMORY_FLUSH_INTERVAL_MINUTES)
+    flush_unsub = async_track_time_interval(
+        hass, lambda now: hass.async_create_task(async_flush_all()), flush_interval
+    )
+    entry.async_on_unload(flush_unsub)
+
+    # Ensure memory flush on Home Assistant stop
+    async def _async_flush_on_stop(event):
+        """Flush memory to disk on Home Assistant stop."""
+        LOGGER.debug("Home Assistant stopping, flushing conversation memory...")
+        await async_flush_all()
+
+    entry.async_on_unload(
+        hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, _async_flush_on_stop)
+    )
+
+    # Set up periodic pricing update task
+    # Get interval from sensors subentry config, fallback to default
+    pricing_interval = RECOMMENDED_PRICING_UPDATE_INTERVAL_HOURS
+    for subentry in entry.subentries.values():
+        if subentry.subentry_type == "sensors":
+            pricing_interval = subentry.data.get(
+                CONF_PRICING_UPDATE_INTERVAL_HOURS,
+                RECOMMENDED_PRICING_UPDATE_INTERVAL_HOURS,
+            )
+            break
+
+    pricing_unsub = async_track_time_interval(
+        hass,
+        lambda now: hass.async_create_task(
+            model_manager.async_update_models(entry.data[CONF_API_KEY])
+        ),
+        timedelta(hours=pricing_interval),
+    )
+    entry.async_on_unload(pricing_unsub)
+    LOGGER.debug(
+        "Set up periodic model update check (every %d hours)",
+        pricing_interval,
+    )
+
     # Set up platforms
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
-    # Update pricing sensors from API on startup
-    try:
-        await async_update_pricing_sensors_periodically(hass, entry)
-        LOGGER.debug("Updated pricing sensors on startup")
-    except Exception as err:
-        LOGGER.warning("Failed to update pricing sensors on startup: %s", err)
-
     # Register services
     register_services(hass, entry)
-
-    # Check if this is the first setup (installation) and reset token stats
-    # This ensures cleanup of any residual data from previous installations
-    if entry.state == ConfigEntryState.NOT_LOADED:
-        try:
-            await hass.services.async_call(
-                DOMAIN,
-                "reset_token_stats",
-                blocking=True,
-            )
-            LOGGER.debug("Reset token stats on first setup")
-        except Exception as err:
-            LOGGER.warning("Failed to reset token stats on first setup: %s", err)
 
     return True
 
 
 async def async_unload_entry(hass: HA_HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
-    # Save token stats to disk before unloading
-    storage = hass.data[DOMAIN].get("token_stats_storage")
-    if storage:
-        try:
-            await storage.async_save()
-            LOGGER.debug("Successfully saved token stats during unload.")
-        except Exception as err:
-            LOGGER.error("Failed to save token stats during unload: %s", err)
+    # Explicitly flush memory before unloading to ensure pending changes are saved
+    try:
+        if DOMAIN in hass.data:
+            if "conversation_memory" in hass.data[DOMAIN]:
+                await hass.data[DOMAIN]["conversation_memory"].async_flush()
+            if "token_stats" in hass.data[DOMAIN]:
+                await hass.data[DOMAIN]["token_stats"].async_flush()
+            LOGGER.debug("Memory and token stats flushed successfully before unload")
+    except Exception as err:
+        LOGGER.warning("Failed to flush memory during unload: %s", err)
 
     # Wait for all pending save tasks before unloading
     # This ensures token statistics are flushed to disk before Home Assistant closes

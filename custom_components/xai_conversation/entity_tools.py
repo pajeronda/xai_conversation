@@ -18,29 +18,53 @@ from homeassistant.helpers import llm as ha_llm
 from .const import (
     CONF_ALLOW_SMART_HOME_CONTROL,
     CONF_SEND_USER_NAME,
+    CONF_SHOW_CITATIONS,
     CONF_STORE_MESSAGES,
-    DOMAIN,
     LOGGER,
     RECOMMENDED_HISTORY_LIMIT_TURNS,
+    RECOMMENDED_SHOW_CITATIONS,
+    RECOMMENDED_SEND_USER_NAME,
     RECOMMENDED_STORE_MESSAGES,
 )
 from .helpers import (
+    add_manual_history_to_chat,
+    build_llm_context,
     build_session_context_info,
     convert_xai_to_ha_tool,
-    extract_device_id,
     format_tools_for_xai,
     filter_tools_by_exposed_domains,
     format_user_message_with_metadata,
+    get_exposed_entities_with_aliases,
     get_last_user_message,
     PromptManager,
     save_response_metadata,
     XAIGateway,
     LogTimeServices,
     timed_stream_generator,
+    CUSTOM_TOOLS,  # Now imported from helpers
 )
+
+# Import helper to distinguish tool types
+try:
+    from xai_sdk.tools import get_tool_call_type
+except ImportError:
+    get_tool_call_type = None
+
 from .exceptions import (
     raise_generic_error,
 )
+
+# gRPC imports for error handling (conditional)
+try:
+    from grpc import StatusCode
+    from grpc._channel import _InactiveRpcError
+except ImportError:
+    StatusCode = None
+    _InactiveRpcError = None
+except Exception:
+    StatusCode = None
+    _InactiveRpcError = None
+
 
 if TYPE_CHECKING:
     from .entity import XAIBaseLLMEntity
@@ -78,11 +102,11 @@ class XAIToolsProcessor:
         self._cached_ha_tools_dict: dict[str, Any] | None = (
             None  # Cache for O(1) tool lookup by name
         )
-        self._cached_llm_context: ha_llm.LLMContext | None = (
-            None  # Cache for llm_context
-        )
         self._cached_active_domains: set[str] | None = (
             None  # Cache for active domains to trigger tool rebuild
+        )
+        self._cached_entity_ids: set[str] | None = (
+            None  # Cache for active entity IDs to trigger tool rebuild
         )
         # Instance of HA's AssistAPI
         self._assist_api: ha_llm.AssistAPI | None = None
@@ -142,12 +166,36 @@ class XAIToolsProcessor:
             response_holder = {"response": None}
             is_fallback = force_tools and i == 0
 
-            async for _ in chat_log.async_add_delta_content_stream(
-                agent_id=self._entity.entity_id,
-                stream=self._delta_generator(chat, response_holder, timer),
-            ):
-                # Yield control to event loop to allow UI updates
-                await asyncio.sleep(0)
+            try:
+                async for _ in chat_log.async_add_delta_content_stream(
+                    agent_id=self._entity.entity_id,
+                    stream=self._delta_generator(chat, response_holder, timer),
+                ):
+                    # Yield control to event loop to allow UI updates
+                    await asyncio.sleep(0)
+
+            except Exception as err:
+                # Handle gRPC NOT_FOUND errors (expired response_id)
+                if _InactiveRpcError is not None and isinstance(err, _InactiveRpcError):
+                    from .helpers.response import handle_response_not_found_error
+
+                    should_retry = await handle_response_not_found_error(
+                        err=err,
+                        attempt=i,
+                        memory=self._entity._conversation_memory,
+                        conv_key=conv_key,
+                        mode="tools",
+                        context_id=user_input.conversation_id,
+                    )
+
+                    if should_retry:
+                        # Retry iteration with fresh conversation
+                        continue
+                    else:
+                        LOGGER.error("tools_loop: NOT_FOUND error but retry not possible")
+                        break
+                # Re-raise non-gRPC errors
+                raise
 
             # Extract final response from holder
             # The _delta_generator stores the final response in the holder
@@ -171,6 +219,7 @@ class XAIToolsProcessor:
                 entity=self._entity,
                 citations=response_holder.get("citations"),
                 num_sources_used=response_holder.get("num_sources_used", 0),
+                server_side_tool_usage=response_holder.get("server_side_tool_usage"),
             )
 
             # Retrieve citations and num_sources_used
@@ -187,11 +236,37 @@ class XAIToolsProcessor:
                     "tools_loop: unique search sources used: %d", num_sources_used
                 )
 
-            # Append citations to the chat log if available
-            if citations:
+            # Append citations to the chat log if enabled (useful for UI, noisy for voice)
+            show_citations = self._entity._get_option(
+                CONF_SHOW_CITATIONS, RECOMMENDED_SHOW_CITATIONS
+            )
+
+            if citations and show_citations:
                 formatted_citations = "\n\nCitations:\n"
                 for i, citation in enumerate(citations):
-                    formatted_citations += f"  [{i + 1}] {getattr(citation, 'title', 'No Title')} - {getattr(citation, 'url', 'No URL')}\n"
+                    # Extract title and url - handle strings (URLs), dicts, and objects
+                    if isinstance(citation, str):
+                        # xAI returns citations as URL strings
+                        url = citation
+                        # Try to extract a meaningful title from URL
+                        if 'x.com' in url or 'twitter.com' in url:
+                            title = 'X/Twitter Post'
+                        elif 'github.com' in url:
+                            title = 'GitHub'
+                        else:
+                            # Use domain as title
+                            from urllib.parse import urlparse
+                            parsed = urlparse(url)
+                            title = parsed.netloc or 'Web Source'
+                    elif isinstance(citation, dict):
+                        title = citation.get('title', 'No Title')
+                        url = citation.get('url', 'No URL')
+                    else:
+                        # Object with attributes
+                        title = getattr(citation, 'title', 'No Title')
+                        url = getattr(citation, 'url', 'No URL')
+
+                    formatted_citations += f"[{i + 1}] {title} - {url}\n"
                 async for _ in chat_log.async_add_assistant_content(
                     ha_conversation.AssistantContent(
                         agent_id=self._entity.entity_id,
@@ -199,6 +274,11 @@ class XAIToolsProcessor:
                     )
                 ):
                     pass
+            elif citations and not show_citations:
+                LOGGER.debug(
+                    "tools_loop: citations available (%d) but show_citations=False, skipping chat log append",
+                    len(citations)
+                )
 
             # Check for tool calls
             has_tool_calls = hasattr(response, "tool_calls") and response.tool_calls
@@ -209,10 +289,21 @@ class XAIToolsProcessor:
                 break
 
             # Has tool calls - execute them
-            llm_context = self._build_llm_context(user_input)
+            llm_context = build_llm_context(self._entity.hass, user_input)
             tool_results = []
 
             for tool_call in response.tool_calls:
+                # Filter out server-side tools (e.g. web_search) that are already executed by xAI
+                if get_tool_call_type:
+                    tool_type = get_tool_call_type(tool_call)
+                    if tool_type != "client_side_tool":
+                        LOGGER.debug(
+                            "Skipping server-side tool call: %s (type: %s)",
+                            tool_call.function.name,
+                            tool_type,
+                        )
+                        continue
+
                 tool_start = time.time()
                 LOGGER.debug("tools_loop: executing tool '%s'", tool_call.function.name)
 
@@ -232,6 +323,8 @@ class XAIToolsProcessor:
 
                 try:
                     ha_tool_input = convert_xai_to_ha_tool(self._entity.hass, tool_call)
+                    if self._cached_ha_tools_dict is None:
+                        raise_generic_error("Tools cache not initialized")
                     ha_tool = self._cached_ha_tools_dict.get(ha_tool_input.tool_name)
                     if not ha_tool:
                         raise_generic_error(
@@ -305,8 +398,6 @@ class XAIToolsProcessor:
         if use_tools is None:
             use_tools = self._use_tools
 
-        client = self._entity.gateway.create_client()
-
         # Only use previous_response_id in server-side mode
         store_messages = self._entity._get_option(
             CONF_STORE_MESSAGES, RECOMMENDED_STORE_MESSAGES
@@ -317,7 +408,7 @@ class XAIToolsProcessor:
         needs_cache_rebuild = self._cached_xai_tools is None
 
         # Build LLMContext independently from chat_log
-        llm_context = self._build_llm_context(user_input)
+        llm_context = build_llm_context(self._entity.hass, user_input)
 
         # Get exposed entities - always check this to dynamically rebuild tools if domains change
         assist_api = ha_llm._async_get_apis(self._entity.hass).get(
@@ -339,13 +430,31 @@ class XAIToolsProcessor:
             else set()
         )
 
-        # If cache is not empty, check if active domains have changed
-        if not needs_cache_rebuild and self._cached_active_domains is not None:
+        # Extract current entity IDs for comparison
+        current_entity_ids = (
+            set(exposed_entities_result["entities"].keys())
+            if exposed_entities_result and "entities" in exposed_entities_result
+            else set()
+        )
+
+        # If cache is not empty, check if active domains or entity IDs have changed
+        if (
+            not needs_cache_rebuild
+            and self._cached_active_domains is not None
+            and self._cached_entity_ids is not None
+        ):
             if current_active_domains != self._cached_active_domains:
                 LOGGER.debug(
                     "cache_rebuild: Active domains changed from %s to %s",
                     self._cached_active_domains,
                     current_active_domains,
+                )
+                needs_cache_rebuild = True
+            elif current_entity_ids != self._cached_entity_ids:
+                LOGGER.debug(
+                    "cache_rebuild: Exposed entity IDs changed from %s to %s",
+                    self._cached_entity_ids,
+                    current_entity_ids,
                 )
                 needs_cache_rebuild = True
 
@@ -355,13 +464,16 @@ class XAIToolsProcessor:
                 "cache_empty"
                 if self._cached_xai_tools is None
                 else "active_domains_changed"
+                if current_active_domains != self._cached_active_domains
+                else "entity_ids_changed"
             )
             LOGGER.debug(
                 "cache_rebuild: reason=%s use_tools=%s", rebuild_reason, use_tools
             )
 
-            # Update cached active domains
+            # Update cached active domains and entity IDs
             self._cached_active_domains = current_active_domains
+            self._cached_entity_ids = current_entity_ids
 
             if use_tools:
                 # --- TOOLS ENABLED ---
@@ -386,6 +498,28 @@ class XAIToolsProcessor:
                     ha_tools, exposed_entities_result
                 )
 
+                # --- INJECT CUSTOM TOOLS ---
+                # Map custom tool names to required domains
+                custom_tool_requirements = {
+                    "HassSetInputNumber": "input_number",
+                    "HassSetInputBoolean": "input_boolean",
+                    "HassSetInputText": "input_text",
+                    "HassRunScript": "script",
+                    "HassTriggerAutomation": "automation",
+                }
+
+                for custom_tool in CUSTOM_TOOLS:
+                    required_domain = custom_tool_requirements.get(custom_tool.name)
+                    # Only add tool if its required domain is active (present in exposed entities)
+                    if required_domain and required_domain in current_active_domains:
+                        LOGGER.debug(
+                            "Injecting custom tool '%s' (domain '%s' is active)",
+                            custom_tool.name,
+                            required_domain,
+                        )
+                        ha_tools.append(custom_tool)
+                # ---------------------------
+
                 self._cached_ha_tools = ha_tools
                 self._cached_ha_tools_dict = {tool.name: tool for tool in ha_tools}
                 # Use XAIGateway.tool_def for tool definition wrapper
@@ -400,14 +534,17 @@ class XAIToolsProcessor:
                     tool_descriptions.append(tool_desc)
                 tool_definitions_text = "\n".join(tool_descriptions)
 
+                # Get entities enriched with aliases for context
+                enriched_entities = get_exposed_entities_with_aliases(self._entity.hass)
+
                 # Format static context as compact JSON
                 static_context_json = (
                     json.dumps(
-                        list(exposed_entities_result["entities"].values()),
+                        enriched_entities,
                         ensure_ascii=False,
                         separators=(",", ":"),
                     )
-                    if exposed_entities_result["entities"]
+                    if enriched_entities
                     else "[]"
                 )
 
@@ -451,7 +588,10 @@ class XAIToolsProcessor:
         )
 
         chat = self._entity.gateway.create_chat(
-            client, tools=tools_for_call, previous_response_id=prev_id
+            service_type="conversation",
+            subentry_id=self._entity.subentry.subentry_id,
+            client_tools=tools_for_call,
+            previous_response_id=prev_id,
         )
 
         # On first call, send the full static prompt
@@ -485,7 +625,7 @@ class XAIToolsProcessor:
             # Server-side memory is active: send only the last user message
             last_user_message = get_last_user_message(chat_log)
             if last_user_message:
-                send_user_name = self._entity._get_option(CONF_SEND_USER_NAME, False)
+                send_user_name = self._entity._get_option(CONF_SEND_USER_NAME, RECOMMENDED_SEND_USER_NAME)
 
                 # Format user message with metadata
                 user_message_with_time = await format_user_message_with_metadata(
@@ -500,7 +640,14 @@ class XAIToolsProcessor:
                 chat.append(XAIGateway.user_msg(user_message_with_time))
         else:
             # NO server-side memory: send the last N turns manually
-            await self._add_manual_history_to_chat(chat, chat_log, user_input)
+            await add_manual_history_to_chat(
+                self._entity.hass,
+                self._entity,
+                chat,
+                chat_log,
+                user_input,
+                RECOMMENDED_HISTORY_LIMIT_TURNS,
+            )
 
         return chat
 
@@ -515,12 +662,18 @@ class XAIToolsProcessor:
     ) -> None:
         """Stream the final answer after tool execution, passing the timer for metrics."""
         # If store_messages is disabled, don't use previous_response_id (server won't have it)
-        store_messages = self._entity._get_option(CONF_STORE_MESSAGES, True)
+        store_messages = self._entity._get_option(
+            CONF_STORE_MESSAGES, RECOMMENDED_STORE_MESSAGES
+        )
         response_id = previous_response_id if store_messages else None
 
-        client = self._entity.gateway.create_client()
         chat = self._entity.gateway.create_chat(
-            client, tools=None, previous_response_id=response_id
+            service_type="conversation",
+            subentry_id=self._entity.subentry.subentry_id,
+            previous_response_id=response_id,
+            # No client tools needed for final answer generation (unless we want follow-up tools?)
+            # Usually final answer is text.
+            client_tools=None,
         )
 
         # When memory is disabled, rebuild the full context for this API call
@@ -544,7 +697,14 @@ class XAIToolsProcessor:
                 )
 
             # 2. Add conversation history from chat_log
-            await self._add_manual_history_to_chat(chat, chat_log, user_input)
+            await add_manual_history_to_chat(
+                self._entity.hass,
+                self._entity,
+                chat,
+                chat_log,
+                user_input,
+                RECOMMENDED_HISTORY_LIMIT_TURNS,
+            )
         else:
             LOGGER.debug(
                 "_stream_final_answer: store_messages=True, using previous_response_id=%s",
@@ -579,12 +739,7 @@ class XAIToolsProcessor:
             LOGGER.error("_stream_final_answer: no response from stream!")
             return
 
-        # Save response metadata
-        # Get store_messages from entity config
-        store_messages = self._entity._get_option(
-            CONF_STORE_MESSAGES, RECOMMENDED_STORE_MESSAGES
-        )
-
+        # Save response metadata (store_messages already calculated at function start)
         await save_response_metadata(
             hass=self._entity.hass,
             entry_id=self._entity.entry.entry_id,
@@ -602,72 +757,6 @@ class XAIToolsProcessor:
         content = getattr(final_response, "content", None)
         LOGGER.debug(
             "Streamed final answer from Grok (len=%d)", len(content) if content else 0
-        )
-
-    async def _add_manual_history_to_chat(self, chat, chat_log, user_input):
-        """Add manual conversation history to the chat when server-side memory is disabled.
-
-        Optimization: Only the last user message gets full metadata (user/device lookup, timestamp).
-        Historical messages are sent as plain text to avoid expensive async lookups on every API call.
-        """
-        LOGGER.debug("Adding manual history to chat (server-side memory disabled).")
-        limit = RECOMMENDED_HISTORY_LIMIT_TURNS * 2
-
-        send_user_name = self._entity._get_option(CONF_SEND_USER_NAME, False)
-
-        # Get last N turns from chat_log
-        content_list = list(chat_log.content)
-        history_content = (
-            content_list[-limit:] if len(content_list) > limit else content_list
-        )
-
-        if not history_content:
-            LOGGER.warning("Tools mode: no messages in chat_log, aborting")
-            return
-
-        LOGGER.debug(
-            "Tools mode: sending manual history: %d messages (last %d turns)",
-            len(history_content),
-            RECOMMENDED_HISTORY_LIMIT_TURNS,
-        )
-
-        # Optimization: identify the last user message index to apply full metadata only there
-        last_user_msg_index = -1
-        for i in range(len(history_content) - 1, -1, -1):
-            if isinstance(history_content[i], ha_conversation.UserContent):
-                last_user_msg_index = i
-                break
-
-        for i, content in enumerate(history_content):
-            if isinstance(content, ha_conversation.UserContent):
-                # Only the LAST user message gets full metadata (user/device lookup, timestamp)
-                # Historical messages are plain text to avoid expensive async lookups
-                is_last_user_msg = i == last_user_msg_index
-
-                formatted_msg = await format_user_message_with_metadata(
-                    content.content or "",
-                    user_input,
-                    self._entity.hass,
-                    send_user_name
-                    and is_last_user_msg,  # Only lookup user/device for last message
-                    include_timestamp=is_last_user_msg,  # Only timestamp on last message
-                )
-                chat.append(XAIGateway.user_msg(formatted_msg))
-            elif isinstance(content, ha_conversation.AssistantContent):
-                tool_calls = getattr(content, "tool_calls", None)
-                if tool_calls:
-                    chat.append(
-                        XAIGateway.assistant_msg(
-                            content.content or "", tool_calls=tool_calls
-                        )
-                    )
-                else:
-                    chat.append(XAIGateway.assistant_msg(content.content or ""))
-
-        last_msg = get_last_user_message(chat_log)
-        LOGGER.debug(
-            "Tools mode: last user message in history: %s",
-            last_msg[:100] if last_msg else "None",
         )
 
     async def _delta_generator(
@@ -694,29 +783,41 @@ class XAIToolsProcessor:
             # Store the final response object, including citations and usage info
             response_holder["response"] = last_response
             response_holder["citations"] = getattr(last_response, "citations", [])
-            response_holder["num_sources_used"] = getattr(
-                getattr(last_response, "usage", None), "num_sources_used", 0
-            )
+
+            # Extract num_sources_used from usage object
+            usage_obj = getattr(last_response, "usage", None)
+            num_sources = getattr(usage_obj, "num_sources_used", 0)
+            response_holder["num_sources_used"] = num_sources
+
+            # Extract server_side_tool_usage
+            server_tools = getattr(last_response, "server_side_tool_usage", None)
+            response_holder["server_side_tool_usage"] = server_tools
+
+            # Debug logging
+            if server_tools or num_sources > 0:
+                LOGGER.debug(
+                    "tools_stream: server_side_tool_usage=%s, num_sources_used=%d",
+                    server_tools,
+                    num_sources
+                )
 
         except Exception as err:
+            # Store error info in response_holder for caller to check
+            response_holder["error"] = err
+            response_holder["is_not_found"] = False
+
+            # Check if it's a retryable NOT_FOUND error (use module-level imports)
+            if (
+                _InactiveRpcError is not None
+                and StatusCode is not None
+                and isinstance(err, _InactiveRpcError)
+                and err.code() == StatusCode.NOT_FOUND
+            ):
+                response_holder["is_not_found"] = True
+                LOGGER.warning("tools_stream: NOT_FOUND error detected, will retry")
+                return
+
+            # For other errors, yield error message to user
             LOGGER.error("tools_stream: error during native async streaming: %s", err)
             if new_message:
                 yield {"role": "assistant"}
-            yield {"content": f"\n\nAn error occurred during streaming: {err}"}
-
-    # _xai_stream_async has been removed as part of the migration to native async streaming.
-    # The logic is now integrated directly into _delta_generator.
-
-    def _build_llm_context(self, user_input) -> ha_llm.LLMContext:
-        """Build LLMContext independently from chat_log. NOT cached - rebuilt each time."""
-        # Use "conversation" domain to match exposed entities
-        # This matches how Home Assistant's conversation system checks entity exposure
-        assistant_id = "conversation"
-
-        return ha_llm.LLMContext(
-            platform=DOMAIN,
-            context=user_input.context,
-            language=user_input.language,
-            assistant=assistant_id,
-            device_id=extract_device_id(user_input),
-        )

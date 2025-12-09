@@ -9,7 +9,7 @@ from json import JSONDecodeError
 from typing import TYPE_CHECKING, Any
 
 # Local application imports
-from .__init__ import ConfigEntry
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant as HA_HomeAssistant
 from homeassistant.helpers.entity_platform import (
     AddEntitiesCallback as HA_AddConfigEntryEntitiesCallback,
@@ -20,14 +20,8 @@ from homeassistant.components import conversation as ha_conversation
 from .const import (
     LOGGER,
     SUBENTRY_TYPE_AI_TASK,
-    CONF_IMAGE_MODEL,
-    CONF_VISION_MODEL,
-    RECOMMENDED_VISION_MODEL,
-    RECOMMENDED_IMAGE_MODEL,
     CONF_VISION_PROMPT,
     VISION_ANALYSIS_PROMPT,
-    CONF_MAX_TOKENS,
-    CONF_TEMPERATURE,
 )
 from .helpers import (
     parse_with_strategies,
@@ -45,6 +39,22 @@ if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigSubentry
 
     from . import XAIConfigEntry
+
+
+def _read_file_sync(path: str) -> bytes:
+    """Read file synchronously (for use with async_add_executor_job)."""
+    with open(path, "rb") as f:
+        return f.read()
+
+
+class _FallbackUsage:
+    """Fallback usage object when API doesn't return usage data."""
+
+    def __init__(self, completion_tokens: int = 0):
+        self.completion_tokens = completion_tokens
+        self.prompt_tokens = 0
+        self.reasoning_tokens = 0
+        self.cached_prompt_text_tokens = 0
 
 
 async def async_setup_entry(
@@ -104,11 +114,6 @@ class XAITaskEntity(
                         messages.append(XAIGateway.img_msg(img))
                     else:
                         try:
-
-                            def _read_file_sync(p):
-                                with open(p, "rb") as f:
-                                    return f.read()
-
                             image_bytes = await self.hass.async_add_executor_job(
                                 _read_file_sync, img
                             )
@@ -129,13 +134,8 @@ class XAITaskEntity(
         if attachments:
             for attachment in attachments:
                 try:
-
-                    def _read_att_sync(p):
-                        with open(p, "rb") as f:
-                            return f.read()
-
                     image_bytes = await self.hass.async_add_executor_job(
-                        _read_att_sync, attachment.path
+                        _read_file_sync, attachment.path
                     )
                     base64_image = base64.b64encode(image_bytes).decode("utf-8")
                     data_uri = f"data:{attachment.mime_type};base64,{base64_image}"
@@ -215,43 +215,17 @@ class XAITaskEntity(
 
         Returns:
             GenImageTaskResult with image data and metadata
-
-        Raises:
-            Various exceptions via handle_api_error for auth, network, API errors
         """
-        # Generate image using private method
-        result = await self._generate_image(prompt=task.instructions, chat_log=chat_log)
-
-        # Convert result to GenImageTaskResult
-        return ha_ai_task.GenImageTaskResult(
-            image_data=result["image_data"],
-            conversation_id=chat_log.conversation_id,
-            mime_type=result["mime_type"],
-            model=result["model"],
-            revised_prompt=result.get("revised_prompt"),
-        )
-
-    async def _generate_image(
-        self,
-        prompt: str,
-        chat_log: ha_conversation.ChatLog,
-        model: str | None = None,
-    ) -> dict[str, Any]:
-        """Generate image using xAI image generation model.
-
-        Args:
-            prompt: Image generation prompt
-            chat_log: Chat log for context
-            model: Optional model override, defaults to configured image_model
-
-        Returns:
-            Dict with image_data, mime_type, model, revised_prompt
-        """
-        if model is None:
-            model = self._get_option(CONF_IMAGE_MODEL, RECOMMENDED_IMAGE_MODEL)
-
+        prompt = task.instructions
         if not prompt or not prompt.strip():
             raise_validation_error("Image generation prompt cannot be empty")
+
+        # Resolve config via Gateway
+        # Note: model_target="image" ensures we get CONF_IMAGE_MODEL
+        config = self.gateway.get_service_config(
+            service_type="ai_task", model_target="image"
+        )
+        model = config["model"]
 
         context = {"model": model, "prompt_length": len(prompt)}
         async with LogTimeServices(LOGGER, "image_generation", context) as timer:
@@ -264,7 +238,6 @@ class XAITaskEntity(
                     image_format="base64",
                 )
 
-            # Get image data (response.image is a coroutine property in SDK)
             try:
                 image_bytes = await response.image
             except AttributeError:
@@ -274,42 +247,33 @@ class XAITaskEntity(
                 raise_generic_error("xAI API returned empty image data")
 
             if not isinstance(image_bytes, bytes):
-                raise_generic_error(
-                    f"Expected bytes, got {type(image_bytes).__name__}"
-                )
+                raise_generic_error(f"Expected bytes, got {type(image_bytes).__name__}")
 
             revised_prompt = getattr(response, "prompt", None)
             timer.context_info["image_size_bytes"] = len(image_bytes)
 
-            # Record usage for cost calculation (1 image = 1 output token)
-            class ImageUsage:
-                completion_tokens = 1
-                prompt_tokens = 0
-                reasoning_tokens = 0
-                cached_prompt_text_tokens = 0
-
             await save_response_metadata(
                 hass=self.hass,
                 entry_id=self.entry.entry_id,
-                usage=ImageUsage(),
+                usage=_FallbackUsage(completion_tokens=1),
                 model=model,
-                service_type="image_generation",
+                service_type="ai_task",
                 store_messages=False,
             )
 
-            return {
-                "image_data": image_bytes,
-                "mime_type": "image/jpeg",
-                "model": model,
-                "revised_prompt": revised_prompt,
-            }
+            return ha_ai_task.GenImageTaskResult(
+                image_data=image_bytes,
+                conversation_id=chat_log.conversation_id,
+                mime_type="image/jpeg",
+                model=model,
+                revised_prompt=revised_prompt,
+            )
 
     async def analyze_photo(
         self,
         prompt: str,
         images: list[str] | None = None,
         attachments: list | None = None,
-        model: str | None = None,
     ) -> str:
         """Analyze photos using vision model.
 
@@ -317,57 +281,70 @@ class XAITaskEntity(
             prompt: Analysis prompt
             images: List of image paths or URLs
             attachments: List of attachment objects
-            model: Optional model override
 
         Returns:
             Analysis text result
         """
-        if not prompt or not prompt.strip():
-            raise_validation_error("Photo analysis prompt cannot be empty")
-        if not images and not attachments:
-            raise_validation_error(
-                "At least one image (path/URL or attachment) is required"
-            )
-
-        if model is None:
-            model = self._get_option(CONF_VISION_MODEL, RECOMMENDED_VISION_MODEL)
+        # Resolve config first to get the model name for logging/context
+        config = self.gateway.get_service_config(
+            service_type="ai_task", model_target="vision"
+        )
+        model = config["model"]
 
         # Pre-process images using the shared helper
         image_messages = await self._prepare_attachments(attachments, images)
 
         context = {"model": model, "images_count": len(image_messages)}
         async with LogTimeServices(LOGGER, "photo_analysis", context) as timer:
-            # Use gateway helper to create chat with vision model
-            client = self.gateway.create_client()
-            chat = self.gateway.create_chat(
-                client=client, tools=None, previous_response_id=None, model=model
-            )
+            client = None
+            try:
+                # Use gateway helper to create chat with vision model configuration
+                chat = self.gateway.create_chat(
+                    service_type="ai_task",
+                    model_target="vision",
+                    previous_response_id=None
+                )
 
-            vision_prompt = self._get_option(CONF_VISION_PROMPT, VISION_ANALYSIS_PROMPT)
-            if vision_prompt:
-                chat.append(XAIGateway.system_msg(vision_prompt))
+                vision_prompt = self._get_option(
+                    CONF_VISION_PROMPT, VISION_ANALYSIS_PROMPT
+                )
+                if vision_prompt:
+                    chat.append(XAIGateway.system_msg(vision_prompt))
 
-            # Construct user message: [text, img1, img2...]
-            message_content = [prompt]
-            message_content.extend(image_messages)
+                # Construct user message: [text, img1, img2...]
+                message_content = [prompt]
+                message_content.extend(image_messages)
 
-            # Add single user message with mixed content
-            chat.append(XAIGateway.user_msg(message_content))
+                # Add single user message with mixed content
+                chat.append(XAIGateway.user_msg(message_content))
 
-            async with timer.record_api_call():
-                response = await chat.sample()
+                async with timer.record_api_call():
+                    response = await chat.sample()
 
-            content_text = getattr(response, "content", "")
-            usage = getattr(response, "usage", None)
+                content_text = getattr(response, "content", "")
+                usage = getattr(response, "usage", None)
 
-            # Use correct metadata saver
-            await save_response_metadata(
-                hass=self.hass,
-                entry_id=self.entry.entry_id,
-                usage=usage,
-                model=model,
-                service_type="photo_analysis",
-                store_messages=False,
-            )
+                if usage is None:
+                    LOGGER.warning(
+                        "xAI API did not return usage data for vision task. Using fallback (0 tokens)."
+                    )
+                    usage = _FallbackUsage()
 
-            return content_text
+                # Use correct metadata saver
+                await save_response_metadata(
+                    hass=self.hass,
+                    entry_id=self.entry.entry_id,
+                    usage=usage,
+                    model=model,
+                    service_type="ai_task",
+                    store_messages=False,
+                )
+
+                return content_text
+            finally:
+                if client is not None:
+                    try:
+                        if hasattr(client, "__exit__"):
+                            client.__exit__(None, None, None)
+                    except Exception as close_err:
+                        LOGGER.warning("Error closing xAI client: %s", close_err)

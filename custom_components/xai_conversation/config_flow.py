@@ -37,16 +37,20 @@ from .const import (
     CONF_MEMORY_USER_TTL_HOURS,
     CONF_MEMORY_DEVICE_MAX_TURNS,
     CONF_MEMORY_DEVICE_TTL_HOURS,
+    CONF_PRICING_UPDATE_INTERVAL_HOURS,
     CONF_PROMPT,
     CONF_PROMPT_CODE,
     CONF_VISION_PROMPT,
     CONF_PROMPT_PIPELINE,
     CONF_REASONING_EFFORT,
     CONF_SEND_USER_NAME,
+    CONF_SHOW_CITATIONS,
     CONF_STORE_MESSAGES,
     CONF_TEMPERATURE,
+    CONF_TOKENS_PER_MILLION,
     CONF_TOP_P,
     CONF_USE_INTELLIGENT_PIPELINE,
+    CONF_XAI_PRICING_CONVERSION_FACTOR,
     DEFAULT_AI_TASK_NAME,
     DEFAULT_API_HOST,
     DEFAULT_CODE_FAST_ASSISTANT_NAME,
@@ -60,21 +64,25 @@ from .const import (
     RECOMMENDED_AI_TASK_OPTIONS,
     RECOMMENDED_ASSISTANT_NAME,
     RECOMMENDED_CHAT_MODEL,
+    RECOMMENDED_COST_PER_TOOL_CALL,
     RECOMMENDED_GROK_CODE_FAST_OPTIONS,
     RECOMMENDED_LIVE_SEARCH,
-    RECOMMENDED_MAX_TOKENS,
     RECOMMENDED_MEMORY_CLEANUP_INTERVAL_HOURS,
     RECOMMENDED_MEMORY_USER_MAX_TURNS,
     RECOMMENDED_MEMORY_USER_TTL_HOURS,
     RECOMMENDED_MEMORY_DEVICE_MAX_TURNS,
     RECOMMENDED_MEMORY_DEVICE_TTL_HOURS,
     RECOMMENDED_PIPELINE_OPTIONS,
+    RECOMMENDED_PRICING_UPDATE_INTERVAL_HOURS,
     RECOMMENDED_REASONING_EFFORT,
+    RECOMMENDED_SEND_USER_NAME,
+    RECOMMENDED_SHOW_CITATIONS,
     RECOMMENDED_STORE_MESSAGES,
-    RECOMMENDED_TEMPERATURE,
+    RECOMMENDED_TOKENS_PER_MILLION,
     RECOMMENDED_TOOLS_OPTIONS,
-    RECOMMENDED_TOP_P,
+    RECOMMENDED_XAI_PRICING_CONVERSION_FACTOR,
     SUPPORTED_MODELS,
+    CONF_COST_PER_TOOL_CALL,
 )
 
 
@@ -106,7 +114,7 @@ class XAIConfigFlow(ConfigFlow, domain=DOMAIN):
                             CONF_LIVE_SEARCH, default=RECOMMENDED_LIVE_SEARCH
                         ): selector.SelectSelector(
                             selector.SelectSelectorConfig(
-                                options=["off", "auto", "on"],
+                                options=["off", "web search", "x search", "full"],
                                 mode=selector.SelectSelectorMode.DROPDOWN,
                             )
                         ),
@@ -330,8 +338,14 @@ class XAIOptionsFlow(ConfigSubentryFlow):
         elif self._subentry_type == "code_fast":
             self.options = RECOMMENDED_GROK_CODE_FAST_OPTIONS.copy()
         elif self._subentry_type == "sensors":
-            # Sensors subentry has no configurable options
-            self.options = {"name": DEFAULT_SENSORS_NAME}
+            # Sensors subentry with pricing configuration options
+            self.options = {
+                "name": DEFAULT_SENSORS_NAME,
+                CONF_TOKENS_PER_MILLION: RECOMMENDED_TOKENS_PER_MILLION,
+                CONF_XAI_PRICING_CONVERSION_FACTOR: RECOMMENDED_XAI_PRICING_CONVERSION_FACTOR,
+                CONF_PRICING_UPDATE_INTERVAL_HOURS: RECOMMENDED_PRICING_UPDATE_INTERVAL_HOURS,
+                CONF_COST_PER_TOOL_CALL: RECOMMENDED_COST_PER_TOOL_CALL,
+            }
         else:
             # Default to Intelligent Pipeline options when adding a conversation subentry
             self.options = RECOMMENDED_PIPELINE_OPTIONS.copy()
@@ -368,28 +382,68 @@ class XAIOptionsFlow(ConfigSubentryFlow):
                 default_name = DEFAULT_CONVERSATION_NAME
             step_schema[vol.Required("name", default=default_name)] = str
 
-        # Sensors subentry now has per-model pricing configuration
+        # Sensors subentry configuration
         if self._subentry_type == "sensors":
-            # Retrieve dynamically fetched model data
-            xai_models_data = self.hass.data[DOMAIN].get("xai_models_data")
-            if not xai_models_data:
-                # Fallback to empty schema or error, though data should always be present at this stage
-                LOGGER.warning(
-                    "xAI model data not available in hass.data. Cannot generate dynamic pricing fields for sensors."
-                )
-                # Return an error schema that explains the issue
-                step_schema["_warning_no_model_data"] = selector.TextSelector(
-                    selector.TextSelectorConfig(
-                        type=selector.TextSelectorType.TEXT,
-                        multiple=False,
-                        suffix="Could not load model pricing data. Please check integration logs and ensure API key is valid.",
-                    )
-                )
-                return self.async_show_form(
-                    step_id="init",
-                    data_schema=vol.Schema(step_schema),
-                    errors={"base": "no_model_data"},
-                )
+            # Add pricing configuration fields
+            step_schema.update(
+                {
+                    vol.Optional(
+                        CONF_TOKENS_PER_MILLION,
+                        default=options.get(
+                            CONF_TOKENS_PER_MILLION, RECOMMENDED_TOKENS_PER_MILLION
+                        ),
+                    ): selector.NumberSelector(
+                        selector.NumberSelectorConfig(
+                            min=1,
+                            max=10_000_000,
+                            step=1,
+                            mode=selector.NumberSelectorMode.BOX,
+                        )
+                    ),
+                    vol.Optional(
+                        CONF_XAI_PRICING_CONVERSION_FACTOR,
+                        default=options.get(
+                            CONF_XAI_PRICING_CONVERSION_FACTOR,
+                            RECOMMENDED_XAI_PRICING_CONVERSION_FACTOR,
+                        ),
+                    ): selector.NumberSelector(
+                        selector.NumberSelectorConfig(
+                            min=1.0,
+                            max=100000.0,
+                            step=0.1,
+                            mode=selector.NumberSelectorMode.BOX,
+                        )
+                    ),
+                    vol.Optional(
+                        CONF_PRICING_UPDATE_INTERVAL_HOURS,
+                        default=options.get(
+                            CONF_PRICING_UPDATE_INTERVAL_HOURS,
+                            RECOMMENDED_PRICING_UPDATE_INTERVAL_HOURS,
+                        ),
+                    ): selector.NumberSelector(
+                        selector.NumberSelectorConfig(
+                            min=1,
+                            max=168,  # 1 week max
+                            step=1,
+                            mode=selector.NumberSelectorMode.BOX,
+                        )
+                    ),
+                    vol.Optional(
+                        CONF_COST_PER_TOOL_CALL,
+                        default=options.get(
+                            CONF_COST_PER_TOOL_CALL,
+                            RECOMMENDED_COST_PER_TOOL_CALL,
+                        ),
+                    ): selector.NumberSelector(
+                        selector.NumberSelectorConfig(
+                            min=0.0,
+                            max=10.0,
+                            step=0.001,
+                            mode=selector.NumberSelectorMode.BOX,
+                        )
+                    ),
+                }
+            )
 
             if user_input is not None:
                 options.update(user_input)
@@ -432,7 +486,11 @@ class XAIOptionsFlow(ConfigSubentryFlow):
                     ): selector.BooleanSelector(),
                     vol.Optional(
                         CONF_SEND_USER_NAME,
-                        default=options.get(CONF_SEND_USER_NAME, False),
+                        default=options.get(CONF_SEND_USER_NAME, RECOMMENDED_SEND_USER_NAME),
+                    ): selector.BooleanSelector(),
+                    vol.Optional(
+                        CONF_SHOW_CITATIONS,
+                        default=options.get(CONF_SHOW_CITATIONS, RECOMMENDED_SHOW_CITATIONS),
                     ): selector.BooleanSelector(),
                     vol.Optional(
                         CONF_ASSISTANT_NAME,
@@ -445,7 +503,7 @@ class XAIOptionsFlow(ConfigSubentryFlow):
                         default=options.get(CONF_LIVE_SEARCH, RECOMMENDED_LIVE_SEARCH),
                     ): selector.SelectSelector(
                         selector.SelectSelectorConfig(
-                            options=["off", "auto", "on"],
+                            options=["off", "web search", "x search", "full"],
                             mode=selector.SelectSelectorMode.DROPDOWN,
                         )
                     ),
@@ -763,7 +821,7 @@ class XAIOptionsFlow(ConfigSubentryFlow):
                             ),
                         ): selector.SelectSelector(
                             selector.SelectSelectorConfig(
-                                options=["off", "auto", "on"],
+                                options=["off", "web search", "x search", "full"],
                                 mode=selector.SelectSelectorMode.DROPDOWN,
                             )
                         ),

@@ -1,6 +1,7 @@
 """Constants for xAI Grok Conversation integration."""
 
 import logging
+import re
 from homeassistant.const import CONF_LLM_HASS_API
 from homeassistant.helpers import llm
 
@@ -33,6 +34,7 @@ CONF_TOP_P = "top_p"
 CONF_LIVE_SEARCH = "live_search"
 CONF_STORE_MESSAGES = "store_messages"
 CONF_SEND_USER_NAME = "send_user_name"
+CONF_SHOW_CITATIONS = "show_citations"  # Show citations in chat content (useful for UI, noisy for voice)
 CONF_TIMEOUT = "timeout"
 CONF_PROMPT = "prompt"  # User instructions for tools/non-pipeline mode
 CONF_PROMPT_CODE = "prompt_code"  # Custom instructions for code_fast mode
@@ -48,6 +50,7 @@ CONF_MEMORY_CLEANUP_INTERVAL_HOURS = (
     "memory_cleanup_interval_hours"  # Interval for periodic cleanup
 )
 
+
 # Model pricing is fetched dynamically from xAI API and displayed in XAIPricingSensor entities
 # Pricing sensors are created automatically for all available models at startup
 # Default model recommendations optimized for grok-4-1-fast-non-reasoning
@@ -62,16 +65,19 @@ RECOMMENDED_TOP_P = 1.0
 RECOMMENDED_REASONING_EFFORT = "low"
 RECOMMENDED_LIVE_SEARCH = "off"
 RECOMMENDED_STORE_MESSAGES = True
+RECOMMENDED_SEND_USER_NAME = False
+RECOMMENDED_SHOW_CITATIONS = False  # Default OFF (better for voice assistants, can enable for UI/chat)
 RECOMMENDED_TIMEOUT = 60.0
 RECOMMENDED_ASSISTANT_NAME = "Jarvis"
 # Memory defaults - separate for users and devices
+MEMORY_FLUSH_INTERVAL_MINUTES = 30  # Interval for flushing memory to disk
 RECOMMENDED_MEMORY_USER_TTL_HOURS = 24 * 30  # 30 days for users
-RECOMMENDED_MEMORY_USER_MAX_TURNS = 1000  # 1000 turns for users
-RECOMMENDED_MEMORY_DEVICE_TTL_HOURS = 24 * 7  # 7 days for voice satellites
-RECOMMENDED_MEMORY_DEVICE_MAX_TURNS = 100  # 100 turns for voice satellites
-RECOMMENDED_MEMORY_CLEANUP_INTERVAL_HOURS = 24  # Run cleanup every 24 hours
+RECOMMENDED_MEMORY_USER_MAX_TURNS = 500  # 500 turns for users
+RECOMMENDED_MEMORY_DEVICE_TTL_HOURS = 24 * 30  # 30 days for voice satellites
+RECOMMENDED_MEMORY_DEVICE_MAX_TURNS = 500  # 500 turns for voice satellites
+RECOMMENDED_MEMORY_CLEANUP_INTERVAL_HOURS = 24 * 7  # Run cleanup every 7 days
 RECOMMENDED_CHAT_HISTORY_MAX_MESSAGES = (
-    100  # Max messages stored per conversation in ChatHistoryService
+    250  # Max messages stored per conversation in ChatHistoryService
 )
 # Maximum conversation history turns to send when server-side memory is disabled
 RECOMMENDED_HISTORY_LIMIT_TURNS = 10  # 10 turns = 20 messages (user+assistant)
@@ -124,10 +130,7 @@ PROMPT_IDENTITY = (
 # -----------------------------------------------------------------------------
 # 2. ROLE BASE BLOCK (always present)
 # -----------------------------------------------------------------------------
-PROMPT_ROLE_BASE = """Function as an advanced ASR/NLU system.
-Wake Word False Positives:
-- If you receive unclear, incomplete, or nonsensical text (e.g., fragments, single words, background noise transcribed), it's likely an accidental wake word trigger. In such cases, respond with a brief, slightly ironic acknowledgment without taking any action.
-- Only process clear, complete requests with obvious intent"""
+PROMPT_ROLE_BASE = """Act as an advanced ASR/NLU system. If you are completely unable to interpret the text, ask with humor, but don't do any command."""
 
 # -----------------------------------------------------------------------------
 # 3. MEMORY BLOCKS (one of these, based on store_messages setting)
@@ -200,7 +203,7 @@ Rules: Keep explanations in response_text, raw code in response_code (no ``` fen
 # -----------------------------------------------------------------------------
 PROMPT_OUTPUT_FORMAT = """Output Format:
 - Follow the user's language and communication style.
-- Use plain text only: no markdown, no emoji."""
+- Use plain text only for text to speech: no markdown, no emoji."""
 
 # ==============================================================================
 # END OF MODULAR PROMPT SYSTEM
@@ -220,6 +223,8 @@ IMPORTANT OUTPUT RULES:
 # Vision analysis system prompt - concise and factual
 VISION_ANALYSIS_PROMPT = """Be concise and factual in your image analysis. Always respond in the user's language."""
 
+# Tag pattern for parsing HA_LOCAL commands from pipeline mode
+HA_LOCAL_TAG_PATTERN = re.compile(r"\[\[\s*HA_LOCAL\s*:\s*({.*?})\]\]", re.DOTALL)
 
 # Default conversation mode options (Intelligent Pipeline)
 RECOMMENDED_PIPELINE_OPTIONS = {
@@ -291,23 +296,33 @@ RECOMMENDED_GROK_CODE_FAST_OPTIONS = {
 # SENSOR CONFIGURATION CONSTANTS
 # ==============================================================================
 
-# Token pricing and cost calculation
-TOKENS_PER_MILLION = 1_000_000  # Division factor for token pricing calculations
-XAI_PRICING_CONVERSION_FACTOR = (
-    10000.0  # API returns prices in units of 0.0001 USD per 1M tokens
-)
-# Sensor update intervals
-PRICING_UPDATE_INTERVAL_HOURS = (
-    48  # How often to fetch model pricing from xAI API (prices rarely change)
-)
-COST_UPDATE_INTERVAL_HOURS = (
-    12  # How often to recalculate costs (runs after pricing update)
-)
+# Config keys for sensor subentry options
+CONF_TOKENS_PER_MILLION = "tokens_per_million"
+CONF_XAI_PRICING_CONVERSION_FACTOR = "xai_pricing_conversion_factor"
+CONF_PRICING_UPDATE_INTERVAL_HOURS = "pricing_update_interval_hours"
+CONF_COST_PER_TOOL_CALL = "cost_per_tool_call"
 
-# New models detection
-NEW_MODEL_NOTIFICATION_DAYS = (
-    7  # How long to show new model notifications before auto-dismissal
-)
+# Default/recommended values (used as fallback if not in config)
+RECOMMENDED_TOKENS_PER_MILLION = 1_000_000  # Division factor for token pricing
+RECOMMENDED_XAI_PRICING_CONVERSION_FACTOR = 10000.0  # API price units → USD per 1M tokens
+RECOMMENDED_PRICING_UPDATE_INTERVAL_HOURS = 48  # How often to fetch pricing from xAI API
+RECOMMENDED_COST_PER_TOOL_CALL = 0.005  # Default price per tool invocation ($5/1k calls)
+
+# Official xAI Agent Tools Pricing (cost per invocation, not per 1k)
+TOOL_PRICING = {
+    "web_search": 0.005,           # $5.00 per 1,000 calls
+    "x_search": 0.005,              # $5.00 per 1,000 calls
+    "code_execution": 0.005,        # $5.00 per 1,000 calls
+    "document_search": 0.005,       # $5.00 per 1,000 calls
+    "collections_search": 0.0025,   # $2.50 per 1,000 calls
+    # Token-based only tools (no invocation cost):
+    # "view_image", "view_x_video", "remote_mcp_tools"
+}
+
+# Legacy/Compatibility constants used directly by sensor.py
+NEW_MODEL_NOTIFICATION_DAYS = 7
+PRICING_UPDATE_INTERVAL_HOURS = 48
+TOKENS_PER_MILLION = 1_000_000
 
 # ==============================================================================
 # END OF SENSOR CONFIGURATION CONSTANTS

@@ -34,24 +34,23 @@ def _normalize_json_dict(data: Any) -> Any:
         return data
 
 
-def _convert_schema_to_xai(schema) -> dict:
+def _convert_schema_to_xai(schema, tool_name: str = "unknown") -> dict:
     """Convert HA schema to xAI function parameters format with robust voluptuous handling."""
     if not schema:
         return {"type": "object", "properties": {}, "required": []}
 
     try:
-        LOGGER.debug("Converting schema: %s (type: %s)", schema, type(schema))
         # Use the standard Home Assistant voluptuous to OpenAPI converter
         # This is the same method used by the official OpenAI integration
         result: dict[str, Any] = ha_llm.convert(
             schema,
             custom_serializer=ha_llm.selector_serializer,
         )
-        LOGGER.debug("Schema converted successfully via voluptuous-openapi")
         return result
     except Exception as err:
         LOGGER.warning(
-            "Failed to convert schema using voluptuous-openapi: %s. Will attempt fallback.",
+            "Failed to convert schema for tool '%s' using voluptuous-openapi: %s. Using fallback.",
+            tool_name,
             err,
         )
         return {"type": "object", "properties": {}, "required": []}
@@ -459,6 +458,14 @@ def format_tools_for_xai(ha_tools: list[ha_llm.Tool], xai_tool_constructor) -> l
 
     xai_tools = []
 
+    # Track schema conversion statistics
+    schema_stats = {
+        "total": 0,
+        "converted": 0,
+        "fallback_used": 0,
+        "failed": 0,
+    }
+
     # Sort tools alphabetically by name for consistent ordering
     # This improves cache hit rate by ensuring tools are always in the same order
     sorted_ha_tools = sorted(ha_tools, key=lambda t: str(t.name))
@@ -466,7 +473,8 @@ def format_tools_for_xai(ha_tools: list[ha_llm.Tool], xai_tool_constructor) -> l
     for ha_tool in sorted_ha_tools:
         # Convert parameters to xAI JSON schema
         try:
-            parameters = _convert_schema_to_xai(ha_tool.parameters)
+            schema_stats["total"] += 1
+            parameters = _convert_schema_to_xai(ha_tool.parameters, str(ha_tool.name))
 
             # If schema lacks properties, provide a minimal known schema for common HA tools
             try:
@@ -485,6 +493,11 @@ def format_tools_for_xai(ha_tools: list[ha_llm.Tool], xai_tool_constructor) -> l
                         ha_tool.name,
                     )
                     parameters = fallback
+                    schema_stats["fallback_used"] += 1
+                else:
+                    schema_stats["converted"] += 1
+            else:
+                schema_stats["converted"] += 1
 
             # Normalize parameters dict for consistent serialization
             # Sort keys recursively to ensure stable JSON representation
@@ -501,7 +514,17 @@ def format_tools_for_xai(ha_tools: list[ha_llm.Tool], xai_tool_constructor) -> l
             LOGGER.error(
                 "Error converting tool %s: %s", ha_tool.name, err, exc_info=True
             )
+            schema_stats["failed"] += 1
             continue
+
+    # Log summary statistics instead of individual conversions
+    LOGGER.debug(
+        "Schema conversion completed: %d total, %d converted, %d fallback, %d failed",
+        schema_stats["total"],
+        schema_stats["converted"],
+        schema_stats["fallback_used"],
+        schema_stats["failed"],
+    )
 
     return xai_tools
 

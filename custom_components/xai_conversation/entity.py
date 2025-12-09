@@ -52,7 +52,8 @@ class XAIBaseLLMEntity(HA_Entity):
             entry_type=ha_device_registry.DeviceEntryType.SERVICE,
         )
         # Gateway for centralized xAI SDK interactions
-        self.gateway = XAIGateway(self)
+        # Initialized with hass and config_entry (agnostic of this specific entity instance)
+        self.gateway = XAIGateway(self.hass, self.entry)
         # Tools processor instance to maintain cache across calls
         self._tools_processor = XAIToolsProcessor(self)
         # Track pending I/O tasks for graceful shutdown
@@ -68,33 +69,17 @@ class XAIBaseLLMEntity(HA_Entity):
         """Link to shared sensors and get global ConversationMemory."""
         await super().async_added_to_hass()
 
-        # Get shared token sensors from hass.data using entry.entry_id
-        entry_id = self.entry.entry_id
-        sensor_key = f"{entry_id}_sensors"
-        if DOMAIN in self.hass.data and sensor_key in self.hass.data[DOMAIN]:
-            self._token_sensors = self.hass.data[DOMAIN][sensor_key]
-            LOGGER.debug(
-                "Entity %s linked to %d shared sensors",
-                self.entity_id,
-                len(self._token_sensors),
-            )
-        else:
-            # Sensors will be linked later when they are created
-            self._token_sensors = []
-            LOGGER.debug(
-                "Sensors not yet available for entry %s, will be linked when ready",
-                entry_id,
-            )
-
         # Get global ConversationMemory instance
         self._conversation_memory = self.hass.data[DOMAIN]["conversation_memory"]
         LOGGER.debug("Entity %s linked to global ConversationMemory", self.entity_id)
 
         # Store a reference to this entity for easy access by other components, if not already present
-        if entry_id not in self.hass.data[DOMAIN]:
-            self.hass.data[DOMAIN][entry_id] = self
+        if self.entry.entry_id not in self.hass.data[DOMAIN]:
+            self.hass.data[DOMAIN][self.entry.entry_id] = self
             LOGGER.debug(
-                "Stored reference to entity %s for entry %s", self.entity_id, entry_id
+                "Stored reference to entity %s for entry %s",
+                self.entity_id,
+                self.entry.entry_id,
             )
 
     async def async_will_remove_from_hass(self) -> None:
@@ -110,7 +95,7 @@ class XAIBaseLLMEntity(HA_Entity):
             )
             try:
                 # Use asyncio.wait with timeout to avoid indefinite blocking
-                done, pending = await asyncio.wait(
+                _, pending = await asyncio.wait(
                     self._pending_save_tasks,
                     timeout=5.0,  # Max 5 seconds wait
                 )

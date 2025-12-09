@@ -11,11 +11,9 @@ Architecture:
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Callable
 import json
 import re
-from typing import Any
 
 # Import LOGGER and constants
 from ..const import (
@@ -25,8 +23,7 @@ from ..const import (
     RECOMMENDED_CHAT_MODEL,
 )
 
-# Import sensor updater
-from .sensors import update_token_sensors
+
 
 # ==============================================================================
 # COMPILED REGEX PATTERNS (Module-level for performance)
@@ -261,7 +258,7 @@ def parse_grok_code_response(response_data: str) -> tuple[str, str]:
         if "\\" in response_code and not isinstance(parsed, dict):  # Heuristic check
             try:
                 response_code = response_code.encode("utf-8").decode("unicode_escape")
-            except:
+            except Exception:
                 pass
 
         return response_text, response_code
@@ -347,97 +344,6 @@ def parse_ha_local_payload(payload_json: str) -> dict | None:
 # ==============================================================================
 
 
-async def _async_save_token_sensors(
-    hass,
-    entry_id: str,
-    usage,
-    model: str | None,
-    service_type: str,
-    mode: str = "unknown",
-    is_fallback: bool = False,
-    store_messages: bool = True,
-) -> None:
-    """Internal helper: Update token sensors and save to storage.
-
-    This function is designed to be called in parallel with other I/O operations.
-
-    Args:
-        hass: Home Assistant instance
-        entry_id: Config entry ID
-        usage: Usage statistics from xAI response
-        model: Model name
-        service_type: Service type ("conversation", "ai_task", "code_fast")
-        mode: Mode string ("pipeline" or "tools") - only used for conversation
-        is_fallback: Whether this is a fallback response - only used for conversation
-        store_messages: Server-side (True) or client-side (False) memory - only used for conversation
-    """
-    try:
-        # Step 1: Update all sensor objects' state in memory
-        update_token_sensors(
-            hass,
-            entry_id,
-            usage,
-            model=model,
-            service_type=service_type,
-            mode=mode,
-            is_fallback=is_fallback,
-            store_messages=store_messages,
-        )
-
-        # Step 2: Get the shared storage object
-        storage = hass.data.get(DOMAIN, {}).get("token_stats_storage")
-        if not storage:
-            LOGGER.error("Failed to save token stats: TokenStatsStorage not found.")
-            return
-
-        # Step 3: Find a base sensor to source the aggregated data from.
-        # All XAITokenSensorBase sensors have the complete aggregated data after update_token_sensors runs.
-        sensors = hass.data.get(DOMAIN, {}).get(f"{entry_id}_sensors", [])
-        source_sensor = None
-        for sensor in sensors:
-            if hasattr(
-                sensor, "update_token_usage"
-            ):  # Find a sensor that holds token data
-                source_sensor = sensor
-                break
-
-        if not source_sensor:
-            LOGGER.error("Failed to save token stats: No suitable source sensor found.")
-            return
-
-        # Step 4: Build the aggregated stats payload from the source sensor's state
-        stats = {
-            "tokens_by_model": source_sensor._tokens_by_model,
-            "cumulative_completion_tokens": source_sensor._cumulative_completion_tokens,
-            "cumulative_prompt_tokens": source_sensor._cumulative_prompt_tokens,
-            "cumulative_cached_tokens": source_sensor._cumulative_cached_tokens,
-            "cumulative_reasoning_tokens": source_sensor._cumulative_reasoning_tokens,
-            "message_count": source_sensor._message_count,
-            "last_completion_tokens": source_sensor._last_completion_tokens,
-            "last_prompt_tokens": source_sensor._last_prompt_tokens,
-            "last_cached_tokens": source_sensor._last_cached_tokens,
-            "last_reasoning_tokens": source_sensor._last_reasoning_tokens,
-            "last_model": source_sensor._last_model,
-            "last_timestamp": source_sensor._last_timestamp.isoformat()
-            if source_sensor._last_timestamp
-            else None,
-            "reset_timestamp": source_sensor._reset_timestamp.isoformat()
-            if source_sensor._reset_timestamp
-            else None,
-        }
-
-        # Step 5: Directly save the aggregated stats to storage.
-        await storage.save_aggregated_stats(stats)
-        LOGGER.debug(
-            "Successfully saved token stats to storage for service=%s", service_type
-        )
-
-    except Exception as err:
-        LOGGER.error(
-            "Failed to save token sensors for %s: %s", service_type, err, exc_info=True
-        )
-
-
 async def save_response_metadata(
     hass,
     entry_id: str,
@@ -452,21 +358,13 @@ async def save_response_metadata(
     entity=None,
     citations: list | None = None,
     num_sources_used: int = 0,
+    server_side_tool_usage: dict | None = None,
 ) -> None:
     """Save response metadata to memory and update token sensors.
 
-    SERVICE-TYPE BASED: Unified function for conversation, ai_task, and code_fast.
-
-    PERFORMANCE OPTIMIZATION (Fire-and-Forget):
-    - Executes I/O operations in background WITHOUT blocking the response
-    - Uses asyncio.create_task() for non-blocking execution
-    - Tracks pending tasks for graceful shutdown
-    - Reduces user-facing latency to 0ms (100% improvement on I/O operations)
-
-    SAFETY:
-    - Safe for Home Assistant environments (Raspberry Pi, Proxmox VMs)
-    - Guaranteed write time during conversation or STT processing
-    - Data loss risk: near zero (HA graceful shutdown + conversation duration)
+    IMPORTANT: This function is fully non-blocking. All I/O operations
+    (memory save, token stats update) are dispatched as background tasks
+    to avoid delaying the conversation response to the user.
 
     Args:
         hass: Home Assistant instance
@@ -482,30 +380,38 @@ async def save_response_metadata(
         entity: Optional entity instance for graceful shutdown tracking (conversation only)
         citations: List of citations from xAI response (conversation only)
         num_sources_used: Number of unique search sources used (conversation only)
+        server_side_tool_usage: Dictionary of server-side tool invocations (e.g. {"web_search": 1})
     """
-    # If model not provided, fallback to entity config (if available)
-    if model is None and entity is not None:
-        model = entity._get_option(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL)
-        LOGGER.debug("Model not in response, using entity config fallback: %s", model)
+    # Resolve model synchronously (no I/O needed)
+    resolved_model = model
+    fallback_source = None
 
-    # If still None, get from config entry data
-    if model is None:
-        # Get config entry from hass.config_entries
+    if resolved_model is None and entity is not None:
+        resolved_model = entity._get_option(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL)
+        if resolved_model:
+            fallback_source = "entity_config"
+
+    if resolved_model is None:
         for entry in hass.config_entries.async_entries(DOMAIN):
             if entry.entry_id == entry_id:
-                model = entry.data.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL)
-                LOGGER.debug(
-                    "Model not in response, using entry data fallback: %s", model
-                )
+                resolved_model = entry.data.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL)
+                if resolved_model:
+                    fallback_source = "entry_data"
                 break
 
-    # Prepare parallel tasks list
+    # Single unified log message
+    if fallback_source:
+        LOGGER.debug(
+            "Model not in response, using %s fallback: %s",
+            fallback_source,
+            resolved_model
+        )
+
+    # Build list of async tasks to run in parallel
     tasks = []
 
-    # Task 1: Save response ID to conversation memory (I/O operation)
-    # Only for conversation service with server-side memory
+    # Task 1: Save response ID to conversation memory
     if response_id and conv_key and service_type == "conversation":
-
         async def _save_response_id():
             try:
                 memory = hass.data[DOMAIN]["conversation_memory"]
@@ -518,75 +424,130 @@ async def save_response_metadata(
                     response_id[:8],
                 )
             except Exception as err:
-                LOGGER.error(
-                    "MEMORY_DEBUG: failed to store response_id for %s: %s",
-                    service_type,
-                    err,
-                )
+                LOGGER.error("Failed to store response_id for %s: %s", service_type, err)
 
         tasks.append(_save_response_id())
 
-    # Task 2: Update token sensors and save to storage (I/O operation)
-    # For ALL service types (conversation, ai_task, code_fast)
+    # Task 2: Update token stats
     if usage:
-        tasks.append(
-            _async_save_token_sensors(
-                hass,
-                entry_id,
-                usage,
-                model,
-                service_type,
-                mode,
-                is_fallback,
-                store_messages,
-            )
-        )
+        async def _update_token_stats():
+            storage = hass.data.get(DOMAIN, {}).get("token_stats")
+            if storage:
+                await storage.async_update_usage(
+                    service_type=service_type,
+                    model=resolved_model,
+                    usage=usage,
+                    mode=mode,
+                    is_fallback=is_fallback,
+                    store_messages=store_messages,
+                    server_side_tool_usage=server_side_tool_usage,
+                )
+
+        tasks.append(_update_token_stats())
 
     # FIRE-AND-FORGET: Execute I/O in background without blocking the response
     if tasks:
+        import asyncio
 
         async def _background_save():
             """Background task that executes I/O operations without blocking caller."""
             try:
                 await asyncio.gather(*tasks, return_exceptions=True)
             except Exception as err:
-                LOGGER.error(
-                    "Background save task failed for %s: %s", service_type, err
-                )
+                LOGGER.error("Background save task failed for %s: %s", service_type, err)
 
-        # Create background task and track it for graceful shutdown
+        # Create background task and track for graceful shutdown
         task = asyncio.create_task(_background_save())
 
         # Store task reference in hass.data for graceful shutdown tracking
-        # This ensures we can await all pending saves before unload
-
-        if DOMAIN not in hass.data:
-            hass.data[DOMAIN] = {}
         if "pending_save_tasks" not in hass.data[DOMAIN]:
             hass.data[DOMAIN]["pending_save_tasks"] = set()
 
         hass.data[DOMAIN]["pending_save_tasks"].add(task)
-        # Auto-cleanup completed tasks to avoid memory leak
         task.add_done_callback(
             lambda t: hass.data[DOMAIN]["pending_save_tasks"].discard(t)
         )
 
-        # Also track in entity if provided (for backward compatibility)
-        if entity is not None:
-            if not hasattr(entity, "_pending_save_tasks"):
-                entity._pending_save_tasks = set()
-            entity._pending_save_tasks.add(task)
-            # Auto-cleanup completed tasks to avoid memory leak
-            task.add_done_callback(lambda t: entity._pending_save_tasks.discard(t))
-
-    # Log search details if available (non-blocking, informational only)
-    # Only for conversation service
+    # Log search details (non-blocking, informational only)
     if service_type == "conversation":
         if citations:
             LOGGER.debug("conversation: citations found: %d", len(citations))
-            for citation in citations:
-                LOGGER.debug("Citation: %s", citation)
         if num_sources_used > 0:
-            LOGGER.debug(
-                "conversation: unique search sources used: %d", num_sources_used
-            )
+            LOGGER.debug("conversation: unique search sources used: %d", num_sources_used)
+
+
+async def handle_response_not_found_error(
+    err: Exception,
+    attempt: int,
+    memory,
+    conv_key: str | None,
+    mode: str,
+    context_id: str = "",
+) -> bool:
+    """Handle NOT_FOUND error for expired response_id on xAI server.
+
+    When xAI returns NOT_FOUND for a previous_response_id, it means the
+    conversation context has expired server-side. This function clears
+    the local memory and signals to retry with a fresh conversation.
+
+    Args:
+        err: The exception that was raised
+        attempt: Current attempt number (0-indexed)
+        memory: ConversationMemory or CodeMemory instance
+        conv_key: Conversation key for memory cleanup
+        mode: Conversation mode ("pipeline", "tools", "code")
+        context_id: Optional context identifier for logging
+
+    Returns:
+        True if should retry (cleared memory), False if should re-raise error
+    """
+    # Check if it's a gRPC NOT_FOUND error
+    try:
+        from grpc import StatusCode
+        from grpc._channel import _InactiveRpcError
+
+        if not isinstance(err, _InactiveRpcError):
+            return False
+
+        if err.code() != StatusCode.NOT_FOUND:
+            return False
+
+    except ImportError:
+        return False
+
+    # Only retry on first attempt
+    if attempt != 0:
+        return False
+
+    # Log the retry
+    context_prefix = f"[Context: {context_id}] " if context_id else ""
+    LOGGER.warning(
+        "%sConversation context not found on xAI server (expired response_id). "
+        "Clearing local memory and retrying with fresh conversation.",
+        context_prefix,
+    )
+
+    # Clear memory by key if available
+    if conv_key and hasattr(memory, "clear_memory_by_key"):
+        try:
+            await memory.clear_memory_by_key(conv_key)
+            LOGGER.debug("Cleared expired memory for conv_key=%s", conv_key)
+        except Exception as clear_err:
+            LOGGER.warning("Failed to clear memory by key: %s", clear_err)
+    # Fallback to clear_memory if clear_memory_by_key not available
+    elif hasattr(memory, "clear_memory"):
+        try:
+            # Extract user_id from conv_key if possible
+            # Format: "user:{user_id}:mode:{mode}:..."
+            if conv_key and conv_key.startswith("user:"):
+                parts = conv_key.split(":")
+                if len(parts) >= 2:
+                    user_id = parts[1]
+                    await memory.clear_memory(user_id, mode)
+                    LOGGER.debug(
+                        "Cleared expired memory for user_id=%s mode=%s", user_id, mode
+                    )
+        except Exception as clear_err:
+            LOGGER.warning("Failed to clear memory: %s", clear_err)
+
+    return True  # Signal to retry

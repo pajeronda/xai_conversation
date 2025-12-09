@@ -13,11 +13,9 @@ from homeassistant.config_entries import ConfigSubentry as HA_ConfigSubentry
 from homeassistant.helpers.entity_platform import (
     AddConfigEntryEntitiesCallback as HA_AddConfigEntryEntitiesCallback,
 )
+from homeassistant.components import conversation as ha_conversation
 
 # Local application imports
-from .__init__ import (
-    ha_conversation,
-)
 from .const import (
     CONF_ALLOW_SMART_HOME_CONTROL,
     CONF_CHAT_MODEL,

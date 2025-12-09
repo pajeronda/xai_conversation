@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, AsyncGenerator, Any
 import contextlib
 
 if TYPE_CHECKING:
-    from ..const import LOGGER
+    pass
 
 
 class LogTimeServices:

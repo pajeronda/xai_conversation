@@ -3,8 +3,64 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.components import conversation as ha_conversation
+from homeassistant.helpers import llm as ha_llm
+from homeassistant.helpers import entity_registry as er
+
+from ..const import (
+    DOMAIN,
+    CONF_SEND_USER_NAME,
+    LOGGER,
+    RECOMMENDED_HISTORY_LIMIT_TURNS,
+    RECOMMENDED_SEND_USER_NAME,
+)
+from .xai_gateway import XAIGateway
+
+if TYPE_CHECKING:
+    from homeassistant.core import HomeAssistant as HA_HomeAssistant
+    from ..entity import XAIBaseLLMEntity
+
+
+def get_exposed_entities_with_aliases(
+    hass, assistant_id: str = "conversation"
+) -> list[dict]:
+    """Get exposed entities enriched with aliases from entity registry.
+
+    Args:
+        hass: Home Assistant instance
+        assistant_id: Assistant ID to filter exposed entities (default: "conversation")
+
+    Returns:
+        List of entity data dictionaries including 'aliases' field if present.
+    """
+    # Get base exposed entities
+    exposed_entities_result = ha_llm._get_exposed_entities(
+        hass, assistant_id, include_state=False
+    )
+
+    if not exposed_entities_result or "entities" not in exposed_entities_result:
+        return []
+
+    ent_reg = er.async_get(hass)
+    enriched_entities = []
+
+    for entity_id, entity_data in exposed_entities_result["entities"].items():
+        # Create a copy to avoid mutating the cached result from HA
+        entity_data_copy = entity_data.copy()
+        entity_data_copy["entity_id"] = (
+            entity_id  # ADDED: Ensure entity_id is explicitly present
+        )
+
+        # Enrich with aliases from registry
+        entry = ent_reg.async_get(entity_id)
+        if entry and entry.aliases:
+            entity_data_copy["aliases"] = list(entry.aliases)
+
+        enriched_entities.append(entity_data_copy)
+
+    return enriched_entities
 
 
 def get_last_user_message(chat_log: ha_conversation.ChatLog) -> str | None:
@@ -151,3 +207,139 @@ def build_session_context_info(hass) -> str:
         f"\n- Timezone: {hass.config.time_zone}"
         f"\n- Country: {hass.config.country}"
     )
+
+
+def build_llm_context(hass, user_input) -> ha_llm.LLMContext:
+    """Build LLMContext independently from chat_log. NOT cached - rebuilt each time."""
+    # Use "conversation" domain to match exposed entities
+    # This matches how Home Assistant's conversation system checks entity exposure
+    assistant_id = "conversation"
+
+    return ha_llm.LLMContext(
+        platform=DOMAIN,
+        context=user_input.context,
+        language=user_input.language,
+        assistant=assistant_id,
+        device_id=extract_device_id(user_input),
+    )
+
+
+async def add_manual_history_to_chat(
+    hass: HA_HomeAssistant,
+    entity: XAIBaseLLMEntity,
+    chat: Any,
+    chat_log: ha_conversation.ChatLog,
+    user_input: ha_conversation.ConversationInput,
+    history_limit_turns: int = RECOMMENDED_HISTORY_LIMIT_TURNS,
+) -> None:
+    """Add manual conversation history to the chat when server-side memory is disabled.
+
+    Optimization: Only the last user message gets full metadata (user/device lookup, timestamp).
+    Historical messages are sent as plain text to avoid expensive async lookups on every API call.
+    """
+    LOGGER.debug("Adding manual history to chat (server-side memory disabled).")
+
+    # Use the passed limit or calculate based on config if needed
+    limit = history_limit_turns * 2
+
+    send_user_name = entity._get_option(CONF_SEND_USER_NAME, RECOMMENDED_SEND_USER_NAME)
+
+    # Get last N turns from chat_log
+    content_list = list(chat_log.content)
+
+    # Filter out system messages or other non-chat content if necessary
+    # For now, we take everything that is User or Assistant content
+
+    history_content = (
+        content_list[-limit:] if len(content_list) > limit else content_list
+    )
+
+    if not history_content:
+        LOGGER.warning("Tools mode: no messages in chat_log to add history")
+        return
+
+    LOGGER.debug(
+        "Tools mode: sending manual history: %d messages (last %d turns)",
+        len(history_content),
+        history_limit_turns,
+    )
+
+    # Optimization: identify the last user message index to apply full metadata only there
+    last_user_msg_index = -1
+    for i in range(len(history_content) - 1, -1, -1):
+        if isinstance(history_content[i], ha_conversation.UserContent):
+            last_user_msg_index = i
+            break
+
+    for i, content in enumerate(history_content):
+        if isinstance(content, ha_conversation.UserContent):
+            # Only the LAST user message gets full metadata (user/device lookup, timestamp)
+            # Historical messages are plain text to avoid expensive async lookups
+            is_last_user_msg = i == last_user_msg_index
+
+            formatted_msg = await format_user_message_with_metadata(
+                content.content or "",
+                user_input,
+                hass,
+                send_user_name
+                and is_last_user_msg,  # Only lookup user/device for last message
+                include_timestamp=is_last_user_msg,  # Only timestamp on last message
+            )
+            chat.append(XAIGateway.user_msg(formatted_msg))
+        elif isinstance(content, ha_conversation.AssistantContent):
+            tool_calls = getattr(content, "tool_calls", None)
+            if tool_calls:
+                chat.append(
+                    XAIGateway.assistant_msg(
+                        content.content or "", tool_calls=tool_calls
+                    )
+                )
+            else:
+                chat.append(XAIGateway.assistant_msg(content.content or ""))
+
+
+class MinimalChatLog:
+    """Minimal chat_log object for fallback mode.
+
+    Simulates ChatLog with only the methods needed by async_process_with_loop:
+    - .content: list of messages
+    - async_add_assistant_content(): to receive the response from tools mode
+    - async_add_delta_content_stream(): for streaming support in fallback mode
+    """
+
+    def __init__(self, content):
+        self.content = content
+        self._accumulated_content = ""
+
+    async def async_add_assistant_content(self, assistant_content):
+        """Add assistant content to the chat log (simulates HA ChatLog behavior)."""
+        self.content.append(assistant_content)
+        # HA's async_add_assistant_content is an async generator that yields once
+        yield None
+
+    async def async_add_delta_content_stream(self, agent_id: str, stream):
+        """
+        Consume a delta stream and add the final content as a single
+        AssistantContent message. This is NOT a generator, it fully consumes
+        the stream. This is to avoid race conditions when waiting for the result.
+        """
+        self._accumulated_content = ""
+
+        async for delta in stream:
+            # Consume the stream but do nothing with the deltas,
+            # as the caller in the fallback doesn't need real-time updates.
+            if "content" in delta:
+                self._accumulated_content += delta["content"]
+
+        # After stream ends, add the single accumulated content to the chat log
+        if self._accumulated_content:
+            self.content.append(
+                ha_conversation.AssistantContent(
+                    agent_id=agent_id,
+                    content=self._accumulated_content,
+                )
+            )
+
+        # This function is called in an `async for` loop, so it must be a generator.
+        # We yield once at the end after the stream is fully processed.
+        yield

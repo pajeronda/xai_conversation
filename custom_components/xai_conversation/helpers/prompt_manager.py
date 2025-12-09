@@ -73,25 +73,6 @@ class PromptManager:
         else:  # tools mode
             return self.data.get(CONF_PROMPT, "")
 
-    def get_base_system_prompt(
-        self, static_context: str = "", tool_definitions: str = ""
-    ) -> str:
-        """Get the base system prompt for this mode using modular building blocks.
-
-        This method now uses the modular prompt composition system.
-        Kept for backward compatibility with any code that might call it directly.
-
-        Args:
-            static_context: Static context for tools mode (optional)
-            tool_definitions: Tool definitions for tools mode (optional)
-
-        Returns:
-            Complete system prompt assembled from building blocks
-        """
-        return self.build_system_prompt(
-            static_context=static_context, tool_definitions=tool_definitions
-        )
-
     def _build_pipeline_control_prompt_blocks(self, custom_rules: str) -> list[str]:
         """Build prompt blocks for pipeline mode with home control."""
         blocks = [PROMPT_SMART_HOME_RECOGNITION]
@@ -204,17 +185,15 @@ class PromptManager:
         if self.mode in ("pipeline", "tools"):
             blocks.append(PROMPT_OUTPUT_FORMAT)
 
-        return "\n\n".join(blocks)
+        return "\n\n".join(blocks).strip()
 
     def build_base_prompt_with_user_instructions(
         self, static_context: str = "", tool_definitions: str = ""
     ) -> str:
         """Build base system prompt + user custom instructions using modular system.
 
-        Uses the new modular prompt composition system (build_system_prompt)
+        Uses the modular prompt composition system (build_system_prompt)
         which assembles prompt from building blocks based on configuration.
-
-        For backward compatibility, falls back to get_base_system_prompt() if needed.
 
         Args:
             static_context: Static context for tools mode (optional)
@@ -223,7 +202,6 @@ class PromptManager:
         Returns:
             Complete system prompt with user instructions integrated
         """
-        # Use new modular system
         return self.build_system_prompt(
             static_context=static_context, tool_definitions=tool_definitions
         )

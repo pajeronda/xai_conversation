@@ -43,13 +43,7 @@ reload_pricing:
     This will fetch the latest pricing for all models and update the pricing sensors.
   fields: {}
 
-dismiss_new_models:
-  name: Dismiss New Models Notification
-  description: >
-    Manually dismiss the new xAI models notification.
-    The notification will automatically expire after 7 days, but you can use this service
-    to dismiss it earlier if you've already reviewed the new models.
-  fields: {}
+
 
 photo_analysis:
   name: Photo Analysis

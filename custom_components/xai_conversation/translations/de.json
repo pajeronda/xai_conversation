@@ -73,6 +73,7 @@
             "allow_smart_home_control": "Smart-Home-Steuerung erlauben",
             "live_search": "Live-Suchmodus",
             "store_messages": "Nachrichten speichern",
+            "show_citations": "Zitate anzeigen",
             "assistant_name": "Assistentenname",
             "send_user_name": "Benutzernamen in Nachrichten einbeziehen",
             "reasoning_effort": "Denkaufwand"
@@ -90,6 +91,7 @@
             "store_messages": "Verwenden Sie den serverseitigen Speicher von xAI, um die zu sendenden Tokens pro Anfrage zu reduzieren. Die Speicherparameter (Dauer, Anzahl der Runden) werden auf Integrationsebene konfiguriert.",
             "assistant_name": "Der Name, mit dem sich der Assistent identifiziert (z.B. 'Jarvis', 'Alexa', 'HAL'). Das Ändern dieses Werts startet eine neue Konversation und die vorherige Historie wird nicht mehr zugänglich sein.",
             "send_user_name": "Fügen Sie den Home Assistant-Benutzernamen oder Assist Voice-Gerätenamen zum Chat mit Grok hinzu.",
+            "show_citations": "Suchzitate zu Chat-Antworten hinzufügen. Nützlich für UI/Chat-Schnittstellen, kann aber für Sprachassistenten störend sein. Standard: AUS (empfohlen für Sprache).",
             "live_search": "Web-Suchfunktionen aktivieren: 'off' (deaktiviert), 'auto' (Modell entscheidet), 'on' (immer aktiviert). Gilt sowohl für Pipeline- als auch für Tools-Modus.",
             "prompt": "Benutzerdefinierte Anweisungen für den Agenten (nur Tools-Modus).",
             "reasoning_effort": "Denkaufwand für Modelle, die dies unterstützen (niedrig, mittel, hoch, maximal). Nur verfügbar für grok-4 und grok-4-fast Modelle."
@@ -110,11 +112,18 @@
         "init": {
           "title": "xAI Token-Sensoren",
           "data": {
-            "name": "Name"
+            "name": "Name",
+            "tokens_per_million": "Tokens pro Million",
+            "xai_pricing_conversion_factor": "xAI Preiskonvertierungsfaktor",
+            "pricing_update_interval_hours": "Preisaktualisierungsintervall (Stunden)",
+            "cost_per_tool_call": "Kosten pro Tool-Aufruf (USD)"
           },
           "data_description": {
             "name": "Beschreibender Name für die Token-Sensoren.",
-            "model_pricing_override": "Diese Felder ermöglichen es Ihnen, die dynamisch abgerufenen offiziellen Token-Preise (Eingabe, zwischengespeicherte Eingabe, Ausgabe) für jedes Modell zu überschreiben. Lassen Sie den Standardwert, um die offiziellen Preise zu verwenden."
+            "tokens_per_million": "Teilungsfaktor für Token-Preisberechnungen. Standard: 1.000.000.",
+            "xai_pricing_conversion_factor": "xAI API gibt Preise in Einheiten zurück, die in USD pro Million Tokens umgerechnet werden müssen. Standard: 10.000.",
+            "pricing_update_interval_hours": "Wie oft Preise von der xAI API abgerufen werden. Standard: 48 Stunden.",
+            "cost_per_tool_call": "Standardkosten pro serverseitigem Tool-Aufruf (wird als Fallback verwendet, wenn das Tool nicht in der Preisübersicht ist). Die meisten Tools kosten $5.00/1k Aufrufe = 0.005, Collections Search kostet $2.50/1k = 0.0025. Standard: 0.005."
           }
         }
       },

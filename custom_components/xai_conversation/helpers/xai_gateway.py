@@ -3,21 +3,17 @@
 This module provides XAIGateway class that centralizes ALL xAI SDK interactions
 to eliminate code duplication across entity.py, services.py, and ai_task.py.
 
-Architecture: One gateway instance per entity (not singleton).
-Each XAIBaseLLMEntity creates its own gateway with access to entity's config.
+Architecture: Centralized Gateway initialized with ConfigEntry.
+Acts as a factory for Clients and Chats, resolving configurations automatically
+based on service type (conversation, code_fast, ai_task).
 """
 
 from __future__ import annotations
 
 import json
-import base64
-import time
 from typing import TYPE_CHECKING, Any
 
-# Home Assistant imports
-from homeassistant.components import conversation as ha_conversation
-
-# xAI SDK imports (conditional) - DEFINED HERE TO BREAK CIRCULAR DEP
+# xAI SDK imports (conditional)
 try:
     from xai_sdk import AsyncClient as XAI_CLIENT_CLASS
     from xai_sdk.chat import (
@@ -27,7 +23,11 @@ try:
         tool as xai_tool,
         image as xai_image,
     )
-    from xai_sdk.search import SearchParameters as xai_search_parameters
+    from xai_sdk.tools import (
+        web_search,
+        x_search,
+        code_execution,
+    )
 
     XAI_SDK_AVAILABLE = True
 except ImportError:
@@ -37,62 +37,71 @@ except ImportError:
     xai_assistant = None
     xai_tool = None
     xai_image = None
-    xai_search_parameters = None
+    web_search = None
+    x_search = None
+    code_execution = None
     XAI_SDK_AVAILABLE = False
 
 from ..const import (
     CONF_API_HOST,
     CONF_CHAT_MODEL,
+    CONF_IMAGE_MODEL,
+    CONF_VISION_MODEL,
     CONF_MAX_TOKENS,
     CONF_PROMPT,
     CONF_REASONING_EFFORT,
     CONF_LIVE_SEARCH,
     CONF_STORE_MESSAGES,
     CONF_TEMPERATURE,
-    CONF_TIMEOUT,
-    DOMAIN,
     LOGGER,
     REASONING_EFFORT_MODELS,
     RECOMMENDED_CHAT_MODEL,
+    RECOMMENDED_IMAGE_MODEL,
+    RECOMMENDED_VISION_MODEL,
     RECOMMENDED_LIVE_SEARCH,
     RECOMMENDED_MAX_TOKENS,
     RECOMMENDED_REASONING_EFFORT,
     RECOMMENDED_STORE_MESSAGES,
     RECOMMENDED_TEMPERATURE,
     RECOMMENDED_TIMEOUT,
-    SUPPORTED_MODELS,
+    RECOMMENDED_GROK_CODE_FAST_OPTIONS,
+    RECOMMENDED_AI_TASK_OPTIONS,
+    SUBENTRY_TYPE_AI_TASK,
+    SUBENTRY_TYPE_CODE_TASK,
 )
-from ..exceptions import handle_api_error, raise_generic_error, raise_validation_error
+from ..exceptions import handle_api_error
 from .response import save_response_metadata
 from .log_time_services import LogTimeServices
 
 if TYPE_CHECKING:
-    from typing import Literal
+    from homeassistant.core import HomeAssistant
+    from homeassistant.config_entries import ConfigEntry
     from xai_sdk import AsyncClient as XAIClient
-
-    from ..entity import XAIBaseLLMEntity
+    from homeassistant.components import conversation as ha_conversation
 
 
 class XAIGateway:
     """Single point of contact with xAI SDK.
 
-    Centralizes ALL xAI SDK interactions to eliminate code duplication.
-    Each entity creates its own gateway instance for isolated configuration.
+    Centralizes ALL xAI SDK interactions.
+    Initialized with ConfigEntry to access global and sub-entry configurations.
 
     Responsibilities:
     - Validate API key
     - Create and cache xAI client with retry/keepalive configuration
-    - Create xAI chat objects with model parameters
-    - Execute stateless chats (AI Task)
+    - Create xAI chat objects with automatic config resolution
+    - Manage Server-Side Tools injection
     """
 
-    def __init__(self, entity: XAIBaseLLMEntity) -> None:
-        """Initialize gateway with entity reference.
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
+        """Initialize gateway with config entry.
 
         Args:
-            entity: The XAIBaseLLMEntity instance that owns this gateway
+            hass: Home Assistant instance
+            entry: Config entry containing all settings
         """
-        self.entity = entity
+        self.hass = hass
+        self.entry = entry
         self._cached_client: XAIClient | None = None
 
     # ==========================================================================
@@ -115,13 +124,11 @@ class XAIGateway:
     def assistant_msg(content: str, tool_calls: list | None = None) -> Any:
         """Create an assistant message object."""
         if tool_calls:
-            # When tool_calls present, return dict format that SDK accepts
             return {
                 "role": "assistant",
                 "content": content,
                 "tool_calls": tool_calls,
             }
-        # When no tool_calls, use the SDK helper
         return xai_assistant(content)
 
     @staticmethod
@@ -139,12 +146,40 @@ class XAIGateway:
         """Create an image message object."""
         return xai_image(data_uri_or_url)
 
-    async def close(self) -> None:
-        """Close the cached xAI client and cleanup gRPC channels asynchronously.
+    # ==========================================================================
+    # API KEY VALIDATION
+    # ==========================================================================
 
-        This should be called when the entity is being removed to ensure
-        proper cleanup of network resources (gRPC channels).
+    @staticmethod
+    async def async_validate_api_key(api_key: str) -> None:
+        """Validate xAI API key format.
+
+        Args:
+            api_key: The API key to validate
+
+        Raises:
+            ValueError: If API key is invalid or SDK is not installed
         """
+        try:
+            from xai_sdk import Client as XAIClient
+        except ImportError as err:
+            raise ValueError("xai_sdk not installed") from err
+
+        # Basic format validation
+        if not api_key or not api_key.startswith("xai-"):
+            raise ValueError("Invalid API key format. Must start with 'xai-'")
+
+        # Try to create a client to validate the key
+        try:
+            client = XAIClient(api_key=api_key)
+            # The client creation validates the key format
+            # We don't need to make an actual API call
+            del client
+        except Exception as err:
+            raise ValueError(f"Invalid API key: {err}") from err
+
+    async def close(self) -> None:
+        """Close the cached xAI client and cleanup gRPC channels asynchronously."""
         if self._cached_client is not None:
             try:
                 if hasattr(self._cached_client, "close"):
@@ -157,43 +192,8 @@ class XAIGateway:
                 self._cached_client = None
 
     @staticmethod
-    async def async_validate_api_key(api_key: str) -> None:
-        """Validate the API key by making a minimal chat request.
-
-        Args:
-            api_key: The xAI API key to validate
-
-        Raises:
-            ValueError: If SDK not available or API key invalid
-        """
-        if not XAI_SDK_AVAILABLE or xai_user is None:
-            raise ValueError("xai_sdk not installed")
-
-        from ..const import RECOMMENDED_CHAT_MODEL, RECOMMENDED_TIMEOUT
-
-        try:
-            client = XAIGateway.create_standalone_client(
-                api_key=api_key, timeout=float(RECOMMENDED_TIMEOUT)
-            )
-
-            chat = client.chat.create(
-                model=RECOMMENDED_CHAT_MODEL, max_tokens=1, temperature=0.1
-            )
-            chat.append(xai_user("ok"))
-            await chat.sample()
-
-        except ValueError as exc:
-            raise ValueError(f"Failed to validate API credentials: {exc}") from exc
-        except Exception as exc:
-            raise ValueError(f"Failed to validate API credentials: {exc}") from exc
-
-    @staticmethod
     def _get_channel_options() -> list:
-        """Get gRPC channel options with retry policy and keepalive configuration.
-
-        Returns:
-            List of channel options tuples
-        """
+        """Get gRPC channel options with retry policy and keepalive configuration."""
         retry_policy = json.dumps(
             {
                 "methodConfig": [
@@ -222,221 +222,213 @@ class XAIGateway:
         ]
 
     @staticmethod
-    def create_standalone_client(api_key: str, timeout: float) -> XAIClient:
-        """Create a standalone xAI client for services (not entity-bound).
+    def create_client_from_api_key(api_key: str, timeout: float | None = None) -> XAIClient:
+        """Create a standalone xAI client from an API key.
 
-        Args:
-            api_key: xAI API key
-            timeout: Request timeout in seconds
-
-        Returns:
-            XAIClient instance configured with retry and keepalive
-
-        Raises:
-            ValueError: If xAI SDK is not available
+        Useful for tasks that don't have access to the ConfigEntry (e.g., ModelManager).
         """
         if not XAI_SDK_AVAILABLE or XAI_CLIENT_CLASS is None:
             raise ValueError("xAI SDK not available")
 
-        return XAI_CLIENT_CLASS(
-            api_key=api_key,
-            timeout=timeout,
-            channel_options=XAIGateway._get_channel_options(),
-        )
-
-    @staticmethod
-    def create_standalone_chat(
-        client: XAIClient,
-        model: str,
-        max_tokens: int,
-        temperature: float,
-        store_messages: bool,
-        previous_response_id: str | None = None,
-    ) -> Any:
-        """Create a standalone xAI chat for services (not entity-bound).
-
-        Args:
-            client: xAI client instance
-            model: Model name to use
-            max_tokens: Maximum tokens in response
-            temperature: Sampling temperature
-            store_messages: Whether to enable server-side memory
-            previous_response_id: Optional ID for conversation chaining
-
-        Returns:
-            xAI Chat object configured with provided settings
-        """
-        chat_args = {
-            "model": model,
-            "max_tokens": max_tokens,
-            "temperature": temperature,
-            "store_messages": store_messages,
+        client_kwargs = {
+            "api_key": api_key,
+            "channel_options": XAIGateway._get_channel_options(),
         }
+        if timeout:
+            client_kwargs["timeout"] = timeout
 
-        if previous_response_id:
-            chat_args["previous_response_id"] = previous_response_id
-
-        LOGGER.debug(
-            "Creating standalone chat: model=%s, max_tokens=%d, temperature=%.2f, store_messages=%s, prev_id=%s",
-            model,
-            max_tokens,
-            temperature,
-            store_messages,
-            bool(previous_response_id),
-        )
-
-        return client.chat.create(**chat_args)
+        return XAI_CLIENT_CLASS(**client_kwargs)
 
     def create_client(self) -> XAIClient:
-        """Create or return a cached xAI client for connection reuse.
-
-        Client is cached per entity to avoid TLS handshake/channel setup on each call.
-        On config change, the entry is reloaded and a new entity is created,
-        so the client is recreated with new settings.
+        """Create or return a cached xAI client.
 
         Returns:
             XAIClient instance with retry/keepalive configuration
-
-        Raises:
-            XAIConfigurationError: If configuration is invalid
         """
-        # Return cached client if available
         if self._cached_client is not None:
             return self._cached_client
 
         if not XAI_SDK_AVAILABLE or XAI_CLIENT_CLASS is None:
             raise ValueError("xAI SDK not available")
 
-        LOGGER.debug("Creating xAI client with configuration validation")
-        model = self.entity._get_option(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL)
+        api_key = self.entry.data.get("api_key")
+        if not api_key:
+            raise ValueError("API Key not found in config entry")
 
-        # Validate model (warning only, doesn't block)
-        if model not in SUPPORTED_MODELS:
-            LOGGER.warning(
-                "Unknown model '%s', proceeding anyway (supported: %s)",
-                model,
-                SUPPORTED_MODELS,
-            )
-
-        timeout = self.entity._get_option(CONF_TIMEOUT, RECOMMENDED_TIMEOUT)
-
-        # Validate timeout (warning only, doesn't block)
-        if not isinstance(timeout, (int, float)) or timeout <= 0:
-            LOGGER.warning(
-                "Invalid timeout value '%s' (type: %s), using default %s",
-                timeout,
-                type(timeout).__name__,
-                RECOMMENDED_TIMEOUT,
-            )
-            timeout = RECOMMENDED_TIMEOUT
-
-        LOGGER.debug(
-            "Client configuration: timeout=%ss, API key=%s***",
-            timeout,
-            self.entity.entry.data["api_key"][:8],
-        )
-
+        # Use global timeout setting or default
+        timeout = RECOMMENDED_TIMEOUT  # Default fallback
+        # Ideally, we could fetch a global timeout from options if it existed
+        
         client_kwargs = {
-            "api_key": self.entity.entry.data["api_key"],
+            "api_key": api_key,
             "timeout": timeout,
             "channel_options": self._get_channel_options(),
         }
-        api_host = self.entity._get_option(CONF_API_HOST, None)
+        
+        # Check for API Host override
+        api_host = None
+        # Try to find api_host in options flow (global) or subentries
+        # For simplicity, we check if ANY subentry has an override, or use default
+        for subentry in self.entry.subentries.values():
+             if CONF_API_HOST in subentry.data:
+                 api_host = subentry.data[CONF_API_HOST]
+                 break
+        
         if api_host:
             client_kwargs["api_host"] = api_host
 
+        LOGGER.debug("Creating xAI client (timeout=%ss)", timeout)
         client = XAI_CLIENT_CLASS(**client_kwargs)
         self._cached_client = client
-        LOGGER.debug("xAI client created and cached successfully")
         return client
+
+    def get_service_config(
+        self, service_type: str, subentry_id: str | None = None, model_target: str = "chat"
+    ) -> dict:
+        """Resolve configuration for a specific service and mode.
+
+        Args:
+            service_type: "conversation", "code_fast", "ai_task"
+            subentry_id: Required for "conversation" (multi-entity), ignored for others
+            model_target: "chat", "vision", or "image" (determines model key)
+
+        Returns:
+            Dictionary with resolved parameters (model, temp, tools, etc.)
+        """
+        config_data = {}
+        
+        # 1. Locate Subentry Data
+        if service_type == "conversation":
+            if not subentry_id:
+                raise ValueError("subentry_id required for conversation service")
+            if subentry_id in self.entry.subentries:
+                config_data = self.entry.subentries[subentry_id].data
+            else:
+                LOGGER.warning("Subentry %s not found, using defaults", subentry_id)
+
+        elif service_type == "code_fast":
+            # Find the singleton code_task subentry
+            for subentry in self.entry.subentries.values():
+                if subentry.subentry_type == SUBENTRY_TYPE_CODE_TASK:
+                    config_data = subentry.data
+                    break
+            if not config_data:
+                config_data = RECOMMENDED_GROK_CODE_FAST_OPTIONS
+
+        elif service_type == "ai_task":
+             # Find the singleton ai_task subentry
+            for subentry in self.entry.subentries.values():
+                if subentry.subentry_type == SUBENTRY_TYPE_AI_TASK:
+                    config_data = subentry.data
+                    break
+            if not config_data:
+                config_data = RECOMMENDED_AI_TASK_OPTIONS
+        
+        # 2. Resolve Parameters with Defaults
+        resolved = {}
+        
+        # Model
+        if model_target == "vision":
+            resolved["model"] = config_data.get(CONF_VISION_MODEL, RECOMMENDED_VISION_MODEL)
+        elif model_target == "image":
+            resolved["model"] = config_data.get(CONF_IMAGE_MODEL, RECOMMENDED_IMAGE_MODEL)
+        else:
+            resolved["model"] = config_data.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL)
+
+        resolved["temperature"] = float(config_data.get(CONF_TEMPERATURE, RECOMMENDED_TEMPERATURE))
+        resolved["max_tokens"] = int(config_data.get(CONF_MAX_TOKENS, RECOMMENDED_MAX_TOKENS))
+        resolved["store_messages"] = bool(config_data.get(CONF_STORE_MESSAGES, RECOMMENDED_STORE_MESSAGES))
+        resolved["reasoning_effort"] = config_data.get(CONF_REASONING_EFFORT, RECOMMENDED_REASONING_EFFORT)
+        
+        # Tools (Server-side) configuration
+        # Vision/Image modes typically don't use search tools by default, but we respect config
+        live_search_mode = config_data.get(CONF_LIVE_SEARCH, RECOMMENDED_LIVE_SEARCH)
+        
+        # If model_target is 'image', tools are irrelevant for the image API endpoint
+        if model_target == "image":
+             resolved["server_tools"] = None
+        else:
+             resolved["server_tools"] = self._build_server_side_tools(live_search_mode)
+
+        return resolved
+
+    def _build_server_side_tools(self, live_search_mode: str) -> list | None:
+        """Build list of server-side tools based on mode."""
+        if not XAI_SDK_AVAILABLE or web_search is None:
+            return None
+
+        if live_search_mode == "off":
+            return None
+        elif live_search_mode == "web search":
+            return [web_search()]
+        elif live_search_mode == "x search":
+            return [x_search()]
+        elif live_search_mode in ["full", "auto", "on"]:
+            return [web_search(), x_search(), code_execution()]
+        
+        return None
 
     def create_chat(
         self,
-        client: XAIClient,
-        tools: list | None = None,
+        service_type: str,
+        subentry_id: str | None = None,
+        model_target: str = "chat",
         previous_response_id: str | None = None,
-        model: str | None = None,
+        client_tools: list | None = None,
     ) -> Any:
-        """Create an xAI chat object with the correct model and parameters.
+        """Create an xAI chat object configured for the specific service.
+
+        This is the unified factory method for all chat interactions.
 
         Args:
-            client: The xAI client instance
-            tools: Optional list of tools for tools mode
-            previous_response_id: Optional ID for conversation chaining
-            model: Optional model override (for vision, image gen, etc.)
+            service_type: "conversation", "code_fast", "ai_task"
+            subentry_id: Required for "conversation"
+            model_target: "chat" or "vision"
+            previous_response_id: Optional ID for chaining
+            client_tools: Optional list of Client-Side (HA) tools to merge
 
         Returns:
-            xAI Chat object configured with entity's settings
+            Configured xAI Chat object
         """
-        if model is None:
-            model = self.entity._get_option(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL)
-        max_tokens = self.entity._get_int_option(
-            CONF_MAX_TOKENS, RECOMMENDED_MAX_TOKENS
-        )
-        temperature = self.entity._get_float_option(
-            CONF_TEMPERATURE, RECOMMENDED_TEMPERATURE
-        )
-        # Enable server-side memory when configured
-        store_messages = bool(
-            self.entity._get_option(CONF_STORE_MESSAGES, RECOMMENDED_STORE_MESSAGES)
-        )
-
-        # Configure Live Search if enabled and SDK available
-        live_search_mode = self.entity._get_option(
-            CONF_LIVE_SEARCH, RECOMMENDED_LIVE_SEARCH
-        )
-        search_parameters = None
-        if live_search_mode != "off" and xai_search_parameters:
-            try:
-                search_parameters = xai_search_parameters(mode=live_search_mode)
-                LOGGER.debug("Live Search enabled with mode: %s", live_search_mode)
-            except Exception as err:
-                LOGGER.warning("Failed to configure Live Search: %s", err)
-
+        # 1. Resolve Configuration
+        config = self.get_service_config(service_type, subentry_id, model_target)
+        
+        # 2. Get Client
+        client = self.create_client()
+        
+        # 3. Merge Tools
+        server_tools = config["server_tools"]
+        all_tools = []
+        if server_tools:
+            all_tools.extend(server_tools)
+        if client_tools:
+            all_tools.extend(client_tools)
+        
+        # 4. Build Chat Arguments
         chat_args = {
-            "model": model,
-            "max_tokens": max_tokens,
-            "temperature": temperature,
-            "store_messages": store_messages,
+            "model": config["model"],
+            "max_tokens": config["max_tokens"],
+            "temperature": config["temperature"],
+            "store_messages": config["store_messages"],
         }
 
         # Add reasoning_effort only for supported models
-        if model in REASONING_EFFORT_MODELS:
-            reasoning_effort = self.entity._get_option(
-                CONF_REASONING_EFFORT, RECOMMENDED_REASONING_EFFORT
-            )
-            chat_args["reasoning_effort"] = reasoning_effort
-            LOGGER.debug(
-                "Reasoning effort set to '%s' for model %s", reasoning_effort, model
-            )
+        if config["model"] in REASONING_EFFORT_MODELS:
+            chat_args["reasoning_effort"] = config["reasoning_effort"]
 
-        if search_parameters:
-            chat_args["search_parameters"] = search_parameters
         if previous_response_id:
             chat_args["previous_response_id"] = previous_response_id
 
-        if tools:
-            chat_args["tools"] = tools
-            LOGGER.debug(
-                "Creating chat with tools: model=%s, max_tokens=%d, temperature=%.2f, tools=%d, store_messages=%s, live_search=%s, prev_id=%s",
-                model,
-                max_tokens,
-                temperature,
-                len(tools),
-                store_messages,
-                live_search_mode,
-                bool(previous_response_id),
-            )
-        else:
-            LOGGER.debug(
-                "Creating chat without tools: model=%s, max_tokens=%d, temperature=%.2f, store_messages=%s, live_search=%s, prev_id=%s",
-                model,
-                max_tokens,
-                temperature,
-                store_messages,
-                live_search_mode,
-                bool(previous_response_id),
-            )
+        if all_tools:
+            chat_args["tools"] = all_tools
+
+        LOGGER.debug(
+            "Creating chat [%s:%s]: model=%s, server_tools=%d, client_tools=%d, store_msgs=%s",
+            service_type, model_target, config["model"], 
+            len(server_tools) if server_tools else 0,
+            len(client_tools) if client_tools else 0,
+            config["store_messages"]
+        )
 
         return client.chat.create(**chat_args)
 
@@ -445,95 +437,97 @@ class XAIGateway:
         chat_log: ha_conversation.ChatLog,
         extra_messages: list[Any] | None = None,
         service_type: str = "ai_task",
+        model_target: str = "chat",
     ) -> None:
-        """Process chat_log without memory - for AI Task only.
-
-        This method is "dumb" and only sends pre-formatted messages to the API.
-        Any I/O or message preparation (like reading images) must be done by the caller.
-
-        Args:
-            chat_log: The conversation chat log
-            extra_messages: Optional list of pre-built xAI message objects (e.g. images) to add
-            service_type: Service type for logging/metrics
-        """
-        context = {"mode": "stateless", "memory": "no_memory"}
+        """Process chat_log without memory (AI Task)."""
+        # Only for AI Task logic
+        
+        context = {"mode": "stateless", "service": service_type}
         async with LogTimeServices(LOGGER, service_type, context) as timer:
             try:
-                client = self.create_client()
-                chat = self.create_chat(client, tools=None, previous_response_id=None)
+                # Use unified create_chat (injects tools automatically!)
+                chat = self.create_chat(
+                    service_type=service_type,
+                    model_target=model_target,
+                    previous_response_id=None
+                )
 
-                system_prompt_text = self.entity._get_option(CONF_PROMPT, "")
+                # TODO: Retrieve system prompt from config using get_service_config logic? 
+                # For now, we manually fetch prompt from config to match legacy logic, 
+                # but cleanly via the same config dictionary.
+                config = self.get_service_config(service_type, model_target=model_target)
+                
+                # We need to fetch the custom prompt text which is NOT in the standard config dict above
+                # This part is a bit tricky as PROMPT is in the raw subentry data.
+                # Re-fetch raw data for prompt text:
+                raw_data = self._get_raw_subentry_data(service_type)
+                
+                # Determine prompt key based on model target
+                prompt_key = CONF_PROMPT
+                if model_target == "vision":
+                    prompt_key = "vision_prompt" # Hardcoded key from const.py CONF_VISION_PROMPT
+
+                system_prompt_text = raw_data.get(prompt_key, "")
                 if system_prompt_text:
                     chat.append(xai_system(system_prompt_text))
 
-                # Add any pre-prepared extra messages (e.g. images from attachments)
                 if extra_messages:
                     for msg in extra_messages:
                         chat.append(msg)
 
                 for content in chat_log.content:
                     if isinstance(content, ha_conversation.UserContent):
-                        # User content is just text in stateless mode
                         if content.content:
                             chat.append(xai_user(content.content))
                     elif isinstance(content, ha_conversation.AssistantContent):
                         chat.append(xai_assistant(content.content or ""))
 
-                # Time the API call specifically
                 async with timer.record_api_call():
                     response = await chat.sample()
 
                 content_text = getattr(response, "content", "")
                 usage = getattr(response, "usage", None)
                 model = getattr(response, "model", None)
-                store_messages = self.entity._get_option(
-                    CONF_STORE_MESSAGES, RECOMMENDED_STORE_MESSAGES
-                )
+                server_tool_usage = getattr(response, "server_side_tool_usage", None)
 
                 await save_response_metadata(
-                    hass=self.entity.hass,
-                    entry_id=self.entity.entry.entry_id,
+                    hass=self.hass,
+                    entry_id=self.entry.entry_id,
                     usage=usage,
                     model=model,
                     service_type=service_type,
-                    store_messages=store_messages,
+                    store_messages=config["store_messages"],
+                    server_side_tool_usage=server_tool_usage,
                 )
 
                 chat_log.content.append(
                     ha_conversation.AssistantContent(
-                        agent_id=self.entity.entity_id, content=content_text
+                        agent_id="xai_conversation", # Generic ID
+                        content=content_text
                     )
                 )
 
             except Exception as err:
-                handle_api_error(err, timer.start_time, "AI Task API call")
+                handle_api_error(err, timer.start_time, f"{service_type} API call")
+
+    def _get_raw_subentry_data(self, service_type: str, subentry_id: str = None) -> dict:
+        """Helper to get raw data for prompts (internal use)."""
+        if service_type == "ai_task":
+             for subentry in self.entry.subentries.values():
+                if subentry.subentry_type == SUBENTRY_TYPE_AI_TASK:
+                    return subentry.data
+        return {} # Fallback
 
     async def delete_remote_completions(
         self, response_ids: list[str], context: str = "cleanup"
     ) -> int:
-        """Delete stored completion IDs from xAI server asynchronously.
-
-        This method removes conversation chains from xAI's server-side storage.
-        Should be called after clearing local memory to prevent orphaned data.
-
-        Args:
-            response_ids: List of response IDs to delete from xAI server
-            context: Context string for logging (e.g., "clear_memory", "physical_delete")
-
-        Returns:
-            Number of successfully deleted completions
-        """
+        """Delete stored completion IDs from xAI server asynchronously."""
         if not response_ids:
             return 0
-
-        # Check if store_messages is enabled (no point deleting if feature is off)
-        store_messages = self.entity._get_option(
-            CONF_STORE_MESSAGES, RECOMMENDED_STORE_MESSAGES
-        )
-        if not store_messages:
-            LOGGER.debug("%s: skipping remote deletion (store_messages=False)", context)
-            return 0
-
+        
+        # Note: We assume store_messages=True if we are trying to delete something.
+        # We don't check config here because if we have IDs, they exist and should be deleted.
+        
         deleted_count = 0
         try:
             client = self.create_client()
@@ -541,24 +535,12 @@ class XAIGateway:
                 try:
                     await client.chat.delete_stored_completion(pid)
                     deleted_count += 1
-                    LOGGER.debug(
-                        "%s: remote delete successful for %s", context, str(pid)[:8]
-                    )
+                    LOGGER.debug("%s: remote delete successful for %s", context, str(pid)[:8])
                 except Exception as derr:
-                    LOGGER.debug(
-                        "%s: remote delete failed for %s: %s",
-                        context,
-                        str(pid)[:8],
-                        derr,
-                    )
+                    LOGGER.debug("%s: remote delete failed for %s: %s", context, str(pid)[:8], derr)
 
             if deleted_count > 0:
-                LOGGER.info(
-                    "%s: deleted %d/%d completion IDs from server",
-                    context,
-                    deleted_count,
-                    len(response_ids),
-                )
+                LOGGER.info("%s: deleted %d/%d completion IDs from server", context, deleted_count, len(response_ids))
 
         except Exception as cerr:
             LOGGER.warning("%s: remote deletion failed to start: %s", context, cerr)

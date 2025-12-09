@@ -74,6 +74,7 @@
             "live_search": "Modalità ricerca live",
             "store_messages": "Memorizza messaggi",
             "send_user_name": "Includi nome utente nei messaggi",
+            "show_citations": "Mostra citazioni nella chat",
             "reasoning_effort": "Livello di ragionamento"
           },
           "data_description": {
@@ -88,6 +89,7 @@
             "allow_smart_home_control": "Se abilitato, l'assistente può eseguire comandi di smart home. Se disabilitato, risponde solo in modo conversazionale. La modifica di questa impostazione avvierà una nuova conversazione.",
             "store_messages": "Usa la memoria lato server di xAI per ridurre i token da inviare in ogni richiesta. I parametri della memoria (durata, numero di turni) sono configurati a livello di integrazione.",
             "send_user_name": "Aggiungi il nome utente di Home Assistant o il nome del dispositivo Assist voice nella chat con Grok.",
+            "show_citations": "Aggiungi le citazioni delle ricerche alle risposte. Utile per interfacce UI/chat ma può risultare verboso per assistenti vocali. Predefinito: OFF (consigliato per voce).",
             "live_search": "Abilita capacità di ricerca web: 'off' (disabilitato), 'auto' (il modello decide), 'on' (sempre abilitato). Si applica sia alla modalità flusso che a quella degli strumenti.",
             "prompt": "Istruzioni personalizzate per l'agente (solo modalità strumenti).",
             "reasoning_effort": "Livello di impegno nel ragionamento per i modelli che lo supportano (basso, medio, alto, massimo). Disponibile solo per i modelli grok-4 e grok-4-fast."
@@ -108,11 +110,18 @@
         "init": {
           "title": "Sensori Token xAI",
           "data": {
-            "name": "Nome"
+            "name": "Nome",
+            "tokens_per_million": "Token per milione",
+            "xai_pricing_conversion_factor": "Fattore di conversione prezzi xAI",
+            "pricing_update_interval_hours": "Intervallo aggiornamento prezzi (ore)",
+            "cost_per_tool_call": "Costo per invocazione tool (USD)"
           },
           "data_description": {
             "name": "Nome descrittivo per i sensori dei token.",
-            "model_pricing_override": "Questi campi permettono di sovrascrivere i prezzi ufficiali dei token (input, cached input, output) per ciascun modello, recuperati dinamicamente. Lasciare vuoto per utilizzare i prezzi ufficiali."
+            "tokens_per_million": "Fattore di divisione per calcoli prezzo token. Predefinito: 1.000.000.",
+            "xai_pricing_conversion_factor": "L'API xAI restituisce prezzi in unità che necessitano conversione a USD per milione di token. Predefinito: 10.000.",
+            "pricing_update_interval_hours": "Frequenza di recupero prezzi aggiornati dall'API xAI. Predefinito: 48 ore.",
+            "cost_per_tool_call": "Costo predefinito per invocazione tool lato server (usato come fallback se il tool non è nella mappa prezzi). La maggior parte dei tool costa $5.00/1k chiamate = 0.005, Collections Search costa $2.50/1k = 0.0025. Predefinito: 0.005."
           }
         }
       },

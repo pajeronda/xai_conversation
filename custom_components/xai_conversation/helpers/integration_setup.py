@@ -11,7 +11,8 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
-    from homeassistant.config_entries import ConfigSubentry
+
+    # Removed unused: from homeassistant.config_entries import ConfigSubentry
     from .. import XAIConfigEntry
 
 from ..const import (

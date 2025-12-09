@@ -37,6 +37,9 @@ from .tools_ha_to_xai import (
 # Tool conversion: xAI → HA (inbound)
 from .tools_xai_to_ha import convert_xai_to_ha_tool
 
+# Custom tools
+from .custom_tools import CUSTOM_TOOLS
+
 # Conversation utilities
 from .conversation import (
     get_last_user_message,
@@ -46,6 +49,10 @@ from .conversation import (
     parse_id_list,
     format_user_message_with_metadata,
     build_session_context_info,
+    get_exposed_entities_with_aliases,
+    build_llm_context,
+    add_manual_history_to_chat,
+    MinimalChatLog,
 )
 
 # Prompt management
@@ -57,8 +64,8 @@ from .memory import ConversationMemory
 # Chat history management
 from .chat_history import ChatHistoryService
 
-# Token statistics storage
-from .token_storage import TokenStatsStorage
+# Token statistics manager (V2 - simplified)
+from .sensors import TokenStats
 
 # Integration setup helpers
 from .integration_setup import (
@@ -87,6 +94,7 @@ __all__ = [
     "filter_tools_by_exposed_domains",
     # Tools conversion
     "convert_xai_to_ha_tool",
+    "CUSTOM_TOOLS",
     # Conversation
     "get_last_user_message",
     "extract_user_id",
@@ -95,11 +103,15 @@ __all__ = [
     "parse_id_list",
     "format_user_message_with_metadata",
     "build_session_context_info",
+    "get_exposed_entities_with_aliases",
+    "build_llm_context",
+    "add_manual_history_to_chat",
+    "MinimalChatLog",
     # Classes
     "PromptManager",
     "ConversationMemory",
     "ChatHistoryService",
-    "TokenStatsStorage",
+    "TokenStats",
     "XAIGateway",
     "LogTimeServices",
     "timed_stream_generator",
