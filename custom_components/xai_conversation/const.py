@@ -60,8 +60,8 @@ RECOMMENDED_AI_TASK_MODEL = "grok-code-fast-1"
 RECOMMENDED_IMAGE_MODEL = "grok-2-image-1212"  # Model for image generation (Aurora)
 RECOMMENDED_VISION_MODEL = "grok-2-vision-1212"  # Model for photo analysis
 RECOMMENDED_MAX_TOKENS = 2000
-RECOMMENDED_TEMPERATURE = 1.0
-RECOMMENDED_TOP_P = 1.0
+RECOMMENDED_TEMPERATURE = 0.1
+RECOMMENDED_TOP_P = 0.9
 RECOMMENDED_REASONING_EFFORT = "low"
 RECOMMENDED_LIVE_SEARCH = "off"
 RECOMMENDED_STORE_MESSAGES = True
@@ -109,15 +109,15 @@ REASONING_EFFORT_MODELS: list[str] = []
 # The final system prompt is built by helpers.PromptManager.build_system_prompt()
 # which assembles blocks in this order:
 #
-# 1. PROMPT_IDENTITY                    (always)
-# 2. PROMPT_ROLE_BASE                   (always for conversation modes)
-# 3. PROMPT_MEMORY_* (serverside/client) (based on store_messages)
+# 1. PROMPT_IDENTITY                      (always)
+# 2. PROMPT_ROLE_BASE                     (always for conversation modes)
+# 3. PROMPT_MEMORY_* (serverside/client)  (based on store_messages)
 # 4. MODE-SPECIFIC BLOCKS:
-#    - Code mode:                 CODE_ROLE → [USER_INSTRUCTIONS] → CODE_OUTPUT_FORMAT
-#    - Pipeline + allow_control:  RECOGNITION → CUSTOM_RULES → DECISION_LOGIC → EXAMPLES
-#    - Tools + allow_control:     TOOLS_USAGE
+#    - Code mode:                   CODE_ROLE → [USER_INSTRUCTIONS] → CODE_OUTPUT_FORMAT
+#    - Pipeline + allow_control:    RECOGNITION → CUSTOM_RULES → DECISION_LOGIC → EXAMPLES
+#    - Tools + allow_control:       TOOLS_USAGE
 #    - Chat-only or !allow_control: NO_CONTROL
-# 5. PROMPT_OUTPUT_FORMAT               (conversation/pipeline/tools modes only)
+# 5. PROMPT_OUTPUT_FORMAT                 (pipeline/tools modes only)
 # ==============================================================================
 
 # -----------------------------------------------------------------------------
@@ -203,7 +203,7 @@ Rules: Keep explanations in response_text, raw code in response_code (no ``` fen
 # -----------------------------------------------------------------------------
 PROMPT_OUTPUT_FORMAT = """OUTPUT FORMAT - MANDATORY:
 - Follow the user's language and communication style.
-- Plain text only. NO markdown (*, #, `, -, •). Output is for TTS - symbols are spoken literally. Write in natural sentences."""
+- Plain text only. NO markdown (*, #, `, -, •), NO emoji. Output is for TTS - symbols are spoken literally. Write in natural sentences."""
 
 # ==============================================================================
 # END OF MODULAR PROMPT SYSTEM
@@ -231,15 +231,18 @@ RECOMMENDED_PIPELINE_OPTIONS = {
     CONF_CHAT_MODEL: RECOMMENDED_CHAT_MODEL,
     CONF_LLM_HASS_API: [],
     CONF_MAX_TOKENS: 1000,
-    CONF_TEMPERATURE: 0.1,
+    CONF_TEMPERATURE: RECOMMENDED_TEMPERATURE,
     # User can extend the default pipeline prompt; we store only user part here
     CONF_PROMPT_PIPELINE: "",
     CONF_TOP_P: RECOMMENDED_TOP_P,
     CONF_LIVE_SEARCH: RECOMMENDED_LIVE_SEARCH,
     CONF_API_HOST: DEFAULT_API_HOST,
     CONF_ASSISTANT_NAME: RECOMMENDED_ASSISTANT_NAME,
+    CONF_TIMEOUT: RECOMMENDED_TIMEOUT,
+    CONF_SEND_USER_NAME: RECOMMENDED_SEND_USER_NAME,
+    CONF_SHOW_CITATIONS: RECOMMENDED_SHOW_CITATIONS,
     # Memory enabled by default for conversation
-    CONF_STORE_MESSAGES: True,
+    CONF_STORE_MESSAGES: RECOMMENDED_STORE_MESSAGES,
     # Pipeline is enabled by default in this mode
     CONF_USE_INTELLIGENT_PIPELINE: True,
     # Allow smart home control by default (unified setting)
@@ -256,9 +259,12 @@ RECOMMENDED_TOOLS_OPTIONS = {
     CONF_TEMPERATURE: RECOMMENDED_TEMPERATURE,
     CONF_TOP_P: RECOMMENDED_TOP_P,
     CONF_LIVE_SEARCH: RECOMMENDED_LIVE_SEARCH,
-    CONF_STORE_MESSAGES: True,
     CONF_API_HOST: DEFAULT_API_HOST,
     CONF_ASSISTANT_NAME: RECOMMENDED_ASSISTANT_NAME,
+    CONF_TIMEOUT: RECOMMENDED_TIMEOUT,
+    CONF_SEND_USER_NAME: RECOMMENDED_SEND_USER_NAME,
+    CONF_SHOW_CITATIONS: RECOMMENDED_SHOW_CITATIONS,
+    CONF_STORE_MESSAGES: RECOMMENDED_STORE_MESSAGES,
     # Explicitly disable Intelligent Pipeline in this mode
     CONF_USE_INTELLIGENT_PIPELINE: False,
     # Allow smart home control by default (unified setting)
@@ -272,11 +278,13 @@ RECOMMENDED_AI_TASK_OPTIONS = {
     CONF_VISION_MODEL: RECOMMENDED_VISION_MODEL,
     CONF_LLM_HASS_API: [],
     CONF_MAX_TOKENS: 5000,
-    CONF_TEMPERATURE: 0.1,
+    CONF_TEMPERATURE: RECOMMENDED_TEMPERATURE,
     CONF_PROMPT: GROK_AI_TASK_PROMPT,
     CONF_VISION_PROMPT: VISION_ANALYSIS_PROMPT,
     CONF_TOP_P: RECOMMENDED_TOP_P,
     CONF_LIVE_SEARCH: RECOMMENDED_LIVE_SEARCH,
+    CONF_API_HOST: DEFAULT_API_HOST,
+    CONF_TIMEOUT: RECOMMENDED_TIMEOUT,
     CONF_STORE_MESSAGES: False,
 }
 
@@ -284,10 +292,12 @@ RECOMMENDED_AI_TASK_OPTIONS = {
 RECOMMENDED_GROK_CODE_FAST_OPTIONS = {
     CONF_CHAT_MODEL: RECOMMENDED_GROK_CODE_FAST_MODEL,
     CONF_MAX_TOKENS: 5000,
-    CONF_TEMPERATURE: 0.1,
+    CONF_TEMPERATURE: RECOMMENDED_TEMPERATURE,
     CONF_PROMPT_CODE: "",  # Empty default - PromptManager builds prompt from modular blocks
     CONF_TOP_P: RECOMMENDED_TOP_P,
     CONF_LIVE_SEARCH: RECOMMENDED_LIVE_SEARCH,
+    CONF_API_HOST: DEFAULT_API_HOST,
+    CONF_TIMEOUT: RECOMMENDED_TIMEOUT,
     CONF_STORE_MESSAGES: True,  # Enable server-side memory via xAI previous_response_id chaining
     CONF_ASSISTANT_NAME: DEFAULT_CODE_FAST_ASSISTANT_NAME,
 }
@@ -307,6 +317,14 @@ RECOMMENDED_TOKENS_PER_MILLION = 1_000_000  # Division factor for token pricing
 RECOMMENDED_XAI_PRICING_CONVERSION_FACTOR = 10000.0  # API price units → USD per 1M tokens
 RECOMMENDED_PRICING_UPDATE_INTERVAL_HOURS = 48  # How often to fetch pricing from xAI API
 RECOMMENDED_COST_PER_TOOL_CALL = 0.005  # Default price per tool invocation ($5/1k calls)
+
+# Default options for the Sensors subentry
+RECOMMENDED_SENSORS_OPTIONS = {
+    CONF_TOKENS_PER_MILLION: RECOMMENDED_TOKENS_PER_MILLION,
+    CONF_XAI_PRICING_CONVERSION_FACTOR: RECOMMENDED_XAI_PRICING_CONVERSION_FACTOR,
+    CONF_PRICING_UPDATE_INTERVAL_HOURS: RECOMMENDED_PRICING_UPDATE_INTERVAL_HOURS,
+    CONF_COST_PER_TOOL_CALL: RECOMMENDED_COST_PER_TOOL_CALL,
+}
 
 # Official xAI Agent Tools Pricing (cost per invocation, not per 1k)
 TOOL_PRICING = {

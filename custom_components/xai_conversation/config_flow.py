@@ -24,23 +24,23 @@ from homeassistant.helpers import llm as ha_llm, selector
 from .helpers.xai_gateway import XAIGateway
 
 from .const import (
+    # Configuration keys
+    CONF_ALLOW_SMART_HOME_CONTROL,
     CONF_API_HOST,
     CONF_ASSISTANT_NAME,
     CONF_CHAT_MODEL,
+    CONF_COST_PER_TOOL_CALL,
     CONF_IMAGE_MODEL,
-    CONF_VISION_MODEL,
     CONF_LIVE_SEARCH,
     CONF_MAX_TOKENS,
     CONF_MEMORY_CLEANUP_INTERVAL_HOURS,
-    CONF_ALLOW_SMART_HOME_CONTROL,
-    CONF_MEMORY_USER_MAX_TURNS,
-    CONF_MEMORY_USER_TTL_HOURS,
     CONF_MEMORY_DEVICE_MAX_TURNS,
     CONF_MEMORY_DEVICE_TTL_HOURS,
+    CONF_MEMORY_USER_MAX_TURNS,
+    CONF_MEMORY_USER_TTL_HOURS,
     CONF_PRICING_UPDATE_INTERVAL_HOURS,
     CONF_PROMPT,
     CONF_PROMPT_CODE,
-    CONF_VISION_PROMPT,
     CONF_PROMPT_PIPELINE,
     CONF_REASONING_EFFORT,
     CONF_SEND_USER_NAME,
@@ -50,39 +50,34 @@ from .const import (
     CONF_TOKENS_PER_MILLION,
     CONF_TOP_P,
     CONF_USE_INTELLIGENT_PIPELINE,
+    CONF_VISION_MODEL,
+    CONF_VISION_PROMPT,
     CONF_XAI_PRICING_CONVERSION_FACTOR,
+    # Default names
     DEFAULT_AI_TASK_NAME,
-    DEFAULT_API_HOST,
-    DEFAULT_CODE_FAST_ASSISTANT_NAME,
     DEFAULT_CONVERSATION_NAME,
     DEFAULT_DEVICE_NAME,
     DEFAULT_GROK_CODE_FAST_NAME,
     DEFAULT_SENSORS_NAME,
+    # Other constants
     DOMAIN,
     LOGGER,
     REASONING_EFFORT_MODELS,
+    SUPPORTED_MODELS,
+    # Recommended options dictionaries (single source of truth for defaults)
     RECOMMENDED_AI_TASK_OPTIONS,
-    RECOMMENDED_ASSISTANT_NAME,
-    RECOMMENDED_CHAT_MODEL,
-    RECOMMENDED_COST_PER_TOOL_CALL,
     RECOMMENDED_GROK_CODE_FAST_OPTIONS,
-    RECOMMENDED_LIVE_SEARCH,
+    RECOMMENDED_PIPELINE_OPTIONS,
+    RECOMMENDED_SENSORS_OPTIONS,
+    RECOMMENDED_TOOLS_OPTIONS,
+    # Memory settings (entry-level, not in subentry dictionaries)
     RECOMMENDED_MEMORY_CLEANUP_INTERVAL_HOURS,
-    RECOMMENDED_MEMORY_USER_MAX_TURNS,
-    RECOMMENDED_MEMORY_USER_TTL_HOURS,
     RECOMMENDED_MEMORY_DEVICE_MAX_TURNS,
     RECOMMENDED_MEMORY_DEVICE_TTL_HOURS,
-    RECOMMENDED_PIPELINE_OPTIONS,
-    RECOMMENDED_PRICING_UPDATE_INTERVAL_HOURS,
+    RECOMMENDED_MEMORY_USER_MAX_TURNS,
+    RECOMMENDED_MEMORY_USER_TTL_HOURS,
+    # Reasoning effort (optional, model-dependent)
     RECOMMENDED_REASONING_EFFORT,
-    RECOMMENDED_SEND_USER_NAME,
-    RECOMMENDED_SHOW_CITATIONS,
-    RECOMMENDED_STORE_MESSAGES,
-    RECOMMENDED_TOKENS_PER_MILLION,
-    RECOMMENDED_TOOLS_OPTIONS,
-    RECOMMENDED_XAI_PRICING_CONVERSION_FACTOR,
-    SUPPORTED_MODELS,
-    CONF_COST_PER_TOOL_CALL,
 )
 
 
@@ -103,15 +98,15 @@ class XAIConfigFlow(ConfigFlow, domain=DOMAIN):
                         vol.Required(CONF_API_KEY): str,
                         vol.Optional(
                             CONF_API_HOST,
-                            default=RECOMMENDED_TOOLS_OPTIONS.get(
-                                CONF_API_HOST, DEFAULT_API_HOST
-                            ),
+                            default=RECOMMENDED_PIPELINE_OPTIONS[CONF_API_HOST],
                         ): str,
                         vol.Optional(
-                            CONF_ASSISTANT_NAME, default=RECOMMENDED_ASSISTANT_NAME
+                            CONF_ASSISTANT_NAME,
+                            default=RECOMMENDED_PIPELINE_OPTIONS[CONF_ASSISTANT_NAME],
                         ): str,
                         vol.Optional(
-                            CONF_LIVE_SEARCH, default=RECOMMENDED_LIVE_SEARCH
+                            CONF_LIVE_SEARCH,
+                            default=RECOMMENDED_PIPELINE_OPTIONS[CONF_LIVE_SEARCH],
                         ): selector.SelectSelector(
                             selector.SelectSelectorConfig(
                                 options=["off", "web search", "x search", "full"],
@@ -141,12 +136,12 @@ class XAIConfigFlow(ConfigFlow, domain=DOMAIN):
 
             # Override API host only if user provided a custom one
             user_api_host = user_input.get(CONF_API_HOST)
-            if user_api_host and user_api_host != DEFAULT_API_HOST:
+            if user_api_host and user_api_host != RECOMMENDED_PIPELINE_OPTIONS[CONF_API_HOST]:
                 conv_defaults[CONF_API_HOST] = user_api_host
 
             # Set live search from user input
             conv_defaults[CONF_LIVE_SEARCH] = user_input.get(
-                CONF_LIVE_SEARCH, RECOMMENDED_LIVE_SEARCH
+                CONF_LIVE_SEARCH, RECOMMENDED_PIPELINE_OPTIONS[CONF_LIVE_SEARCH]
             )
 
             # Add memory configuration to entry data (shared by all entities)
@@ -199,9 +194,7 @@ class XAIConfigFlow(ConfigFlow, domain=DOMAIN):
                     vol.Required(CONF_API_KEY): str,
                     vol.Optional(
                         CONF_API_HOST,
-                        default=RECOMMENDED_TOOLS_OPTIONS.get(
-                            CONF_API_HOST, DEFAULT_API_HOST
-                        ),
+                        default=RECOMMENDED_PIPELINE_OPTIONS[CONF_API_HOST],
                     ): str,
                 }
             ),
@@ -339,13 +332,7 @@ class XAIOptionsFlow(ConfigSubentryFlow):
             self.options = RECOMMENDED_GROK_CODE_FAST_OPTIONS.copy()
         elif self._subentry_type == "sensors":
             # Sensors subentry with pricing configuration options
-            self.options = {
-                "name": DEFAULT_SENSORS_NAME,
-                CONF_TOKENS_PER_MILLION: RECOMMENDED_TOKENS_PER_MILLION,
-                CONF_XAI_PRICING_CONVERSION_FACTOR: RECOMMENDED_XAI_PRICING_CONVERSION_FACTOR,
-                CONF_PRICING_UPDATE_INTERVAL_HOURS: RECOMMENDED_PRICING_UPDATE_INTERVAL_HOURS,
-                CONF_COST_PER_TOOL_CALL: RECOMMENDED_COST_PER_TOOL_CALL,
-            }
+            self.options = {"name": DEFAULT_SENSORS_NAME, **RECOMMENDED_SENSORS_OPTIONS}
         else:
             # Default to Intelligent Pipeline options when adding a conversation subentry
             self.options = RECOMMENDED_PIPELINE_OPTIONS.copy()
@@ -390,7 +377,8 @@ class XAIOptionsFlow(ConfigSubentryFlow):
                     vol.Optional(
                         CONF_TOKENS_PER_MILLION,
                         default=options.get(
-                            CONF_TOKENS_PER_MILLION, RECOMMENDED_TOKENS_PER_MILLION
+                            CONF_TOKENS_PER_MILLION,
+                            RECOMMENDED_SENSORS_OPTIONS[CONF_TOKENS_PER_MILLION],
                         ),
                     ): selector.NumberSelector(
                         selector.NumberSelectorConfig(
@@ -404,7 +392,7 @@ class XAIOptionsFlow(ConfigSubentryFlow):
                         CONF_XAI_PRICING_CONVERSION_FACTOR,
                         default=options.get(
                             CONF_XAI_PRICING_CONVERSION_FACTOR,
-                            RECOMMENDED_XAI_PRICING_CONVERSION_FACTOR,
+                            RECOMMENDED_SENSORS_OPTIONS[CONF_XAI_PRICING_CONVERSION_FACTOR],
                         ),
                     ): selector.NumberSelector(
                         selector.NumberSelectorConfig(
@@ -418,7 +406,7 @@ class XAIOptionsFlow(ConfigSubentryFlow):
                         CONF_PRICING_UPDATE_INTERVAL_HOURS,
                         default=options.get(
                             CONF_PRICING_UPDATE_INTERVAL_HOURS,
-                            RECOMMENDED_PRICING_UPDATE_INTERVAL_HOURS,
+                            RECOMMENDED_SENSORS_OPTIONS[CONF_PRICING_UPDATE_INTERVAL_HOURS],
                         ),
                     ): selector.NumberSelector(
                         selector.NumberSelectorConfig(
@@ -432,7 +420,7 @@ class XAIOptionsFlow(ConfigSubentryFlow):
                         CONF_COST_PER_TOOL_CALL,
                         default=options.get(
                             CONF_COST_PER_TOOL_CALL,
-                            RECOMMENDED_COST_PER_TOOL_CALL,
+                            RECOMMENDED_SENSORS_OPTIONS[CONF_COST_PER_TOOL_CALL],
                         ),
                     ): selector.NumberSelector(
                         selector.NumberSelectorConfig(
@@ -464,7 +452,7 @@ class XAIOptionsFlow(ConfigSubentryFlow):
             )
 
         # Conversation subentry supports two modes via the toggle CONF_USE_INTELLIGENT_PIPELINE
-        model = options.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL)
+        model = options.get(CONF_CHAT_MODEL, RECOMMENDED_PIPELINE_OPTIONS[CONF_CHAT_MODEL])
 
         if self._subentry_type == "conversation":
             # Unified parameters (appear for both pipeline and tools modes)
@@ -481,26 +469,37 @@ class XAIOptionsFlow(ConfigSubentryFlow):
                     vol.Optional(
                         CONF_STORE_MESSAGES,
                         default=options.get(
-                            CONF_STORE_MESSAGES, RECOMMENDED_STORE_MESSAGES
+                            CONF_STORE_MESSAGES,
+                            RECOMMENDED_PIPELINE_OPTIONS[CONF_STORE_MESSAGES],
                         ),
                     ): selector.BooleanSelector(),
                     vol.Optional(
                         CONF_SEND_USER_NAME,
-                        default=options.get(CONF_SEND_USER_NAME, RECOMMENDED_SEND_USER_NAME),
+                        default=options.get(
+                            CONF_SEND_USER_NAME,
+                            RECOMMENDED_PIPELINE_OPTIONS[CONF_SEND_USER_NAME],
+                        ),
                     ): selector.BooleanSelector(),
                     vol.Optional(
                         CONF_SHOW_CITATIONS,
-                        default=options.get(CONF_SHOW_CITATIONS, RECOMMENDED_SHOW_CITATIONS),
+                        default=options.get(
+                            CONF_SHOW_CITATIONS,
+                            RECOMMENDED_PIPELINE_OPTIONS[CONF_SHOW_CITATIONS],
+                        ),
                     ): selector.BooleanSelector(),
                     vol.Optional(
                         CONF_ASSISTANT_NAME,
                         default=options.get(
-                            CONF_ASSISTANT_NAME, RECOMMENDED_ASSISTANT_NAME
+                            CONF_ASSISTANT_NAME,
+                            RECOMMENDED_PIPELINE_OPTIONS[CONF_ASSISTANT_NAME],
                         ),
                     ): str,
                     vol.Optional(
                         CONF_LIVE_SEARCH,
-                        default=options.get(CONF_LIVE_SEARCH, RECOMMENDED_LIVE_SEARCH),
+                        default=options.get(
+                            CONF_LIVE_SEARCH,
+                            RECOMMENDED_PIPELINE_OPTIONS[CONF_LIVE_SEARCH],
+                        ),
                     ): selector.SelectSelector(
                         selector.SelectSelectorConfig(
                             options=["off", "web search", "x search", "full"],
@@ -524,7 +523,10 @@ class XAIOptionsFlow(ConfigSubentryFlow):
                         ): selector.TemplateSelector(),
                         vol.Optional(
                             CONF_API_HOST,
-                            default=options.get(CONF_API_HOST, DEFAULT_API_HOST),
+                            default=options.get(
+                                CONF_API_HOST,
+                                RECOMMENDED_PIPELINE_OPTIONS[CONF_API_HOST],
+                            ),
                         ): str,
                         vol.Optional(
                             CONF_CHAT_MODEL,
@@ -539,7 +541,7 @@ class XAIOptionsFlow(ConfigSubentryFlow):
                             CONF_MAX_TOKENS,
                             default=options.get(
                                 CONF_MAX_TOKENS,
-                                RECOMMENDED_PIPELINE_OPTIONS.get(CONF_MAX_TOKENS),
+                                RECOMMENDED_PIPELINE_OPTIONS[CONF_MAX_TOKENS],
                             ),
                         ): selector.NumberSelector(
                             selector.NumberSelectorConfig(
@@ -550,7 +552,7 @@ class XAIOptionsFlow(ConfigSubentryFlow):
                             CONF_TEMPERATURE,
                             default=options.get(
                                 CONF_TEMPERATURE,
-                                RECOMMENDED_PIPELINE_OPTIONS.get(CONF_TEMPERATURE),
+                                RECOMMENDED_PIPELINE_OPTIONS[CONF_TEMPERATURE],
                             ),
                         ): selector.NumberSelector(
                             selector.NumberSelectorConfig(
@@ -563,7 +565,8 @@ class XAIOptionsFlow(ConfigSubentryFlow):
                         vol.Optional(
                             CONF_TOP_P,
                             default=options.get(
-                                CONF_TOP_P, RECOMMENDED_PIPELINE_OPTIONS.get(CONF_TOP_P)
+                                CONF_TOP_P,
+                                RECOMMENDED_PIPELINE_OPTIONS[CONF_TOP_P],
                             ),
                         ): selector.NumberSelector(
                             selector.NumberSelectorConfig(
@@ -600,9 +603,7 @@ class XAIOptionsFlow(ConfigSubentryFlow):
                             CONF_API_HOST,
                             default=options.get(
                                 CONF_API_HOST,
-                                RECOMMENDED_TOOLS_OPTIONS.get(
-                                    CONF_API_HOST, "api.x.ai"
-                                ),
+                                RECOMMENDED_TOOLS_OPTIONS[CONF_API_HOST],
                             ),
                         ): str,
                         vol.Optional(
@@ -624,7 +625,7 @@ class XAIOptionsFlow(ConfigSubentryFlow):
                             CONF_MAX_TOKENS,
                             default=options.get(
                                 CONF_MAX_TOKENS,
-                                RECOMMENDED_TOOLS_OPTIONS.get(CONF_MAX_TOKENS),
+                                RECOMMENDED_TOOLS_OPTIONS[CONF_MAX_TOKENS],
                             ),
                         ): selector.NumberSelector(
                             selector.NumberSelectorConfig(
@@ -635,7 +636,7 @@ class XAIOptionsFlow(ConfigSubentryFlow):
                             CONF_TEMPERATURE,
                             default=options.get(
                                 CONF_TEMPERATURE,
-                                RECOMMENDED_TOOLS_OPTIONS.get(CONF_TEMPERATURE),
+                                RECOMMENDED_TOOLS_OPTIONS[CONF_TEMPERATURE],
                             ),
                         ): selector.NumberSelector(
                             selector.NumberSelectorConfig(
@@ -648,7 +649,8 @@ class XAIOptionsFlow(ConfigSubentryFlow):
                         vol.Optional(
                             CONF_TOP_P,
                             default=options.get(
-                                CONF_TOP_P, RECOMMENDED_TOOLS_OPTIONS.get(CONF_TOP_P)
+                                CONF_TOP_P,
+                                RECOMMENDED_TOOLS_OPTIONS[CONF_TOP_P],
                             ),
                         ): selector.NumberSelector(
                             selector.NumberSelectorConfig(
@@ -682,7 +684,7 @@ class XAIOptionsFlow(ConfigSubentryFlow):
             # Only CONF_STORE_MESSAGES remains as a per-conversation toggle
         else:
             # ai_task_data and code_task schemas stay as they are
-            model = options.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL)
+            model = options.get(CONF_CHAT_MODEL, RECOMMENDED_AI_TASK_OPTIONS[CONF_CHAT_MODEL])
 
             # Build base schema with service-specific prompt field
             if self._subentry_type == "code_fast":
@@ -716,7 +718,10 @@ class XAIOptionsFlow(ConfigSubentryFlow):
                 {
                     vol.Optional(
                         CONF_API_HOST,
-                        default=options.get(CONF_API_HOST, DEFAULT_API_HOST),
+                        default=options.get(
+                            CONF_API_HOST,
+                            RECOMMENDED_AI_TASK_OPTIONS[CONF_API_HOST],
+                        ),
                     ): str,
                     vol.Optional(
                         CONF_CHAT_MODEL,
@@ -806,18 +811,23 @@ class XAIOptionsFlow(ConfigSubentryFlow):
                     {
                         vol.Optional(
                             CONF_STORE_MESSAGES,
-                            default=options.get(CONF_STORE_MESSAGES, True),
+                            default=options.get(
+                                CONF_STORE_MESSAGES,
+                                RECOMMENDED_GROK_CODE_FAST_OPTIONS[CONF_STORE_MESSAGES],
+                            ),
                         ): selector.BooleanSelector(),
                         vol.Optional(
                             CONF_ASSISTANT_NAME,
                             default=options.get(
-                                CONF_ASSISTANT_NAME, DEFAULT_CODE_FAST_ASSISTANT_NAME
+                                CONF_ASSISTANT_NAME,
+                                RECOMMENDED_GROK_CODE_FAST_OPTIONS[CONF_ASSISTANT_NAME],
                             ),
                         ): str,
                         vol.Optional(
                             CONF_LIVE_SEARCH,
                             default=options.get(
-                                CONF_LIVE_SEARCH, RECOMMENDED_LIVE_SEARCH
+                                CONF_LIVE_SEARCH,
+                                RECOMMENDED_GROK_CODE_FAST_OPTIONS[CONF_LIVE_SEARCH],
                             ),
                         ): selector.SelectSelector(
                             selector.SelectSelectorConfig(
@@ -855,7 +865,9 @@ class XAIOptionsFlow(ConfigSubentryFlow):
                     CONF_USE_INTELLIGENT_PIPELINE, current_use_pipeline
                 )
 
-                current_model = options.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL)
+                current_model = options.get(
+                    CONF_CHAT_MODEL, RECOMMENDED_PIPELINE_OPTIONS[CONF_CHAT_MODEL]
+                )
                 new_model = user_input.get(CONF_CHAT_MODEL, current_model)
 
                 current_allow_control = options.get(CONF_ALLOW_SMART_HOME_CONTROL, True)
