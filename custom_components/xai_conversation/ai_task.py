@@ -90,6 +90,13 @@ class XAITaskEntity(
             | ha_ai_task.AITaskEntityFeature.SUPPORT_ATTACHMENTS
         )
 
+    async def async_added_to_hass(self) -> None:
+        """Ensure XAIBaseLLMEntity initialization logic runs."""
+        # Call XAIBaseLLMEntity's async_added_to_hass directly to ensure gateway is initialized
+        # even if ha_ai_task.AITaskEntity doesn't call super() correctly.
+        # Note: XAIBaseLLMEntity calls super().async_added_to_hass() internally.
+        await XAIBaseLLMEntity.async_added_to_hass(self)
+
     async def _prepare_attachments(
         self, attachments: list | None, images: list[str] | None = None
     ) -> list[Any]:
@@ -296,55 +303,46 @@ class XAITaskEntity(
 
         context = {"model": model, "images_count": len(image_messages)}
         async with LogTimeServices(LOGGER, "photo_analysis", context) as timer:
-            client = None
-            try:
-                # Use gateway helper to create chat with vision model configuration
-                chat = self.gateway.create_chat(
-                    service_type="ai_task",
-                    model_target="vision",
-                    previous_response_id=None
+            # Use gateway helper to create chat with vision model configuration
+            chat = self.gateway.create_chat(
+                service_type="ai_task",
+                model_target="vision",
+                previous_response_id=None
+            )
+
+            vision_prompt = self._get_option(
+                CONF_VISION_PROMPT, VISION_ANALYSIS_PROMPT
+            )
+            if vision_prompt:
+                chat.append(XAIGateway.system_msg(vision_prompt))
+
+            # Construct user message: [text, img1, img2...]
+            message_content = [prompt]
+            message_content.extend(image_messages)
+
+            # Add single user message with mixed content
+            chat.append(XAIGateway.user_msg(message_content))
+
+            async with timer.record_api_call():
+                response = await chat.sample()
+
+            content_text = getattr(response, "content", "")
+            usage = getattr(response, "usage", None)
+
+            if usage is None:
+                LOGGER.warning(
+                    "xAI API did not return usage data for vision task. Using fallback (0 tokens)."
                 )
+                usage = _FallbackUsage()
 
-                vision_prompt = self._get_option(
-                    CONF_VISION_PROMPT, VISION_ANALYSIS_PROMPT
-                )
-                if vision_prompt:
-                    chat.append(XAIGateway.system_msg(vision_prompt))
+            # Use correct metadata saver
+            await save_response_metadata(
+                hass=self.hass,
+                entry_id=self.entry.entry_id,
+                usage=usage,
+                model=model,
+                service_type="ai_task",
+                store_messages=False,
+            )
 
-                # Construct user message: [text, img1, img2...]
-                message_content = [prompt]
-                message_content.extend(image_messages)
-
-                # Add single user message with mixed content
-                chat.append(XAIGateway.user_msg(message_content))
-
-                async with timer.record_api_call():
-                    response = await chat.sample()
-
-                content_text = getattr(response, "content", "")
-                usage = getattr(response, "usage", None)
-
-                if usage is None:
-                    LOGGER.warning(
-                        "xAI API did not return usage data for vision task. Using fallback (0 tokens)."
-                    )
-                    usage = _FallbackUsage()
-
-                # Use correct metadata saver
-                await save_response_metadata(
-                    hass=self.hass,
-                    entry_id=self.entry.entry_id,
-                    usage=usage,
-                    model=model,
-                    service_type="ai_task",
-                    store_messages=False,
-                )
-
-                return content_text
-            finally:
-                if client is not None:
-                    try:
-                        if hasattr(client, "__exit__"):
-                            client.__exit__(None, None, None)
-                    except Exception as close_err:
-                        LOGGER.warning("Error closing xAI client: %s", close_err)
+            return content_text

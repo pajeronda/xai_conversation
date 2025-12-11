@@ -209,7 +209,7 @@ class XAIToolsProcessor:
                 hass=self._entity.hass,
                 entry_id=self._entity.entry.entry_id,
                 usage=getattr(response, "usage", None),
-                model=getattr(response, "model", None),
+                model=self._entity._model,  # Explicitly pass model
                 service_type="conversation",
                 mode="tools",
                 is_fallback=is_fallback,
@@ -744,7 +744,7 @@ class XAIToolsProcessor:
             hass=self._entity.hass,
             entry_id=self._entity.entry.entry_id,
             usage=getattr(final_response, "usage", None),
-            model=getattr(final_response, "model", None),
+            model=self._entity._model,  # Explicitly pass model
             service_type="conversation",
             mode="tools",
             is_fallback=False,

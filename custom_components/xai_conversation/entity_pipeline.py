@@ -161,14 +161,14 @@ class IntelligentPipeline:
                 async with timer.record_api_call():
                     response = await chat.sample()
 
-                content = getattr(response, "content", "")
+                response_text = getattr(response, "content", "")
 
                 # Add response directly
-                if content:
+                if response_text:
                     async for _ in chat_log.async_add_assistant_content(
                         ha_conversation.AssistantContent(
                             agent_id=self.entity.entity_id,
-                            content=content,
+                            content=response_text,
                         )
                     ):
                         pass
@@ -177,10 +177,10 @@ class IntelligentPipeline:
                     hass=self.hass,
                     entry_id=self.entity.entry.entry_id,
                     usage=getattr(response, "usage", None),
-                    model=getattr(response, "model", None),
+                    model=self.entity._model,  # Explicit model from entity
                     service_type="conversation",
                     mode="pipeline",
-                    is_fallback=True,  # Mark as fallback
+                    is_fallback=True,  # Mark as fallback (method) not model fallback
                     store_messages=store_messages,
                     conv_key=conv_key,
                     response_id=getattr(response, "id", None),
@@ -265,6 +265,19 @@ class IntelligentPipeline:
                 else:
                     # Buffering mode: accumulate everything
                     buffer += content_chunk
+                    
+                    # Fail-fast check: if buffer no longer matches "[[HA_LOCAL" prefix, flush it
+                    # The tag is "[[HA_LOCAL" (10 chars).
+                    # We check if the start of buffer matches the expected prefix up to its current length.
+                    expected_prefix = "[[HA_LOCAL"
+                    check_len = min(len(buffer), len(expected_prefix))
+                    
+                    if buffer[:check_len] != expected_prefix[:check_len]:
+                        # Mismatch detected! Flush buffer and resume streaming
+                        LOGGER.debug("pipeline_stream: false positive tag detected, flushing buffer: '%s'", buffer[:20])
+                        yield {"content": buffer}
+                        buffer = ""
+                        streaming_active = True
 
             # End of stream handling
             if suspicious_buffer:
@@ -275,7 +288,12 @@ class IntelligentPipeline:
             if last_response:
                 response_holder["id"] = getattr(last_response, "id", None)
                 response_holder["usage"] = getattr(last_response, "usage", None)
-                response_holder["model"] = getattr(last_response, "model", None)
+                # Ensure model is set, fallback to configured model if missing in response
+                response_model = getattr(last_response, "model", None)
+                if not response_model and self.entity and hasattr(self.entity, "_model"):
+                    response_model = self.entity._model
+                response_holder["model"] = response_model
+                
                 response_holder["citations"] = getattr(last_response, "citations", [])
 
                 # Extract num_sources_used from usage object

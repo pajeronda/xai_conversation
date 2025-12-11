@@ -18,6 +18,8 @@ from .const import (
     LOGGER,
     RECOMMENDED_HISTORY_LIMIT_TURNS,
     SUBENTRY_TYPE_CODE_TASK,
+    CONF_CHAT_MODEL,
+    RECOMMENDED_CHAT_MODEL,
 )
 from .exceptions import raise_generic_error, raise_validation_error
 from .helpers import (
@@ -72,6 +74,7 @@ def register_services(hass: HA_HomeAssistant, entry: HA_ConfigEntry) -> None:
     reset_token_stats = ResetTokenStatsService(hass)
     reload_pricing = ReloadPricingService(hass, entry)
     photo_analysis = PhotoAnalysisService(hass, entry)
+    ask_service = AskService(hass, entry)
 
     # Register services
     hass.services.async_register(
@@ -123,6 +126,13 @@ def register_services(hass: HA_HomeAssistant, entry: HA_ConfigEntry) -> None:
         supports_response=SupportsResponse.ONLY,
     )
 
+    hass.services.async_register(
+        DOMAIN,
+        "ask",
+        ask_service.async_handle,
+        supports_response=SupportsResponse.ONLY,
+    )
+
     LOGGER.debug("All xAI services registered successfully")
 
 
@@ -165,6 +175,113 @@ def _get_conversation_entity(hass: HA_HomeAssistant):
         raise_generic_error("Target entity not found")
 
     return target_entity
+
+
+# ==============================================================================
+# SERVICE: ask (Generate Response)
+# ==============================================================================
+
+
+class AskService:
+    """Service handler for 'ask' - Generate stateless response from prompt/data."""
+
+    def __init__(self, hass: HA_HomeAssistant, entry: HA_ConfigEntry):
+        """Initialize the service.
+
+        Args:
+            hass: Home Assistant instance
+            entry: Config entry for xAI Conversation
+        """
+        self.hass = hass
+        self.entry = entry
+        self.gateway = XAIGateway(hass, entry)
+
+    async def async_handle(self, call: HA_ServiceCall) -> HA_ServiceResponse:
+        """Handle the ask service call.
+
+        Args:
+            call: Service call with instructions, input_data, model, etc.
+
+        Returns:
+            Service response with response_text
+        """
+        context_id = call.context.id
+
+        async with LogTimeServices(LOGGER, "ask_service") as timer:
+            # Parse request data
+            instructions = call.data.get("instructions", "").strip()
+            input_data = call.data.get("input_data", "").strip()
+            # Allow model override or use default conversation model
+            model = call.data.get("model")
+            
+            # Optional params
+            max_tokens = call.data.get("max_tokens")
+            temperature = call.data.get("temperature")
+
+            if not instructions:
+                raise_validation_error("Instructions are required")
+            if not input_data:
+                raise_validation_error("Input Data is required")
+
+            # Fallback for model if not provided
+            if not model:
+                 # Try to get default chat model from first conversation subentry found
+                 # This is a reasonable default if user doesn't specify one
+                 # Or we could just use RECOMMENDED_CHAT_MODEL
+                 model = RECOMMENDED_CHAT_MODEL
+                 # Try to find a better default from config
+                 from .const import SUBENTRY_TYPE_CONVERSATION
+                 for subentry in self.entry.subentries.values():
+                    if subentry.subentry_type == SUBENTRY_TYPE_CONVERSATION:
+                        model = subentry.data.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL)
+                        break
+
+            LOGGER.debug(
+                f"[Context: {context_id}] Ask Request: "
+                f"model={model}, instructions_len={len(instructions)}, input_len={len(input_data)}"
+            )
+
+            # Create client
+            client = self.gateway.create_client()
+            
+            # Build chat parameters manually to ensure statelessness and custom model
+            chat_args = {
+                "model": model,
+                "store_messages": False, # Always stateless
+            }
+            if max_tokens:
+                chat_args["max_tokens"] = int(max_tokens)
+            if temperature is not None:
+                chat_args["temperature"] = float(temperature)
+
+            # Create chat
+            chat = client.chat.create(**chat_args)
+            
+            # Append messages
+            chat.append(XAIGateway.system_msg(instructions))
+            chat.append(XAIGateway.user_msg(input_data))
+
+            # Execute
+            async with timer.record_api_call():
+                response = await chat.sample()
+
+            content_text = getattr(response, "content", "")
+            usage = getattr(response, "usage", None)
+            
+            # Save metadata (token counting)
+            await save_response_metadata(
+                hass=self.hass,
+                entry_id=self.entry.entry_id,
+                usage=usage,
+                model=model, # Explicitly pass the model we used
+                service_type="ask_service",
+                store_messages=False,
+            )
+
+            return {
+                "response_text": content_text,
+                "timestamp": datetime.now().isoformat(),
+            }
 
 
 # ==============================================================================
@@ -582,7 +699,10 @@ class GrokCodeFastService:
                 )
 
     async def _load_client_side_history(
-        self, chat, user_id: str, context_id: str
+        self,
+        chat,
+        user_id: str,
+        context_id: str,
     ) -> None:
         """Load conversation history for client-side mode."""
         chat_history = self.hass.data.get(DOMAIN, {}).get("chat_history")
@@ -797,7 +917,8 @@ class ClearMemoryService:
         return user_ids, user_names
 
     def _get_device_ids_from_satellites(
-        self, satellite_entity_ids
+        self,
+        satellite_entity_ids
     ) -> tuple[list, list]:
         """Extract device IDs from satellite entity IDs."""
         satellite_entity_ids = parse_id_list(satellite_entity_ids)

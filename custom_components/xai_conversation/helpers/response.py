@@ -402,7 +402,7 @@ async def save_response_metadata(
     # Single unified log message
     if fallback_source:
         LOGGER.debug(
-            "Model not in response, using %s fallback: %s",
+            "Model resolved from %s: %s",
             fallback_source,
             resolved_model
         )

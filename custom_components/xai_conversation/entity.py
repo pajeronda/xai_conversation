@@ -52,8 +52,8 @@ class XAIBaseLLMEntity(HA_Entity):
             entry_type=ha_device_registry.DeviceEntryType.SERVICE,
         )
         # Gateway for centralized xAI SDK interactions
-        # Initialized with hass and config_entry (agnostic of this specific entity instance)
-        self.gateway = XAIGateway(self.hass, self.entry)
+        # Initialized in async_added_to_hass when self.hass is available
+        self.gateway: XAIGateway | None = None
         # Tools processor instance to maintain cache across calls
         self._tools_processor = XAIToolsProcessor(self)
         # Track pending I/O tasks for graceful shutdown
@@ -68,6 +68,9 @@ class XAIBaseLLMEntity(HA_Entity):
     async def async_added_to_hass(self) -> None:
         """Link to shared sensors and get global ConversationMemory."""
         await super().async_added_to_hass()
+        
+        # Initialize gateway now that hass is available
+        self.gateway = XAIGateway(self.hass, self.entry)
 
         # Get global ConversationMemory instance
         self._conversation_memory = self.hass.data[DOMAIN]["conversation_memory"]

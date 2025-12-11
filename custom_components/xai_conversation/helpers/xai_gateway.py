@@ -13,9 +13,12 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
+from homeassistant.components import conversation as ha_conversation
+
 # xAI SDK imports (conditional)
 try:
     from xai_sdk import AsyncClient as XAI_CLIENT_CLASS
+    from xai_sdk import Client as XAI_CLIENT_CLASS_SYNC
     from xai_sdk.chat import (
         user as xai_user,
         system as xai_system,
@@ -32,6 +35,7 @@ try:
     XAI_SDK_AVAILABLE = True
 except ImportError:
     XAI_CLIENT_CLASS = None
+    XAI_CLIENT_CLASS_SYNC = None
     xai_user = None
     xai_system = None
     xai_assistant = None
@@ -77,7 +81,6 @@ if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
     from homeassistant.config_entries import ConfigEntry
     from xai_sdk import AsyncClient as XAIClient
-    from homeassistant.components import conversation as ha_conversation
 
 
 class XAIGateway:
@@ -160,10 +163,8 @@ class XAIGateway:
         Raises:
             ValueError: If API key is invalid or SDK is not installed
         """
-        try:
-            from xai_sdk import Client as XAIClient
-        except ImportError as err:
-            raise ValueError("xai_sdk not installed") from err
+        if not XAI_SDK_AVAILABLE:
+            raise ValueError("xai_sdk not installed")
 
         # Basic format validation
         if not api_key or not api_key.startswith("xai-"):
@@ -171,7 +172,7 @@ class XAIGateway:
 
         # Try to create a client to validate the key
         try:
-            client = XAIClient(api_key=api_key)
+            client = XAI_CLIENT_CLASS_SYNC(api_key=api_key)
             # The client creation validates the key format
             # We don't need to make an actual API call
             del client
@@ -487,14 +488,14 @@ class XAIGateway:
 
                 content_text = getattr(response, "content", "")
                 usage = getattr(response, "usage", None)
-                model = getattr(response, "model", None)
+                # response.model is missing in SDK response, use config model
                 server_tool_usage = getattr(response, "server_side_tool_usage", None)
 
                 await save_response_metadata(
                     hass=self.hass,
                     entry_id=self.entry.entry_id,
                     usage=usage,
-                    model=model,
+                    model=config["model"],
                     service_type=service_type,
                     store_messages=config["store_messages"],
                     server_side_tool_usage=server_tool_usage,

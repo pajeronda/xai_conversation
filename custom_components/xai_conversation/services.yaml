@@ -43,7 +43,54 @@ reload_pricing:
     This will fetch the latest pricing for all models and update the pricing sensors.
   fields: {}
 
-
+ask:
+  name: Ask AI (Generate Response)
+  description: >
+    Send instructions and data to xAI and get a raw response.
+    Ideal for automations that need to process data (e.g., JSON) and get a text output.
+    Returns the result in a 'response_variable'.
+  fields:
+    instructions:
+      name: Instructions
+      description: >
+        What the AI should do with the data. Acts as the System Prompt.
+        Example: "Summarize this weather data into a short spoken report."
+      required: true
+      selector:
+        text:
+          multiline: true
+    input_data:
+      name: Input Data
+      description: >
+        The content or data to process. Can be text, JSON, or template output.
+        Example: "{{ states('weather.home') }}"
+      required: true
+      selector:
+        text:
+          multiline: true
+    model:
+      name: Model
+      description: Optional specific model to use (e.g., 'grok-4'). Defaults to configured chat model.
+      required: false
+      selector:
+        text:
+    max_tokens:
+      name: Max Tokens
+      description: Limit response length.
+      required: false
+      selector:
+        number:
+          min: 1
+          max: 100000
+    temperature:
+      name: Temperature
+      description: Creativity (0.0 = precise, 1.0 = creative).
+      required: false
+      selector:
+        number:
+          min: 0
+          max: 2
+          step: 0.1
 
 photo_analysis:
   name: Photo Analysis
@@ -69,4 +116,3 @@ photo_analysis:
       example: ["/config/www/camera_snapshot.jpg"]
       selector:
         object:
-
