@@ -175,8 +175,8 @@ class PromptManager:
             # Chat-only mode (conversation with control disabled)
             blocks.extend(self._build_chat_only_prompt_blocks())
 
-        # 5. User Instructions (only for conversation modes with control enabled)
-        if custom_rules and allow_control and self.mode in ("pipeline", "tools"):
+        # 5. User Instructions (for conversation modes)
+        if custom_rules and self.mode in ("pipeline", "tools"):
             blocks.append(
                 f"# --- USER INSTRUCTIONS (appended to default) ---\n{custom_rules}"
             )

@@ -1,7 +1,7 @@
 <div align="center">
   <h1>xAI Conversation</h1>
 
-  <img src="images/logo.png" alt="xAI Grok Conversation Logo" width="300">
+  <img src="https://github.com/pajeronda/xai_conversation/blob/main/images/logo.png?raw=true" alt="xAI Grok Conversation Logo" width="300">
   
   <b>A custom Home Assistant integration that brings xAI Grok AI to your smart home.</b>
 
@@ -36,7 +36,7 @@
 - **Chat History** synchronizable across user devices in the **grok-code-fast-card** service
 
 <p align="center">
-  <img src="images/memory_settings.png" alt="Memory Configuration" width="600">
+  <img src="https://github.com/pajeronda/xai_conversation/blob/main/images/memory_settings.png?raw=true" alt="Memory Configuration" width="600">
 </p>
 
 ### ⚙️ AI Task Service
@@ -64,13 +64,13 @@ Detailed sensors that track:
 - Statistics per model used
 
 <p align="center">
-  <img src="images/sensors.png" alt="Token Sensors Dashboard" width="600">
+  <img src="https://github.com/pajeronda/xai_conversation/blob/main/images/sensors.png?raw=true" alt="Token Sensors Dashboard" width="600">
 </p>
 
 ---
 
 <p align="center">
-  <img src="images/integration.png" alt="Integration Overview" width="700">
+  <img src="https://github.com/pajeronda/xai_conversation/blob/main/images/integration.png?raw=true" alt="Integration Overview" width="700">
 </p>
 
 ## Installation
