@@ -29,6 +29,64 @@
   <img width="400" height="400" alt="immagine chat Assist 2" src="https://github.com/user-attachments/assets/83b79a58-be34-4d6f-8967-0eae90d65cc7" />
 </p>
 
+### ⚙️ AI Task Service
+Integration with Home Assistant's AI Task service for:
+- Intelligent automations
+- Scripts with dynamic logic
+- Context-aware actions based on home state
+- Image generation (automatically uses the `grok-2-image` model)
+
+### 💻 Grok Code Fast
+Dedicated service for Home Assistant code generation:
+- YAML for automations and configurations
+- Jinja2 templates
+- Custom Python scripts
+- **Lovelace Card** with integrated editor and interactive chat
+
+
+### 📸 Photo Analysis Service
+New `photo_analysis` service for analyzing images with AI. Can be used in scripts and automations by passing camera snapshots or external image URLs.
+
+**Analyze a local camera snapshot:**
+```yaml
+service: xai_conversation.photo_analysis
+data:
+  prompt: "What do you see in this image?"
+  images:
+    - /config/www/camera_snapshot.jpg
+```
+
+**Analyze an external image:**
+```yaml
+service: xai_conversation.photo_analysis
+data:
+  prompt: "Describe this image in detail"
+  images:
+    - https://design.home-assistant.io/images/brand/logo.png
+```
+
+**Analyze multiple images:**
+```yaml
+service: xai_conversation.photo_analysis
+data:
+  prompt: "Compare these two images and highlight the differences"
+  images:
+    - /config/www/before.jpg
+    - /config/www/after.jpg
+```
+
+### 💭 ASK
+**xai_conversation.ask** service allowing stateless LLM queries with raw input data and system instructions, returning the response directly in a variable.
+```yaml
+ service: xai_conversation.ask
+ data:
+   max_tokens: 800
+   temperature: 1
+   instructions:  "{{ instructions }}"
+   input_data: "{{ data_to_send }}"
+ response_variable: output_ai
+```
+
 ### 💬 Conversation Memory Management
 - **Server-side**: Persistent conversations managed by xAI (saves tokens and costs)
 - **Client-side**: Conversations managed with local history (Home Assistant standard, more expensive)
@@ -38,23 +96,6 @@
 <p align="center">
   <img src="https://github.com/pajeronda/xai_conversation/blob/main/images/memory_settings.png?raw=true" alt="Memory Configuration" width="600">
 </p>
-
-### ⚙️ AI Task Service
-Integration with Home Assistant's AI Task service for:
-- Intelligent automations
-- Scripts with dynamic logic
-- Context-aware actions based on home state
-- Image generation (automatically uses the `grok-2-image` model)
-
-### 📸 Photo Analysis Service
-New `photo_analysis` service for analyzing images with AI. Can be used in scripts and automations by passing camera snapshots or external image URLs.
-
-### 💻 Grok Code Fast
-Dedicated service for Home Assistant code generation:
-- YAML for automations and configurations
-- Jinja2 templates
-- Custom Python scripts
-- **Lovelace Card** with integrated editor and interactive chat
 
 ### 📊 Token and Cost Monitoring
 Detailed sensors that track:
@@ -145,37 +186,7 @@ Click this badge to install **Grok code fast card** via **HACS** (recommended)
 ### Conversation Agent
 - "Turn on the living room lights"
 - "What's the temperature in the kitchen?"
-
-### Photo Analysis Service
-
-**Analyze a local camera snapshot:**
-```yaml
-service: xai_conversation.photo_analysis
-data:
-  prompt: "What do you see in this image?"
-  images:
-    - /config/www/camera_snapshot.jpg
-```
-
-**Analyze an external image:**
-```yaml
-service: xai_conversation.photo_analysis
-data:
-  prompt: "Describe this image in detail"
-  images:
-    - https://design.home-assistant.io/images/brand/logo.png
-```
-
-**Analyze multiple images:**
-```yaml
-service: xai_conversation.photo_analysis
-data:
-  prompt: "Compare these two images and highlight the differences"
-  images:
-    - /config/www/before.jpg
-    - /config/www/after.jpg
-```
-
+   
 ### Grok Code Fast
 - "Create an automation that turns off the lights at 11 PM"
 - "Generate a Jinja2 template to display energy consumption"
@@ -190,9 +201,10 @@ The integration **automatically retrieves all available models** from xAI, inclu
 - **Grok Code Fast**: `grok-code-fast-1` (optimized for YAML/Python/Jinja2 code generation)
 - **AI Task**: `grok-code-fast-1` (optimized for structured responses and automations)
 - **Image Generation**: `grok-2-image-1212` (Aurora - automatic when using image generation)
-- **Photo Analysis**: `grok-2-vision-1212` (optimized for image analysis)
+- **Photo Analysis**: `grok-2-vision-1212` (Vision - optimized for image analysis)
+- **xai_conversation.ask**: select your prefered model (default: reccomanded Conversation agent model)
 
-> **Note:** When xAI releases new models, they are automatically detected and made available in the configuration options.
+> **Note:** When xAI releases **new models**, they are automatically detected and made available in the configuration options.
 
 
 ## Pricing and Token Monitoring
