@@ -1,15 +1,21 @@
-"""Chat history service for xAI conversation.
+"""Specialized Chat History Service for Grok Code Fast.
 
-This service provides autonomous, asynchronous chat history management.
-It runs in parallel to the main chat flow without adding latency.
+This service manages the persistent storage of complete chat messages (text and code)
+exclusively for the Grok Code Fast frontend experience. It enables:
+- Cross-device synchronization of the Grok Code Fast card UI.
+- Persistent history for the Grok Code Fast service.
+- Cross-session continuity for Grok Code Fast developers.
+
+ARCHITECTURE NOTE:
+This is SEPARATE from the standard conversation memory.
+- ChatHistoryService: Stores FULL message content (text/code) for Grok Code Fast only.
+- ConversationMemory: Stores ONLY response_ids for xAI server-side memory chaining
+  (used by pipeline and tools modes).
 
 Used by:
-- grok_code_fast service: Saves/loads chat messages for frontend card synchronization
-- clear_code_memory service: Clears stored chat history
-- sync_chat_history service: Provides cross-device chat synchronization
-
-Not used by conversation agents (pipeline/tools modes) which only use ConversationMemory
-for response_id storage.
+- grok_code_fast service: Saves/loads chat messages for frontend card synchronization.
+- clear_code_memory service: Clears stored chat history for a specific user.
+- sync_chat_history service: Provides the data for cross-device synchronization.
 """
 
 from __future__ import annotations
@@ -143,6 +149,16 @@ class ChatHistoryService:
         """
         self.hass.async_create_task(self._do_save(user_id, mode, role, content))
 
+    async def async_flush(self):
+        """Flush pending changes to disk.
+
+        Current implementation saves on every message, so this is primarily
+        to satisfy the coordinator's unload protocol.
+        """
+        # No-op for now as we save immediately in _do_save.
+        # Future optimization: Implement buffering/dirty flags like MemoryManager.
+        pass
+
     async def load_history(
         self, user_id: str, mode: str, limit: int = 50
     ) -> list[dict[str, Any]]:
@@ -202,4 +218,3 @@ class ChatHistoryService:
                 LOGGER.error("Failed to save after clearing history: %s", err)
         else:
             LOGGER.debug("No chat history to clear for %s", history_key)
-

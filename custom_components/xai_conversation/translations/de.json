@@ -3,10 +3,10 @@
     "step": {
       "user": {
         "title": "xAI Grok Konfiguration",
-        "description": "Konfigurieren Sie die xAI Grok Integration für Home Assistant.",
+        "description": "Konfigurieren Sie die xAI Grok Integration für Home Assistant. Der API-Endpunkt wird global für alle Agenten konfiguriert. Tools und intelligente Pipelineeinstellungen können bei Bedarf pro Agent angepasst werden.",
         "data": {
           "api_key": "API-Schlüssel",
-          "api_host": "API-Host (Standard: 'api.x.ai', 'us-east-1.api.x.ai' oder 'eu-west-1.api.x.ai')",
+          "api_host": "API-Endpunkt",
           "assistant_name": "Assistenten-Name",
           "live_search": "Live-Suchmodus"
         },
@@ -30,9 +30,12 @@
   "options": {
     "step": {
       "init": {
-        "title": "xAI Speicherkonfiguration",
-        "description": "Konfigurieren Sie Speicherparameter für Benutzer und Sprachassistenten-Geräte. Die Integration erkennt automatisch, ob eine Anfrage von einem Benutzer (Smartphone/PC/Tablet) oder einem Gerät (Sprachsatellit) stammt und wendet die entsprechenden Einstellungen an.",
+        "title": "xAI Konfiguration",
+        "description": "Konfigurieren Sie Speicherparameter für Benutzer und Sprachassistenten-Geräte sowie erweiterte Tools.",
         "data": {
+          "api_host": "API-Endpunkt",
+          "use_extended_tools": "Erweiterte Tools Konfiguration aktivieren",
+          "extended_tools_yaml": "Erweiterte Tools YAML-Konfiguration",
           "memory_user_ttl_hours": "Benutzerspeicher-Dauer (Stunden)",
           "memory_user_max_turns": "Maximale Gesprächsrunden für Benutzer",
           "memory_device_ttl_hours": "Gerätespeicher-Dauer (Stunden)",
@@ -40,11 +43,16 @@
           "memory_cleanup_interval_hours": "Speicherbereinigungsintervall (Stunden)"
         },
         "data_description": {
+          "api_host": "Hostname des API-Endpunkts. Verwenden Sie 'api.x.ai' für globales Routing mit automatischer Umleitung zu einem regionalen Host oder geben Sie direkt einen regionalen Host an: 'us-east-1.api.x.ai' oder 'eu-west-1.api.x.ai'.",
+          "use_extended_tools": "Aktivieren Sie diese Option, um benutzerdefinierte Tools im Format Extended OpenAI Conversation zu konfigurieren.",
+          "extended_tools_yaml": "Definieren Sie hier Ihre benutzerdefinierten Tools. Das Format ist vollständig kompatibel mit Extended OpenAI Conversation. Sie können Ihre bestehende Konfiguration kopieren/einfügen.",
           "memory_user_ttl_hours": "Dauer der Benutzerkonversationen (Smartphone, PC, Tablet). Standard: 720 Stunden (30 Tage)",
           "memory_user_max_turns": "Maximale Anzahl gespeicherter Gesprächsrunden für Benutzer. Standard: 1000 Runden",
           "memory_device_ttl_hours": "Dauer der Gerätekonversationen (Sprachassistenten-Satelliten). Standard: 168 Stunden (7 Tage)",
           "memory_device_max_turns": "Maximale Anzahl gespeicherter Gesprächsrunden für Geräte. Standard: 100 Runden",
           "memory_cleanup_interval_hours": "Häufigkeit, mit der abgelaufene Speichereinträge bereinigt werden. Standard: 24 Stunden"
+        }
+      }
         }
       }
     }
@@ -76,7 +84,8 @@
             "show_citations": "Zitate anzeigen",
             "assistant_name": "Assistentenname",
             "send_user_name": "Benutzernamen in Nachrichten einbeziehen",
-            "reasoning_effort": "Denkaufwand"
+            "reasoning_effort": "Denkaufwand",
+            "use_extended_tools": "Erweiterte Tools verwenden (Globale Konfig)"
           },
           "data_description": {
             "assistant_name": "Der Name, mit dem sich der Assistent identifiziert (z.B. 'Jarvis', 'Alexa', 'HAL'). Das Ändern dieses Werts startet eine neue Konversation und die vorherige Historie wird nicht mehr zugänglich sein.",
@@ -94,7 +103,8 @@
             "show_citations": "Suchzitate zu Chat-Antworten hinzufügen. Nützlich für UI/Chat-Schnittstellen, kann aber für Sprachassistenten störend sein. Standard: AUS (empfohlen für Sprache).",
             "live_search": "Web-Suchfunktionen aktivieren: 'off' (deaktiviert), 'auto' (Modell entscheidet), 'on' (immer aktiviert). Gilt sowohl für Pipeline- als auch für Tools-Modus.",
             "prompt": "Benutzerdefinierte Anweisungen für den Agenten (nur Tools-Modus).",
-            "reasoning_effort": "Denkaufwand für Modelle, die dies unterstützen (niedrig, mittel, hoch, maximal). Nur verfügbar für grok-4 und grok-4-fast Modelle."
+            "reasoning_effort": "Denkaufwand für Modelle, die dies unterstützen (niedrig, mittel, hoch, maximal). Nur verfügbar für grok-4 und grok-4-fast Modelle.",
+            "use_extended_tools": "Aktiviert die Verwendung von benutzerdefinierten Tools, die in den Hauptintegrationsoptionen definiert sind (Extended OpenAI-Format). WARNUNG: Wenn diese Option aktiviert ist, werden die nativen Home Assistant-Tools für diesen Agenten deaktiviert, unabhängig vom Modus."
           }
         }
       },

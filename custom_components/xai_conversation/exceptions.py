@@ -12,6 +12,11 @@ from homeassistant.exceptions import (
 from .const import LOGGER
 
 
+# ==============================================================================
+# EXCEPTIONS: xAI Core
+# ==============================================================================
+
+
 class XAIConnectionError(HA_HomeAssistantError):
     """Error connecting to xAI service."""
 
@@ -102,7 +107,11 @@ class XAIConfigurationError(HA_HomeAssistantError):
         return f"Configuration error: {self.message}"
 
 
-# Centralized error helper functions
+# ==============================================================================
+# HELPER FUNCTIONS: xAI Error Handling
+# ==============================================================================
+
+
 def raise_auth_error(
     message: str = "Authentication failed. Please check your xAI API key.",
 ) -> None:
@@ -215,13 +224,182 @@ def handle_api_error(
         )
 
 
-# Re-export HA exceptions for centralized access
+async def handle_response_not_found_error(
+    err: Exception,
+    attempt: int,
+    memory,
+    conv_key: str | None,
+    context_id: str = "",
+) -> bool:
+    """Handle NOT_FOUND error for expired response_id on xAI server.
+
+    When xAI returns NOT_FOUND for a previous_response_id, it means the
+    conversation context has expired server-side. This function clears
+    the local memory and signals to retry with a fresh conversation.
+
+    Args:
+        err: The exception that was raised
+        attempt: Current attempt number (0-indexed)
+        memory: Instance of MemoryManager
+        conv_key: Conversation key for memory cleanup
+        context_id: Optional context identifier for logging
+
+    Returns:
+        True if should retry (cleared memory), False if should re-raise error
+    """
+    # Check if it's a gRPC NOT_FOUND error (handles both sync and async)
+    is_not_found = False
+    try:
+        from grpc import StatusCode
+        from grpc._channel import _InactiveRpcError
+        try:
+            from grpc.aio import AioRpcError
+        except ImportError:
+            AioRpcError = _InactiveRpcError  # Fallback
+
+        if isinstance(err, (_InactiveRpcError, AioRpcError)):
+            if err.code() == StatusCode.NOT_FOUND:
+                is_not_found = True
+    except ImportError:
+        pass
+
+    if not is_not_found:
+        return False
+
+    # Only retry on first attempt
+    if attempt != 0:
+        return False
+
+    # Log the retry
+    context_prefix = f"[Context: {context_id}] " if context_id else ""
+    LOGGER.warning(
+        "%sConversation context not found on xAI server (expired response_id). "
+        "Clearing local memory and retrying with fresh conversation.",
+        context_prefix,
+    )
+
+    # Clear memory by key if available (assuming MemoryManager is used)
+    if conv_key:
+        try:
+            await memory.async_clear_key(conv_key)
+            LOGGER.debug("Cleared expired memory for conv_key=%s", conv_key)
+            return True
+        except Exception as clear_err:
+            LOGGER.warning(
+                "Failed to clear memory for conv_key=%s: %s", conv_key, clear_err
+            )
+
+    return True  # Signal to retry even if clear specific key failed, hoping a fresh start helps
+
+
+# ==============================================================================
+# EXCEPTIONS: Extended Tools (Legacy from Extended OpenAI Conversation)
+# ==============================================================================
+
+
+class EntityNotFound(HA_HomeAssistantError):
+    """When referenced entity not found."""
+
+    def __init__(self, entity_id: str) -> None:
+        """Initialize error."""
+        super().__init__(self, f"entity {entity_id} not found")
+        self.entity_id = entity_id
+
+    def __str__(self) -> str:
+        """Return string representation."""
+        return f"Unable to find entity {self.entity_id}"
+
+
+class EntityNotExposed(HA_HomeAssistantError):
+    """When referenced entity not exposed."""
+
+    def __init__(self, entity_id: str) -> None:
+        """Initialize error."""
+        super().__init__(self, f"entity {entity_id} not exposed")
+        self.entity_id = entity_id
+
+    def __str__(self) -> str:
+        """Return string representation."""
+        return f"entity {self.entity_id} is not exposed"
+
+
+class CallServiceError(HA_HomeAssistantError):
+    """Error during service calling."""
+
+    def __init__(self, domain: str, service: str, data: object) -> None:
+        """Initialize error."""
+        super().__init__(
+            self,
+            f"unable to call service {domain}.{service} with data {data}. One of 'entity_id', 'area_id', or 'device_id' is required",
+        )
+        self.domain = domain
+        self.service = service
+        self.data = data
+
+    def __str__(self) -> str:
+        """Return string representation."""
+        return f"unable to call service {self.domain}.{self.service} with data {self.data}. One of 'entity_id', 'area_id', or 'device_id' is required"
+
+
+class FunctionNotFound(HA_HomeAssistantError):
+    """When referenced function not found."""
+
+    def __init__(self, function: str) -> None:
+        """Initialize error."""
+        super().__init__(self, f"function '{function}' does not exist")
+        self.function = function
+
+    def __str__(self) -> str:
+        """Return string representation."""
+        return f"function '{self.function}' does not exist"
+
+
+class NativeNotFound(HA_HomeAssistantError):
+    """When native function not found."""
+
+    def __init__(self, name: str) -> None:
+        """Initialize error."""
+        super().__init__(self, f"native function '{name}' does not exist")
+        self.name = name
+
+    def __str__(self) -> str:
+        """Return string representation."""
+        return f"native function '{self.name}' does not exist"
+
+
+class InvalidFunction(HA_HomeAssistantError):
+    """When function validation failed."""
+
+    def __init__(self, function_name: str) -> None:
+        """Initialize error."""
+        super().__init__(
+            self,
+            f"failed to validate function `{function_name}`",
+        )
+        self.function_name = function_name
+
+    def __str__(self) -> str:
+        """Return string representation."""
+        return f"failed to validate function `{self.function_name}` ({self.__cause__})"
+
+
+# ==============================================================================
+# EXPORTS: Public API
+# ==============================================================================
+
 __all__ = [
-    # Custom xAI exceptions
+    # xAI custom exceptions
     "XAIConnectionError",
     "XAIToolConversionError",
     "XAIConfigurationError",
-    # Helper functions
+    # Extended Tools exceptions (legacy)
+    "EntityNotFound",
+    "EntityNotExposed",
+    "CallServiceError",
+    "FunctionNotFound",
+    "NativeNotFound",
+    "InvalidFunction",
+    # xAI helper functions
     "raise_auth_error",
     "raise_communication_error",
     "raise_config_error",
@@ -230,6 +408,7 @@ __all__ = [
     "raise_generic_error",
     "raise_config_not_ready",
     "handle_api_error",
+    "handle_response_not_found_error",
     # Re-exported HA exceptions
     "HA_HomeAssistantError",
     "HA_ConfigEntryNotReady",

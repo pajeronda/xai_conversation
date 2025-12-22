@@ -6,37 +6,50 @@ from homeassistant.const import CONF_LLM_HASS_API
 from homeassistant.helpers import llm
 
 LOGGER = logging.getLogger(__package__)
-
-DOMAIN = "xai_conversation"
+DEFAULT_API_HOST = "api.x.ai"
 DEFAULT_DEVICE_NAME = "xAI"
 DEFAULT_MANUFACTURER = "xAI"
-DEFAULT_CONVERSATION_NAME = "xAI Conversation"
 DEFAULT_AI_TASK_NAME = "xAI Task"
+DEFAULT_CONVERSATION_NAME = "xAI Conversation"
 DEFAULT_GROK_CODE_FAST_NAME = "Grok Code Fast"
 DEFAULT_SENSORS_NAME = "xAI Token Sensors"
-DEFAULT_API_HOST = "api.x.ai"
+DOMAIN = "xai_conversation"
 
-# Default assistant names for different services
-DEFAULT_CODE_FAST_ASSISTANT_NAME = "Grok Code Fast"
+
 # xAI specific configuration keys
 CONF_CHAT_MODEL = "chat_model"
 CONF_IMAGE_MODEL = "image_model"
 CONF_VISION_MODEL = "vision_model"
 CONF_MAX_TOKENS = "max_tokens"
 CONF_PROMPT_PIPELINE = "pipeline_prompt"
+
 # Enable/disable Intelligent Pipeline mode for conversation subentries
 CONF_USE_INTELLIGENT_PIPELINE = "use_intelligent_pipeline"
 # Enable/disable smart home control (unified for both pipeline and tools mode)
 CONF_ALLOW_SMART_HOME_CONTROL = "allow_smart_home_control"
+
+# Extended Tools Configuration
+CONF_USE_EXTENDED_TOOLS = "use_extended_tools"
+CONF_EXTENDED_TOOLS_YAML = "extended_tools_yaml"
+# Local keys / event names used by the Extended Tools subsystem
+CONF_PAYLOAD_TEMPLATE = "payload_template"
+EVENT_AUTOMATION_REGISTERED = (
+    f"automation_registered_from_{DEFAULT_CONVERSATION_NAME.lower().replace(' ', '_')}"
+)
+
 CONF_REASONING_EFFORT = "reasoning_effort"
 CONF_TEMPERATURE = "temperature"
 CONF_TOP_P = "top_p"
 CONF_LIVE_SEARCH = "live_search"
 CONF_STORE_MESSAGES = "store_messages"
 CONF_SEND_USER_NAME = "send_user_name"
-CONF_SHOW_CITATIONS = "show_citations"  # Show citations in chat content (useful for UI, noisy for voice)
+CONF_SHOW_CITATIONS = (
+    "show_citations"  # Show citations in chat content (useful for UI, noisy for voice)
+)
+
 CONF_TIMEOUT = "timeout"
 CONF_PROMPT = "prompt"  # User instructions for tools/non-pipeline mode
+CONF_PROMPT_TOOLS = "prompt_tools"  # Custom instructions for tools mode
 CONF_PROMPT_CODE = "prompt_code"  # Custom instructions for code_fast mode
 CONF_VISION_PROMPT = "vision_prompt"  # System prompt for photo analysis
 CONF_API_HOST = "api_host"
@@ -66,7 +79,9 @@ RECOMMENDED_REASONING_EFFORT = "low"
 RECOMMENDED_LIVE_SEARCH = "off"
 RECOMMENDED_STORE_MESSAGES = True
 RECOMMENDED_SEND_USER_NAME = False
-RECOMMENDED_SHOW_CITATIONS = False  # Default OFF (better for voice assistants, can enable for UI/chat)
+RECOMMENDED_SHOW_CITATIONS = (
+    False  # Default OFF (better for voice assistants, can enable for UI/chat)
+)
 RECOMMENDED_TIMEOUT = 60.0
 RECOMMENDED_ASSISTANT_NAME = "Jarvis"
 # Memory defaults - separate for users and devices
@@ -87,6 +102,14 @@ SUBENTRY_TYPE_AI_TASK = "ai_task"
 SUBENTRY_TYPE_CODE_TASK = "code_fast"
 SUBENTRY_TYPE_SENSORS = "sensors"
 
+# Memory configuration defaults aggregated
+MEMORY_DEFAULTS = {
+    CONF_MEMORY_USER_TTL_HOURS: RECOMMENDED_MEMORY_USER_TTL_HOURS,
+    CONF_MEMORY_USER_MAX_TURNS: RECOMMENDED_MEMORY_USER_MAX_TURNS,
+    CONF_MEMORY_DEVICE_TTL_HOURS: RECOMMENDED_MEMORY_DEVICE_TTL_HOURS,
+    CONF_MEMORY_DEVICE_MAX_TURNS: RECOMMENDED_MEMORY_DEVICE_MAX_TURNS,
+    CONF_MEMORY_CLEANUP_INTERVAL_HOURS: RECOMMENDED_MEMORY_CLEANUP_INTERVAL_HOURS,
+}
 
 # Dynamic model pricing and details will be fetched from xAI API
 # DEFAULT_MODEL_PRICING is removed as per optimization
@@ -115,7 +138,7 @@ REASONING_EFFORT_MODELS: list[str] = []
 # 4. MODE-SPECIFIC BLOCKS:
 #    - Code mode:                   CODE_ROLE → [USER_INSTRUCTIONS] → CODE_OUTPUT_FORMAT
 #    - Pipeline + allow_control:    RECOGNITION → CUSTOM_RULES → DECISION_LOGIC → EXAMPLES
-#    - Tools + allow_control:       TOOLS_USAGE
+#    - Tools + allow_control:       PROMPT_MODE_TOOLS
 #    - Chat-only or !allow_control: NO_CONTROL
 # 5. PROMPT_OUTPUT_FORMAT                 (pipeline/tools modes only)
 # ==============================================================================
@@ -123,28 +146,25 @@ REASONING_EFFORT_MODELS: list[str] = []
 # -----------------------------------------------------------------------------
 # 1. IDENTITY BLOCK (always present)
 # -----------------------------------------------------------------------------
-PROMPT_IDENTITY = (
-    """You are {assistant_name}, a powerfull assistant for Home Assistant."""
-)
+PROMPT_IDENTITY = "You are {assistant_name}, a powerfull assistant for Home Assistant."
 
 # -----------------------------------------------------------------------------
 # 2. ROLE BASE BLOCK (always present)
 # -----------------------------------------------------------------------------
-PROMPT_ROLE_BASE = """Act as an advanced ASR/NLU system. If you are completely unable to interpret the text, ask with humor, but don't do any command."""
+PROMPT_ROLE_BASE = "Act as an advanced ASR/NLU system. If you are completely unable to interpret the text, ask with humor, but don't do any command."
 
 # -----------------------------------------------------------------------------
 # 3. MEMORY BLOCKS (one of these, based on store_messages setting)
 # -----------------------------------------------------------------------------
-PROMPT_MEMORY_SERVERSIDE = """Full conversation history and timestamps stored server-side. Use stored timestamps from conversation memory to answer time-related questions precisely."""
-
-PROMPT_MEMORY_CLIENTSIDE = """You receive conversation history manually in the messages. Answer based only on the provided context."""
+PROMPT_MEMORY_SERVERSIDE = "Conversation history and timestamps are on the server. Use them for temporal context."
+PROMPT_MEMORY_CLIENTSIDE = "History is provided in messages. Use only given context."
 
 # -----------------------------------------------------------------------------
 # 4. SMART HOME CONTROL BLOCKS (for Pipeline mode with allow_control=True)
 # -----------------------------------------------------------------------------
-PROMPT_SMART_HOME_RECOGNITION = """Recognize Smart Home Commands: actions like "play", "stop", "pause", "turn", "open", "close", "set", or status queries."""
+PROMPT_SMART_HOME_RECOGNITION = 'Recognize Smart Home Commands: actions like "play", "stop", "pause", "turn", "open", "close", "set", or status queries.'
 
-PROMPT_CUSTOM_RULES = """Allow user-added custom rules in any language for Smart Home Commands, translating if needed."""
+PROMPT_CUSTOM_RULES = "Allow user-added custom rules in any language for Smart Home Commands, translating if needed."
 
 PROMPT_PIPELINE_DECISION_LOGIC = """Action Decision:
 - Single Smart Home Command: '[[HA_LOCAL: {"text": "<the recognized command>"}]]'
@@ -169,18 +189,9 @@ PROMPT_PIPELINE_EXAMPLES = """Examples:
 # -----------------------------------------------------------------------------
 # 5. TOOLS MODE BLOCK (for Tools mode with allow_control=True)
 # -----------------------------------------------------------------------------
-PROMPT_TOOLS_USAGE = """An overview of the areas, devices and tools in this smart home:
-Static Context:
-{static_context}
-
-Available Tools:
-{tool_definitions}
-
-Guidelines:
-- For device control (turn on/off, set values): use the appropriate tool with targeting parameters (name, area, floor, domain, device_class)
-- For state queries (current status, temperature, sensor readings): call GetLiveContext() to retrieve live data, then answer based on the returned information
-- In mixed requests (command + non-home automation activity like a poem), always run the home command tools first, then quickly handle the rest.
-- When calling tools, present the action in a natural way focusing on what you're doing, not on completed results"""
+PROMPT_MODE_TOOLS = """Smart Home:
+Devices available (CSV):
+{static_context}"""
 
 # -----------------------------------------------------------------------------
 # 6. CHAT-ONLY BLOCK (when allow_control=False)
@@ -192,7 +203,7 @@ PROMPT_NO_CONTROL = """Limitations:
 # -----------------------------------------------------------------------------
 # 7. CODE MODE BLOCKS (for Code Fast service)
 # -----------------------------------------------------------------------------
-PROMPT_CODE_ROLE = """You are a sharp Home Assistant dev assistant focused on YAML, Jinja, Python automations, javascript and custom components. Craft tight, scalable code that slots right into HA: 2-space YAML indents, smart Jinja defaults for None/unavailable (|default()), async Python with HA APIs, PEP 8, error logs, and entity validations. Scan uploads for structure, deps, and fixes—improve with specific changes. Use state_attr() safely, set device_class/units, tune scan_intervals."""
+PROMPT_CODE_ROLE = "You are a sharp Home Assistant dev assistant focused on YAML, Jinja, Python automations, javascript and custom components. Craft tight, scalable code that slots right into HA: 2-space YAML indents, smart Jinja defaults for None/unavailable (|default()), async Python with HA APIs, PEP 8, error logs, and entity validations. Scan uploads for structure, deps, and fixes—improve with specific changes. Use state_attr() safely, set device_class/units, tune scan_intervals."
 
 PROMPT_CODE_OUTPUT_FORMAT = """Output format: Return a direct JSON object (not stringified) with two fields:
 {"response_text": "Concise steps, rationale, setup tips, tests, or troubleshooting.", "response_code": "Pure code without markdown fences."}
@@ -201,9 +212,11 @@ Rules: Keep explanations in response_text, raw code in response_code (no ``` fen
 # -----------------------------------------------------------------------------
 # 8. OUTPUT FORMAT BLOCK (conversation/pipeline/tools modes)
 # -----------------------------------------------------------------------------
-PROMPT_OUTPUT_FORMAT = """OUTPUT FORMAT - MANDATORY:
+PROMPT_OUTPUT_FORMAT = """OUTPUT:
 - Follow the user's language and communication style.
-- Plain text only. NO markdown (*, #, `, -, •), NO emoji. Output is for TTS - symbols are spoken literally. Write in natural sentences."""
+- No markdown (*, #, `, -, •).
+- No emojis.
+- Plain text natural sentences (for TTS)."""
 
 # ==============================================================================
 # END OF MODULAR PROMPT SYSTEM
@@ -299,7 +312,7 @@ RECOMMENDED_GROK_CODE_FAST_OPTIONS = {
     CONF_API_HOST: DEFAULT_API_HOST,
     CONF_TIMEOUT: RECOMMENDED_TIMEOUT,
     CONF_STORE_MESSAGES: True,  # Enable server-side memory via xAI previous_response_id chaining
-    CONF_ASSISTANT_NAME: DEFAULT_CODE_FAST_ASSISTANT_NAME,
+    CONF_ASSISTANT_NAME: DEFAULT_GROK_CODE_FAST_NAME,
 }
 
 # ==============================================================================
@@ -314,9 +327,15 @@ CONF_COST_PER_TOOL_CALL = "cost_per_tool_call"
 
 # Default/recommended values (used as fallback if not in config)
 RECOMMENDED_TOKENS_PER_MILLION = 1_000_000  # Division factor for token pricing
-RECOMMENDED_XAI_PRICING_CONVERSION_FACTOR = 10000.0  # API price units → USD per 1M tokens
-RECOMMENDED_PRICING_UPDATE_INTERVAL_HOURS = 48  # How often to fetch pricing from xAI API
-RECOMMENDED_COST_PER_TOOL_CALL = 0.005  # Default price per tool invocation ($5/1k calls)
+RECOMMENDED_XAI_PRICING_CONVERSION_FACTOR = (
+    10000.0  # API price units → USD per 1M tokens
+)
+RECOMMENDED_PRICING_UPDATE_INTERVAL_HOURS = (
+    48  # How often to fetch pricing from xAI API
+)
+RECOMMENDED_COST_PER_TOOL_CALL = (
+    0.005  # Default price per tool invocation ($5/1k calls)
+)
 
 # Default options for the Sensors subentry
 RECOMMENDED_SENSORS_OPTIONS = {
@@ -328,11 +347,11 @@ RECOMMENDED_SENSORS_OPTIONS = {
 
 # Official xAI Agent Tools Pricing (cost per invocation, not per 1k)
 TOOL_PRICING = {
-    "web_search": 0.005,           # $5.00 per 1,000 calls
-    "x_search": 0.005,              # $5.00 per 1,000 calls
-    "code_execution": 0.005,        # $5.00 per 1,000 calls
-    "document_search": 0.005,       # $5.00 per 1,000 calls
-    "collections_search": 0.0025,   # $2.50 per 1,000 calls
+    "web_search": 0.005,  # $5.00 per 1,000 calls
+    "x_search": 0.005,  # $5.00 per 1,000 calls
+    "code_execution": 0.005,  # $5.00 per 1,000 calls
+    "document_search": 0.005,  # $5.00 per 1,000 calls
+    "collections_search": 0.0025,  # $2.50 per 1,000 calls
     # Token-based only tools (no invocation cost):
     # "view_image", "view_x_video", "remote_mcp_tools"
 }

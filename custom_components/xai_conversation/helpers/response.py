@@ -11,18 +11,17 @@ Architecture:
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 import json
 import re
+from urllib.parse import urlparse
 
 # Import LOGGER and constants
 from ..const import (
     LOGGER,
     DOMAIN,
-    CONF_CHAT_MODEL,
-    RECOMMENDED_CHAT_MODEL,
 )
-
 
 
 # ==============================================================================
@@ -30,6 +29,21 @@ from ..const import (
 # ==============================================================================
 _JSON_FENCE_PATTERN = re.compile(r"```(?:json)?\s*([\s\S]*?)```", re.IGNORECASE)
 _CODE_BLOCK_PATTERN = re.compile(r"```(?:\w+)?\s*\n?(.*?)```", re.DOTALL)
+
+# Grok Code Fast Patterns
+_GROK_TEXT_PATTERN = re.compile(
+    r'"response_text"\s*:\s*"(.*?)"(?=\s*,\s*"response_code"|\s*})', re.DOTALL
+)
+_GROK_CODE_PATTERN = re.compile(r'"response_code"\s*:\s*"(.*?)"\s*}', re.DOTALL)
+_GROK_CLEANUP_PREFIX = re.compile(r'^\s*{"response_text"\s*:\s*"')
+_GROK_CLEANUP_MIDDLE = re.compile(r'"\s*,?\s*"response_code".*$', re.DOTALL)
+_GROK_CLEANUP_SUFFIX = re.compile(r'"\s*}?\s*$')
+
+# HA Local Patterns
+_HA_LOCAL_COMMANDS_PATTERN = re.compile(r'"commands"\s*:\s*(\[.*?\])', re.DOTALL)
+_HA_LOCAL_SEQUENTIAL_PATTERN = re.compile(r'"sequential"\s*:\s*(true|false)', re.DOTALL)
+_HA_LOCAL_TEXT_PATTERN = re.compile(r'"text"\s*:\s*"([^"]*)"', re.DOTALL)
+
 
 # ==============================================================================
 # BASE PARSING STRATEGIES (Building Blocks)
@@ -68,7 +82,7 @@ def parse_json_fenced(text: str) -> dict | None:
 
 
 def parse_balanced_braces(text: str) -> dict | None:
-    """Strategy 3: Extract first balanced {...} or [...] and parse as JSON.
+    """Strategy 3: Extract first balanced {{...}} or [...] and parse as JSON.
 
     Args:
         text: Text potentially containing balanced braces
@@ -78,8 +92,8 @@ def parse_balanced_braces(text: str) -> dict | None:
     """
 
     def _find_balanced(s: str) -> str | None:
-        opens = "{["
-        closes = "}]"
+        opens = "{[ "
+        closes = "}] "
         stack = []
         start = -1
         for i, ch in enumerate(s):
@@ -105,14 +119,16 @@ def parse_balanced_braces(text: str) -> dict | None:
     return None
 
 
-def parse_regex_fields(text: str, field_patterns: dict[str, str]) -> dict | None:
+def parse_regex_fields(
+    text: str, field_patterns: dict[str, str | re.Pattern]
+) -> dict | None:
     r"""Strategy 4: Extract specific fields using regex patterns.
 
     Useful for malformed JSON where you know which fields to extract.
 
     Args:
         text: Text to extract fields from
-        field_patterns: Dict mapping field names to regex patterns
+        field_patterns: Dict mapping field names to regex patterns (str or compiled)
                        Pattern should have one capture group for the value
 
     Returns:
@@ -126,11 +142,13 @@ def parse_regex_fields(text: str, field_patterns: dict[str, str]) -> dict | None
     """
     result = {}
     for field, pattern in field_patterns.items():
+        # If pattern is compiled, re.DOTALL is ignored here (uses pattern's flags)
+        # If pattern is str, re.DOTALL is applied
         match = re.search(pattern, text, re.DOTALL)
         if match:
             value = match.group(1)
             # Try to parse as JSON if it looks like a structure
-            if value.startswith(("{", "[")):
+            if value.startswith(("{ ", "[ ")):
                 parsed = parse_strict_json(value)
                 result[field] = parsed if parsed is not None else value
             else:
@@ -206,12 +224,8 @@ def parse_grok_code_response(response_data: str) -> tuple[str, str]:
     def _code_regex_strategy(text: str) -> dict | None:
         # Extract response_text (capture until response_code key or end)
         # This pattern is tolerant of unescaped newlines
-        text_match = re.search(
-            r'"response_text"\s*:\s*"(.*?)"(?=\s*,\s*"response_code"|\s*})',
-            text,
-            re.DOTALL,
-        )
-        code_match = re.search(r'"response_code"\s*:\s*"(.*?)"\s*}', text, re.DOTALL)
+        text_match = _GROK_TEXT_PATTERN.search(text)
+        code_match = _GROK_CODE_PATTERN.search(text)
 
         if text_match or code_match:
             return {
@@ -273,12 +287,10 @@ def parse_grok_code_response(response_data: str) -> tuple[str, str]:
         response_text = _CODE_BLOCK_PATTERN.sub("", response_data).strip()
 
         # CLEANUP: Remove leftover JSON artifacts from text if fallback triggered on broken JSON
-        # Remove leading {"response_text": " and trailing "}
-        response_text = re.sub(r'^\s*{"response_text"\s*:\s*"', "", response_text)
-        response_text = re.sub(
-            r'"\s*,?\s*"response_code".*$', "", response_text, flags=re.DOTALL
-        )
-        response_text = re.sub(r'"\s*}?\s*$', "", response_text)
+        # Remove leading {"response_text": " and trailing "}"
+        response_text = _GROK_CLEANUP_PREFIX.sub("", response_text)
+        response_text = _GROK_CLEANUP_MIDDLE.sub("", response_text)
+        response_text = _GROK_CLEANUP_SUFFIX.sub("", response_text)
 
         return response_text, response_code
 
@@ -311,8 +323,8 @@ def parse_ha_local_payload(payload_json: str) -> dict | None:
             fields = parse_regex_fields(
                 text,
                 {
-                    "commands": r'"commands"\s*:\s*(\[.*?\])',
-                    "sequential": r'"sequential"\s*:\s*(true|false)',
+                    "commands": _HA_LOCAL_COMMANDS_PATTERN,
+                    "sequential": _HA_LOCAL_SEQUENTIAL_PATTERN,
                 },
             )
             if fields and "commands" in fields:
@@ -322,7 +334,7 @@ def parse_ha_local_payload(payload_json: str) -> dict | None:
                 return result
 
         # Single command format
-        fields = parse_regex_fields(text, {"text": r'"text"\s*:\s*"([^"]*)"'})
+        fields = parse_regex_fields(text, {"text": _HA_LOCAL_TEXT_PATTERN})
         return fields if fields else None
 
     def _validator(result: dict) -> bool:
@@ -337,6 +349,57 @@ def parse_ha_local_payload(payload_json: str) -> dict | None:
         ],
         validator=_validator,
     )
+
+
+# ==============================================================================
+# CITATION MANAGEMENT
+# ==============================================================================
+
+
+def extract_citation_info(citation) -> tuple[str, str]:
+    """Extract title and URL from citation (string, dict, or object).
+
+    Args:
+        citation: Citation object (string URL, dict with title/url, or object)
+
+    Returns:
+        Tuple of (title, url)
+    """
+    if isinstance(citation, str):
+        url = citation
+        if "x.com" in url or "twitter.com" in url:
+            title = "X/Twitter Post"
+        elif "github.com" in url:
+            title = "GitHub"
+        else:
+            title = urlparse(url).netloc or "Web Source"
+    elif isinstance(citation, dict):
+        title = citation.get("title", "No Title")
+        url = citation.get("url", "No URL")
+    else:
+        title = getattr(citation, "title", "No Title")
+        url = getattr(citation, "url", "No URL")
+    return title, url
+
+
+def format_citations(citations: list) -> str:
+    """Format citations as a numbered list string.
+
+    Args:
+        citations: List of citation objects
+
+    Returns:
+        Formatted string starting with "\n\nCitations:\n"
+    """
+    if not citations:
+        return ""
+
+    lines = [
+        f"[{i + 1}] {t} - {u}"
+        for i, c in enumerate(citations)
+        for t, u in [extract_citation_info(c)]
+    ]
+    return "\n\nCitations:\n" + "\n".join(lines)
 
 
 # ==============================================================================
@@ -359,12 +422,9 @@ async def save_response_metadata(
     citations: list | None = None,
     num_sources_used: int = 0,
     server_side_tool_usage: dict | None = None,
+    await_save: bool = False,
 ) -> None:
     """Save response metadata to memory and update token sensors.
-
-    IMPORTANT: This function is fully non-blocking. All I/O operations
-    (memory save, token stats update) are dispatched as background tasks
-    to avoid delaying the conversation response to the user.
 
     Args:
         hass: Home Assistant instance
@@ -381,41 +441,19 @@ async def save_response_metadata(
         citations: List of citations from xAI response (conversation only)
         num_sources_used: Number of unique search sources used (conversation only)
         server_side_tool_usage: Dictionary of server-side tool invocations (e.g. {"web_search": 1})
+        await_save: If True, waits for I/O operations to complete before returning.
+                    Set to True for intermediate tool calls to avoid race conditions.
     """
-    # Resolve model synchronously (no I/O needed)
-    resolved_model = model
-    fallback_source = None
-
-    if resolved_model is None and entity is not None:
-        resolved_model = entity._get_option(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL)
-        if resolved_model:
-            fallback_source = "entity_config"
-
-    if resolved_model is None:
-        for entry in hass.config_entries.async_entries(DOMAIN):
-            if entry.entry_id == entry_id:
-                resolved_model = entry.data.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL)
-                if resolved_model:
-                    fallback_source = "entry_data"
-                break
-
-    # Single unified log message
-    if fallback_source:
-        LOGGER.debug(
-            "Model resolved from %s: %s",
-            fallback_source,
-            resolved_model
-        )
-
     # Build list of async tasks to run in parallel
     tasks = []
 
     # Task 1: Save response ID to conversation memory
-    if response_id and conv_key and service_type == "conversation":
+    if response_id and conv_key and service_type in ["conversation", "code_fast"]:
+
         async def _save_response_id():
             try:
                 memory = hass.data[DOMAIN]["conversation_memory"]
-                await memory.save_response_id_by_key(conv_key, response_id)
+                await memory.async_save_response(conv_key, response_id, store_messages)
                 LOGGER.debug(
                     "memory_save: service=%s mode=%s conv_key=%s response_id=%s",
                     service_type,
@@ -424,130 +462,69 @@ async def save_response_metadata(
                     response_id[:8],
                 )
             except Exception as err:
-                LOGGER.error("Failed to store response_id for %s: %s", service_type, err)
+                LOGGER.error(
+                    "Failed to store response_id for %s: %s", service_type, err
+                )
 
         tasks.append(_save_response_id())
 
     # Task 2: Update token stats
     if usage:
+
         async def _update_token_stats():
             storage = hass.data.get(DOMAIN, {}).get("token_stats")
             if storage:
                 await storage.async_update_usage(
                     service_type=service_type,
-                    model=resolved_model,
+                    model=model,
                     usage=usage,
                     mode=mode,
                     is_fallback=is_fallback,
                     store_messages=store_messages,
                     server_side_tool_usage=server_side_tool_usage,
+                    num_sources_used=num_sources_used,
+                    response_id=response_id,
                 )
 
         tasks.append(_update_token_stats())
 
-    # FIRE-AND-FORGET: Execute I/O in background without blocking the response
+    # EXECUTE: Either await or dispatch to background
     if tasks:
-        import asyncio
-
         async def _background_save():
-            """Background task that executes I/O operations without blocking caller."""
+            """Task that executes I/O operations."""
             try:
                 await asyncio.gather(*tasks, return_exceptions=True)
             except Exception as err:
-                LOGGER.error("Background save task failed for %s: %s", service_type, err)
+                LOGGER.error(
+                    "Save task failed for %s: %s", service_type, err
+                )
 
-        # Create background task and track for graceful shutdown
-        task = asyncio.create_task(_background_save())
+        if await_save:
+            # Sequential execution for critical paths (e.g. tool loop memory)
+            await _background_save()
+        else:
+            # FIRE-AND-FORGET: Dispatch to background to avoid delaying user response
+            task = asyncio.create_task(_background_save())
 
-        # Store task reference in hass.data for graceful shutdown tracking
-        if "pending_save_tasks" not in hass.data[DOMAIN]:
-            hass.data[DOMAIN]["pending_save_tasks"] = set()
+            # Store task reference in hass.data for graceful shutdown tracking
+            if "pending_save_tasks" not in hass.data[DOMAIN]:
+                hass.data[DOMAIN]["pending_save_tasks"] = set()
 
-        hass.data[DOMAIN]["pending_save_tasks"].add(task)
-        task.add_done_callback(
-            lambda t: hass.data[DOMAIN]["pending_save_tasks"].discard(t)
-        )
+            hass.data[DOMAIN]["pending_save_tasks"].add(task)
+            task.add_done_callback(
+                lambda t: hass.data[DOMAIN]["pending_save_tasks"].discard(t)
+            )
+
+            # ALSO track in the specific entity if provided (for entity-level shutdown)
+            if entity is not None and hasattr(entity, "_pending_save_tasks"):
+                entity._pending_save_tasks.add(task)
+                task.add_done_callback(lambda t: entity._pending_save_tasks.discard(t))
 
     # Log search details (non-blocking, informational only)
     if service_type == "conversation":
         if citations:
             LOGGER.debug("conversation: citations found: %d", len(citations))
         if num_sources_used > 0:
-            LOGGER.debug("conversation: unique search sources used: %d", num_sources_used)
-
-
-async def handle_response_not_found_error(
-    err: Exception,
-    attempt: int,
-    memory,
-    conv_key: str | None,
-    mode: str,
-    context_id: str = "",
-) -> bool:
-    """Handle NOT_FOUND error for expired response_id on xAI server.
-
-    When xAI returns NOT_FOUND for a previous_response_id, it means the
-    conversation context has expired server-side. This function clears
-    the local memory and signals to retry with a fresh conversation.
-
-    Args:
-        err: The exception that was raised
-        attempt: Current attempt number (0-indexed)
-        memory: ConversationMemory or CodeMemory instance
-        conv_key: Conversation key for memory cleanup
-        mode: Conversation mode ("pipeline", "tools", "code")
-        context_id: Optional context identifier for logging
-
-    Returns:
-        True if should retry (cleared memory), False if should re-raise error
-    """
-    # Check if it's a gRPC NOT_FOUND error
-    try:
-        from grpc import StatusCode
-        from grpc._channel import _InactiveRpcError
-
-        if not isinstance(err, _InactiveRpcError):
-            return False
-
-        if err.code() != StatusCode.NOT_FOUND:
-            return False
-
-    except ImportError:
-        return False
-
-    # Only retry on first attempt
-    if attempt != 0:
-        return False
-
-    # Log the retry
-    context_prefix = f"[Context: {context_id}] " if context_id else ""
-    LOGGER.warning(
-        "%sConversation context not found on xAI server (expired response_id). "
-        "Clearing local memory and retrying with fresh conversation.",
-        context_prefix,
-    )
-
-    # Clear memory by key if available
-    if conv_key and hasattr(memory, "clear_memory_by_key"):
-        try:
-            await memory.clear_memory_by_key(conv_key)
-            LOGGER.debug("Cleared expired memory for conv_key=%s", conv_key)
-        except Exception as clear_err:
-            LOGGER.warning("Failed to clear memory by key: %s", clear_err)
-    # Fallback to clear_memory if clear_memory_by_key not available
-    elif hasattr(memory, "clear_memory"):
-        try:
-            # Extract user_id from conv_key if possible
-            # Format: "user:{user_id}:mode:{mode}:..."
-            if conv_key and conv_key.startswith("user:"):
-                parts = conv_key.split(":")
-                if len(parts) >= 2:
-                    user_id = parts[1]
-                    await memory.clear_memory(user_id, mode)
-                    LOGGER.debug(
-                        "Cleared expired memory for user_id=%s mode=%s", user_id, mode
-                    )
-        except Exception as clear_err:
-            LOGGER.warning("Failed to clear memory: %s", clear_err)
-
-    return True  # Signal to retry
+            LOGGER.debug(
+                "conversation: unique search sources used: %d", num_sources_used
+            )

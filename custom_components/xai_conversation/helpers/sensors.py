@@ -165,6 +165,10 @@ class TokenStats:
             if "reset_timestamp" not in self._data:
                 self._data["reset_timestamp"] = dt_util.now().timestamp()
 
+            # Ensure processed_ids exists for deduplication
+            if "processed_ids" not in self._data:
+                self._data["processed_ids"] = []
+
             self._loaded = True
             LOGGER.debug("Loaded token stats from storage")
         except Exception as err:
@@ -201,6 +205,7 @@ class TokenStats:
         store_messages: bool = True,
         server_side_tool_usage: dict | None = None,
         num_sources_used: int = 0,
+        response_id: str | None = None,
     ) -> None:
         """Update token usage statistics (fire-and-forget).
 
@@ -219,6 +224,7 @@ class TokenStats:
             store_messages: Memory persistence mode (conversation only)
             server_side_tool_usage: Usage stats for server-side tools (e.g. {"web_search": 1})
             num_sources_used: Number of search sources used (for cost calculation)
+            response_id: Unique xAI response ID for deduplication
         """
         if not model or model == "null":
             return
@@ -234,6 +240,7 @@ class TokenStats:
                 store_messages,
                 server_side_tool_usage,
                 num_sources_used,
+                response_id,
             )
         )
 
@@ -251,11 +258,29 @@ class TokenStats:
         store_messages: bool,
         server_side_tool_usage: dict | None = None,
         num_sources_used: int = 0,
+        response_id: str | None = None,
     ) -> None:
         """Internal: Process usage update with lock and I/O (runs in background)."""
         try:
             async with self._lock:
                 await self._ensure_loaded()
+
+                # Deduplication check
+                if response_id:
+                    if "processed_ids" not in self._data:
+                        self._data["processed_ids"] = []
+
+                    if response_id in self._data["processed_ids"]:
+                        LOGGER.debug(
+                            "TokenStats: Skipping duplicate response_id: %s",
+                            response_id,
+                        )
+                        return
+
+                    # Add to processed list and keep it manageable (max 100)
+                    self._data["processed_ids"].append(response_id)
+                    if len(self._data["processed_ids"]) > 100:
+                        self._data["processed_ids"].pop(0)
 
                 # Initialize structure
                 if "token_stats" not in self._data:
@@ -295,10 +320,17 @@ class TokenStats:
                             "by_tool": {},
                             "by_service": {},
                         }
-                    
-                    # Initialize total_sources if missing (migration)
-                    if "total_sources" not in self._data["server_tools"]:
-                        self._data["server_tools"]["total_sources"] = 0
+
+                    # Ensure keys exist (helpful for migrations or partial inits)
+                    st_data = self._data["server_tools"]
+                    if "total_invocations" not in st_data:
+                        st_data["total_invocations"] = 0
+                    if "total_sources" not in st_data:
+                        st_data["total_sources"] = 0
+                    if "by_tool" not in st_data:
+                        st_data["by_tool"] = {}
+                    if "by_service" not in st_data:
+                        st_data["by_service"] = {}
 
                     # Accumulate sources
                     self._data["server_tools"]["total_sources"] += num_sources_used
@@ -309,17 +341,33 @@ class TokenStats:
                             self._data["server_tools"]["total_invocations"] += count
 
                             # Normalize tool name (SDK uses SERVER_SIDE_TOOL_* prefix)
-                            normalized_tool = tool_type.lower().replace("server_side_tool_", "")
+                            normalized_tool = tool_type.lower().replace(
+                                "server_side_tool_", ""
+                            )
 
                             # By tool type (using normalized name)
-                            if normalized_tool not in self._data["server_tools"]["by_tool"]:
-                                self._data["server_tools"]["by_tool"][normalized_tool] = 0
-                            self._data["server_tools"]["by_tool"][normalized_tool] += count
+                            if (
+                                normalized_tool
+                                not in self._data["server_tools"]["by_tool"]
+                            ):
+                                self._data["server_tools"]["by_tool"][
+                                    normalized_tool
+                                ] = 0
+                            self._data["server_tools"]["by_tool"][normalized_tool] += (
+                                count
+                            )
 
                             # By service type
-                            if service_type not in self._data["server_tools"]["by_service"]:
-                                self._data["server_tools"]["by_service"][service_type] = 0
-                            self._data["server_tools"]["by_service"][service_type] += count
+                            if (
+                                service_type
+                                not in self._data["server_tools"]["by_service"]
+                            ):
+                                self._data["server_tools"]["by_service"][
+                                    service_type
+                                ] = 0
+                            self._data["server_tools"]["by_service"][service_type] += (
+                                count
+                            )
 
                     LOGGER.debug(
                         "Tracked server tool usage: %s, sources=%d (service=%s)",
@@ -673,7 +721,9 @@ class TokenStats:
 
         self._notify_listeners()
 
-    async def save_pricing_batch(self, pricing_updates: dict[str, dict[str, float]]) -> None:
+    async def save_pricing_batch(
+        self, pricing_updates: dict[str, dict[str, float]]
+    ) -> None:
         """Save pricing data for multiple models at once.
 
         Args:

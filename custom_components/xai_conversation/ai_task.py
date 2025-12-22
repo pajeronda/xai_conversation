@@ -20,18 +20,15 @@ from homeassistant.components import conversation as ha_conversation
 from .const import (
     LOGGER,
     SUBENTRY_TYPE_AI_TASK,
-    CONF_VISION_PROMPT,
-    VISION_ANALYSIS_PROMPT,
 )
 from .helpers import (
     parse_with_strategies,
     parse_strict_json,
     parse_json_fenced,
     parse_balanced_braces,
+    LogTimeServices,
 )
-from .helpers.xai_gateway import XAIGateway
-from .helpers.log_time_services import LogTimeServices
-from .helpers.response import save_response_metadata
+from .xai_gateway import XAIGateway
 from .entity import XAIBaseLLMEntity
 from .exceptions import raise_generic_error, raise_validation_error
 
@@ -228,11 +225,10 @@ class XAITaskEntity(
             raise_validation_error("Image generation prompt cannot be empty")
 
         # Resolve config via Gateway
-        # Note: model_target="image" ensures we get CONF_IMAGE_MODEL
-        config = self.gateway.get_service_config(
+        params = self.gateway._resolve_chat_parameters(
             service_type="ai_task", model_target="image"
         )
-        model = config["model"]
+        model = params["model"]
 
         context = {"model": model, "prompt_length": len(prompt)}
         async with LogTimeServices(LOGGER, "image_generation", context) as timer:
@@ -259,13 +255,10 @@ class XAITaskEntity(
             revised_prompt = getattr(response, "prompt", None)
             timer.context_info["image_size_bytes"] = len(image_bytes)
 
-            await save_response_metadata(
-                hass=self.hass,
-                entry_id=self.entry.entry_id,
-                usage=_FallbackUsage(completion_tokens=1),
-                model=model,
+            await self.gateway.async_log_completion(
+                response={"usage": _FallbackUsage(completion_tokens=1)},
                 service_type="ai_task",
-                store_messages=False,
+                model_target="image",
             )
 
             return ha_ai_task.GenImageTaskResult(
@@ -282,67 +275,23 @@ class XAITaskEntity(
         images: list[str] | None = None,
         attachments: list | None = None,
     ) -> str:
-        """Analyze photos using vision model.
-
-        Args:
-            prompt: Analysis prompt
-            images: List of image paths or URLs
-            attachments: List of attachment objects
-
-        Returns:
-            Analysis text result
-        """
-        # Resolve config first to get the model name for logging/context
-        config = self.gateway.get_service_config(
-            service_type="ai_task", model_target="vision"
-        )
-        model = config["model"]
-
+        """Analyze photos using vision model by delegating to the gateway."""
         # Pre-process images using the shared helper
         image_messages = await self._prepare_attachments(attachments, images)
+        if not image_messages:
+            raise_validation_error("No valid images found for analysis.")
 
-        context = {"model": model, "images_count": len(image_messages)}
-        async with LogTimeServices(LOGGER, "photo_analysis", context) as timer:
-            # Use gateway helper to create chat with vision model configuration
-            chat = self.gateway.create_chat(
-                service_type="ai_task",
-                model_target="vision",
-                previous_response_id=None
-            )
+        # Construct the mixed-content message for the gateway
+        message_content = [prompt]
+        message_content.extend(image_messages)
 
-            vision_prompt = self._get_option(
-                CONF_VISION_PROMPT, VISION_ANALYSIS_PROMPT
-            )
-            if vision_prompt:
-                chat.append(XAIGateway.system_msg(vision_prompt))
+        # The gateway's `execute_stateless_chat` will handle LogTimeServices,
+        # API call, and response logging.
+        analysis_text = await self.gateway.execute_stateless_chat(
+            input_data=None,  # Ignored when mixed_content is used
+            mixed_content=message_content,
+            service_type="ai_task",
+            model_target="vision",
+        )
 
-            # Construct user message: [text, img1, img2...]
-            message_content = [prompt]
-            message_content.extend(image_messages)
-
-            # Add single user message with mixed content
-            chat.append(XAIGateway.user_msg(message_content))
-
-            async with timer.record_api_call():
-                response = await chat.sample()
-
-            content_text = getattr(response, "content", "")
-            usage = getattr(response, "usage", None)
-
-            if usage is None:
-                LOGGER.warning(
-                    "xAI API did not return usage data for vision task. Using fallback (0 tokens)."
-                )
-                usage = _FallbackUsage()
-
-            # Use correct metadata saver
-            await save_response_metadata(
-                hass=self.hass,
-                entry_id=self.entry.entry_id,
-                usage=usage,
-                model=model,
-                service_type="ai_task",
-                store_messages=False,
-            )
-
-            return content_text
+        return analysis_text or ""

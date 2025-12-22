@@ -14,17 +14,19 @@ Responsibilities:
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from homeassistant.core import HomeAssistant
 from homeassistant.components import persistent_notification
 from homeassistant.util import dt as dt_util
 
+if TYPE_CHECKING:
+    from ..xai_gateway import XAIGateway
+
 from ..const import (
     CONF_XAI_PRICING_CONVERSION_FACTOR,
     LOGGER,
     DOMAIN,
-    RECOMMENDED_TIMEOUT,
     RECOMMENDED_IMAGE_MODEL,
     RECOMMENDED_XAI_PRICING_CONVERSION_FACTOR,
     SUPPORTED_MODELS,
@@ -59,30 +61,69 @@ class XAIModelManager:
                     )
         return RECOMMENDED_XAI_PRICING_CONVERSION_FACTOR
 
-    async def async_get_models_data(self, api_key: str) -> dict[str, Any] | None:
+    def _build_model_data_entry(
+        self,
+        model: Any,
+        model_type: str,
+        conversion_factor: float,
+        price_key: str | None = "prompt_text_token_price",
+        image_price_key: str | None = None,
+    ) -> dict:
+        """Helper to build a single model data entry."""
+        entry = {
+            "name": model.name,
+            "type": model_type,
+            "input_price_per_million": 0.0,
+            "output_price_per_million": 0.0,
+            "cached_input_price_per_million": 0.0,
+            "context_window": getattr(model, "context_window", 0),
+            "aliases": getattr(model, "aliases", []),
+        }
+
+        if image_price_key:
+            raw_price = getattr(model, image_price_key, 0.0)
+            if raw_price is None:
+                raw_price = 0.0
+            entry["output_price_per_million"] = raw_price / conversion_factor
+        else:
+            if price_key:
+                val = getattr(model, price_key, 0.0)
+                if val is None:
+                    val = 0.0
+                entry["input_price_per_million"] = val / conversion_factor
+
+            completion_price = getattr(model, "completion_text_token_price", 0.0)
+            if completion_price is None:
+                completion_price = 0.0
+            entry["output_price_per_million"] = completion_price / conversion_factor
+
+            cached_price = getattr(model, "cached_prompt_token_price", 0.0)
+            if cached_price is None:
+                cached_price = 0.0
+            entry["cached_input_price_per_million"] = cached_price / conversion_factor
+
+        return entry
+
+    async def async_get_models_data(self, gateway: XAIGateway) -> dict[str, Any] | None:
         """Fetch available xAI models and their pricing asynchronously.
 
         This method handles:
-        1. Connecting to xAI API
+        1. Connecting to xAI API via the provided Gateway
         2. Fetching language, image, and embedding models
         3. Applying fallback logic for known issues (e.g., missing image models)
         4. Converting raw API pricing to USD per million tokens using standardized factors
         5. Populating global SUPPORTED_MODELS and REASONING_EFFORT_MODELS lists
 
         Args:
-            api_key: The xAI API key.
+            gateway: The XAIGateway instance to use for API communication.
 
         Returns:
             A dictionary where keys are model names and values are their data (including pricing),
             or None if fetching fails.
         """
         try:
-            # Use gateway to create client (handles SDK availability check)
-            from .xai_gateway import XAIGateway
-
-            client = XAIGateway.create_client_from_api_key(
-                api_key=api_key, timeout=float(RECOMMENDED_TIMEOUT)
-            )
+            # Use gateway to create client (handles auth, host, and SDK availability)
+            client = gateway.create_client()
 
             # Get conversion factor from config (cached for this call)
             conversion_factor = self._get_pricing_conversion_factor()
@@ -94,29 +135,12 @@ class XAIModelManager:
             LOGGER.debug("Fetched %d language models", len(language_models))
 
             for model in language_models:
-                # API returns prices in units of 0.0001 USD per 1M tokens.
-                # We divide by conversion_factor to get USD per 1M tokens.
-                models_data[model.name] = {
-                    "name": model.name,
-                    "type": "language",
-                    "input_price_per_million": getattr(
-                        model, "prompt_text_token_price", 0.0
-                    )
-                    / conversion_factor,
-                    "output_price_per_million": getattr(
-                        model, "completion_text_token_price", 0.0
-                    )
-                    / conversion_factor,
-                    "cached_input_price_per_million": getattr(
-                        model, "cached_prompt_token_price", 0.0
-                    )
-                    / conversion_factor,
-                    "context_window": getattr(model, "context_window", 0),
-                    "aliases": getattr(model, "aliases", []),
-                }
-                # Register aliases pointing to the same data
-                for alias in models_data[model.name]["aliases"]:
-                    models_data[alias] = models_data[model.name]
+                entry = self._build_model_data_entry(
+                    model, "language", conversion_factor
+                )
+                models_data[model.name] = entry
+                for alias in entry["aliases"]:
+                    models_data[alias] = entry
 
             # --- 2. Fetch Image Generation Models ---
             image_models = await client.models.list_image_generation_models()
@@ -128,12 +152,14 @@ class XAIModelManager:
                     "No image models returned by API. Adding fallback model: %s",
                     RECOMMENDED_IMAGE_MODEL,
                 )
-                # Map image price ($0.07) directly (no per-million conversion for images)
+                # Map image price ($0.07 per image = 1 token)
+                # Note: We use 70000.0 because cost calculation divides tokens by 1,000,000.
+                # Price per million tokens = $0.07 * 1,000,000 = $70,000
                 fallback_data = {
                     "name": RECOMMENDED_IMAGE_MODEL,
                     "type": "image",
                     "input_price_per_million": 0.0,
-                    "output_price_per_million": 0.07,
+                    "output_price_per_million": 70000.0,
                     "cached_input_price_per_million": 0.0,
                     "context_window": 0,
                     "aliases": [],
@@ -141,44 +167,37 @@ class XAIModelManager:
                 models_data[RECOMMENDED_IMAGE_MODEL] = fallback_data
 
             for model in image_models:
-                # Image models return 'image_price' (e.g., 700 for $0.07).
-                # Convert raw price to USD: raw / conversion_factor
-                raw_price = getattr(model, "image_price", 0.0)
-                price_usd = raw_price / conversion_factor
+                entry = self._build_model_data_entry(
+                    model, "image", conversion_factor, image_price_key="image_price"
+                )
 
-                models_data[model.name] = {
-                    "name": model.name,
-                    "type": "image",
-                    "input_price_per_million": 0.0,
-                    "output_price_per_million": price_usd,
-                    "cached_input_price_per_million": 0.0,
-                    "context_window": 0,
-                    "aliases": getattr(model, "aliases", []),
-                }
-                for alias in models_data[model.name]["aliases"]:
-                    models_data[alias] = models_data[model.name]
+                # Fix: If API returns the model but with 0 price, force our $0.07/image fallback
+                if (
+                    entry["name"] == RECOMMENDED_IMAGE_MODEL
+                    and entry["output_price_per_million"] == 0
+                ):
+                    entry["output_price_per_million"] = 70000.0
+
+                models_data[model.name] = entry
+                for alias in entry["aliases"]:
+                    models_data[alias] = entry
 
             # --- 3. Fetch Embedding Models ---
             embedding_models = await client.models.list_embedding_models()
             LOGGER.debug("Fetched %d embedding models", len(embedding_models))
 
             for model in embedding_models:
-                models_data[model.name] = {
-                    "name": model.name,
-                    "type": "embedding",
-                    "input_price_per_million": getattr(
-                        model, "prompt_text_token_price", 0.0
-                    )
-                    / conversion_factor,
-                    "output_price_per_million": 0.0,
-                    "cached_input_price_per_million": getattr(
-                        model, "cached_prompt_token_price", 0.0
-                    )
-                    / conversion_factor,
-                    "aliases": getattr(model, "aliases", []),
-                }
-                for alias in models_data[model.name]["aliases"]:
-                    models_data[alias] = models_data[model.name]
+                entry = self._build_model_data_entry(
+                    model,
+                    "embedding",
+                    conversion_factor,
+                    price_key="prompt_text_token_price",
+                )
+                # Embedding models typically don't have completion_text_token_price
+                entry["output_price_per_million"] = 0.0
+                models_data[model.name] = entry
+                for alias in entry["aliases"]:
+                    models_data[alias] = entry
 
             # --- 4. Populate global SUPPORTED_MODELS and REASONING_EFFORT_MODELS ---
             self._populate_supported_models(models_data)
@@ -189,11 +208,11 @@ class XAIModelManager:
             LOGGER.error("Failed to fetch xAI model data: %s", exc)
             return None
 
-    async def async_update_models(self, api_key: str) -> None:
+    async def async_update_models(self, gateway: XAIGateway) -> None:
         """Update model data, detect new models, and update pricing.
 
         This method is called both at startup and periodically. It:
-        1. Fetches fresh data from API.
+        1. Fetches fresh data from API using the provided Gateway.
         2. Compares with currently stored known models from TokenStats.
         3. Identifies truly new models (not just new to current runtime session).
         4. Sends notifications for truly new models.
@@ -201,7 +220,7 @@ class XAIModelManager:
         6. Updates TokenStats's persistent list of known models.
 
         Args:
-            api_key: The xAI API key.
+            gateway: The XAIGateway instance to use for API communication.
         """
         LOGGER.debug("Starting model update check...")
 
@@ -212,7 +231,7 @@ class XAIModelManager:
                 "TokenStats not available during model update, skipping new model detection."
             )
             # Continue with basic update even if TokenStats is not available
-            new_data = await self.async_get_models_data(api_key)
+            new_data = await self.async_get_models_data(gateway)
             if new_data:
                 self.hass.data[DOMAIN]["xai_models_data"] = new_data
                 self.hass.data[DOMAIN]["xai_models_data_timestamp"] = (
@@ -223,7 +242,7 @@ class XAIModelManager:
                 )
             return
 
-        new_data = await self.async_get_models_data(api_key)
+        new_data = await self.async_get_models_data(gateway)
 
         if not new_data:
             LOGGER.warning("Model update failed: could not fetch data.")

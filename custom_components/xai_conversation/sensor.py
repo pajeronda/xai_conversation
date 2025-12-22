@@ -534,8 +534,8 @@ class XAIResetTimestampSensor(XAITokenSensorBase):
         now = dt_util.now()
         # Ensure timezones match if present
         if reset_ts.tzinfo is None:
-             reset_ts = reset_ts.replace(tzinfo=now.tzinfo)
-        
+            reset_ts = reset_ts.replace(tzinfo=now.tzinfo)
+
         delta = now - reset_ts
         days = delta.days
         hours = delta.seconds // 3600
@@ -566,10 +566,24 @@ class XAIPricingSensor(SensorEntity):
         self._model_name = model_name
         self._price_type = price_type
         self._attr_unique_id = f"{entry.entry_id}_{model_name}_{price_type}"
-        label = price_type.replace("_", " ").replace("price", "").strip()
-        self._attr_name = (
-            f"{model_name.replace('-', ' ').title()} {label} (per 1M tokens)"
+
+        # Determine model type to format label and value correctly
+        xai_models_data = hass.data[DOMAIN].get("xai_models_data", {})
+        model_data = xai_models_data.get(model_name, {})
+        self._is_image_model = (
+            model_data.get("type") == "image" or "image" in model_name
         )
+
+        label = price_type.replace("_", " ").replace("price", "").strip()
+        if self._is_image_model:
+            self._attr_name = (
+                f"{model_name.replace('-', ' ').title()} {label} (per image)"
+            )
+        else:
+            self._attr_name = (
+                f"{model_name.replace('-', ' ').title()} {label} (per 1M tokens)"
+            )
+
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, subentry.subentry_id)},
             name=DEFAULT_SENSORS_NAME,
@@ -578,12 +592,19 @@ class XAIPricingSensor(SensorEntity):
             entry_type=dr.DeviceEntryType.SERVICE,
         )
         self._unsubscribe = None
+
         # Initialize with price from xai_models_data if available
-        xai_models_data = hass.data[DOMAIN].get("xai_models_data", {})
-        model_data = xai_models_data.get(model_name, {})
         price_key = f"{price_type}_per_million"
         initial_price = model_data.get(price_key, 0.0)
-        self._attr_native_value = initial_price if initial_price > 0 else 0.0
+
+        if initial_price > 0:
+            if self._is_image_model:
+                # stored price is per 1M units, convert to per 1 unit
+                self._attr_native_value = initial_price / 1_000_000.0
+            else:
+                self._attr_native_value = initial_price
+        else:
+            self._attr_native_value = 0.0
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
@@ -604,7 +625,10 @@ class XAIPricingSensor(SensorEntity):
         if storage:
             price = await storage.get_pricing(self._model_name, self._price_type)
             if price is not None:
-                self._attr_native_value = price
+                if self._is_image_model:
+                    self._attr_native_value = price / 1_000_000.0
+                else:
+                    self._attr_native_value = price
                 self.async_write_ha_state()
             elif self._attr_native_value == 0.0:
                 # Fallback: try to get from xai_models_data if storage is empty
@@ -613,7 +637,10 @@ class XAIPricingSensor(SensorEntity):
                 price_key = f"{self._price_type}_per_million"
                 fallback_price = model_data.get(price_key, 0.0)
                 if fallback_price > 0:
-                    self._attr_native_value = fallback_price
+                    if self._is_image_model:
+                        self._attr_native_value = fallback_price / 1_000_000.0
+                    else:
+                        self._attr_native_value = fallback_price
                     self.async_write_ha_state()
 
 

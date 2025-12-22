@@ -98,16 +98,29 @@ async def timed_stream_generator(
     stream_iterator: AsyncGenerator[Any, None], timer: LogTimeServices
 ) -> AsyncGenerator[Any, None]:
     """
-    Asynchronously iterates a stream and records the execution time to a LogTimeServices instance.
+    Asynchronously iterates a stream and records ONLY the execution time of the iterator
+    (API latency) to a LogTimeServices instance.
+
+    This implementation strictly separates API waiting time from consumer processing time.
 
     Args:
         stream_iterator: The async generator (API stream) to iterate over.
         timer: The LogTimeServices instance to report the API time to.
     """
-    start_time = time.time()
-    try:
-        async for chunk in stream_iterator:
-            yield chunk
-    finally:
-        end_time = time.time()
-        timer.record_api_time(end_time - start_time)
+    iterator = stream_iterator.__aiter__()
+    while True:
+        start_wait = time.time()
+        try:
+            chunk = await iterator.__anext__()
+        except StopAsyncIteration:
+            # Record time spent waiting for the final signal that stream is done
+            timer.record_api_time(time.time() - start_wait)
+            break
+        except Exception:
+            # Record time spent waiting before the error occurred
+            timer.record_api_time(time.time() - start_wait)
+            raise
+
+        # Record time spent waiting for this chunk
+        timer.record_api_time(time.time() - start_wait)
+        yield chunk

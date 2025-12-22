@@ -1,5 +1,8 @@
 {
   "services": {
+    "ask": {
+      "service": "mdi:message-text-fast-outline"
+    },
     "reset_token_stats": {
       "service": "mdi:delete-sweep"
     },

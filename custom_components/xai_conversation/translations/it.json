@@ -3,18 +3,18 @@
     "step": {
       "user": {
         "title": "Configurazione xAI Grok",
-        "description": "Configura l'integrazione xAI Grok per Home Assistant.",
+        "description": "Configura l'integrazione xAI Grok per Home Assistant. Inserisci la chiave API, l'endpoint, il nome dell'assistente predefinito e la modalità di ricerca. Impostazioni aggiuntive come i tools estesi, i parametri di memoria e le configurazioni specifiche delle conversazioni possono essere regolate in seguito.",
         "data": {
           "api_key": "Chiave API",
-          "api_host": "Host API (predefinito: 'api.x.ai', 'us-east-1.api.x.ai' o 'eu-west-1.api.x.ai')",
+          "api_host": "Endpoint API (predefinito: 'api.x.ai')",
           "assistant_name": "Nome Assistente",
           "live_search": "Modalità ricerca live"
         },
         "data_description": {
           "api_key": "La tua chiave API xAI (inizia con 'xai-').",
-          "api_host": "Hostname dell'endpoint API. Usa 'api.x.ai' per il routing globale con ridirezione automatica a un host regionale oppure specifica direttamente un host regionale.",
+          "api_host": "Hostname dell'endpoint API. Usa 'api.x.ai' per il routing globale oppure specifica un endpoint regionale: 'us-east-1.api.x.ai' o 'eu-west-1.api.x.ai'. Questo endpoint viene utilizzato globalmente da tutti gli agenti.",
           "assistant_name": "Il nome con cui l'assistente si identificherà (es. 'Jarvis', 'Alexa', 'HAL').",
-          "live_search": "Abilita capacità di ricerca web: 'off' (disabilitato), 'auto' (il modello decide), 'on' (sempre abilitato)"
+          "live_search": "Abilita capacità di ricerca web: 'off' (disabilitato), 'web search', 'x search', 'full' (web + x + code)"
         }
       }
     },
@@ -28,11 +28,17 @@
     }
   },
   "options": {
+    "error": {
+      "invalid_yaml": "Configurazione YAML non valida. Controlla la sintassi e i campi obbligatori."
+    },
     "step": {
       "init": {
-        "title": "Configurazione memoria xAI",
-        "description": "Configura i parametri di memoria per utenti e dispositivi assistente vocale. L'integrazione rileva automaticamente se una richiesta proviene da un utente (smartphone/PC/tablet) o da un dispositivo (satellite vocale) e applica le impostazioni appropriate.",
+        "title": "Configurazione xAI",
+        "description": "Configura i parametri di memoria per utenti e dispositivi, e imposta i tools personalizzati estesi. L'integrazione rileva automaticamente se una richiesta proviene da un utente (smartphone/PC/tablet) o da un dispositivo (satellite vocale) e applica le impostazioni di memoria appropriate.",
         "data": {
+          "api_host": "Endpoint API",
+          "use_extended_tools": "Abilita Configurazione Extended Tools",
+          "extended_tools_yaml": "Configurazione YAML Extended Tools",
           "memory_user_ttl_hours": "Memoria utente: Durata (ore)",
           "memory_user_max_turns": "Memoria utente: Turni massimi",
           "memory_device_ttl_hours": "Memoria dispositivo: Durata (ore)",
@@ -40,6 +46,9 @@
           "memory_cleanup_interval_hours": "Intervallo pulizia memoria (ore)"
         },
         "data_description": {
+          "api_host": "Hostname dell'endpoint API. Usa 'api.x.ai' per il routing globale oppure specifica un endpoint regionale: 'us-east-1.api.x.ai' o 'eu-west-1.api.x.ai'.",
+          "use_extended_tools": "Abilita per configurare tools personalizzati in formato Extended OpenAI Conversation. Se abilitato, questi tools saranno disponibili per tutti gli agenti conversazionali che supportano i tools estesi.",
+          "extended_tools_yaml": "Definisci qui i tuoi tools personalizzati. Il formato è pienamente compatibile con Extended OpenAI Conversation. Puoi copiare/incollare la tua configurazione esistente.",
           "memory_user_ttl_hours": "Durata delle conversazioni degli utenti (smartphone, PC, tablet). Predefinito: 720 ore (30 giorni)",
           "memory_user_max_turns": "Numero massimo di turni di conversazione memorizzati per gli utenti. Predefinito: 1000 turni",
           "memory_device_ttl_hours": "Durata delle conversazioni dei dispositivi (satelliti assistente vocale). Predefinito: 168 ore (7 giorni)",
@@ -62,7 +71,6 @@
           "data": {
             "name": "Nome",
             "assistant_name": "Nome Assistente",
-            "api_host": "Host API ('api.x.ai', 'us-east-1.api.x.ai' o 'eu-west-1.api.x.ai')",
             "chat_model": "Modello",
             "max_tokens": "Token massimi",
             "temperature": "Temperatura",
@@ -75,11 +83,11 @@
             "store_messages": "Memorizza messaggi",
             "send_user_name": "Includi nome utente nei messaggi",
             "show_citations": "Mostra citazioni nella chat",
-            "reasoning_effort": "Livello di ragionamento"
+            "reasoning_effort": "Livello di ragionamento",
+            "use_extended_tools": "Usa Extended Tools (Config Globale)"
           },
           "data_description": {
             "assistant_name": "Il nome con cui l'assistente si identificherà (es. 'Jarvis', 'Alexa', 'HAL'). La modifica di questo valore avvierà una nuova conversazione e la cronologia precedente non sarà più accessibile.",
-            "api_host": "Hostname dell'endpoint API. Usa 'api.x.ai' per il routing globale con ridirezione automatica a un host regionale oppure specifica direttamente un host regionale.",
             "chat_model": "Seleziona il modello Grok da utilizzare.",
             "max_tokens": "Numero massimo di token da generare.",
             "temperature": "Controlla la casualità delle risposte (0.0 = deterministica, 2.0 = molto creativa).",
@@ -92,7 +100,9 @@
             "show_citations": "Aggiungi le citazioni delle ricerche alle risposte. Utile per interfacce UI/chat ma può risultare verboso per assistenti vocali. Predefinito: OFF (consigliato per voce).",
             "live_search": "Abilita capacità di ricerca web: 'off' (disabilitato), 'auto' (il modello decide), 'on' (sempre abilitato). Si applica sia alla modalità flusso che a quella degli strumenti.",
             "prompt": "Istruzioni personalizzate per l'agente (solo modalità strumenti).",
-            "reasoning_effort": "Livello di impegno nel ragionamento per i modelli che lo supportano (basso, medio, alto, massimo). Disponibile solo per i modelli grok-4 e grok-4-fast."
+            "reasoning_effort": "Livello di impegno nel ragionamento per i modelli che lo supportano (basso, medio, alto, massimo). Disponibile solo per i modelli grok-4 e grok-4-fast.",
+            "use_extended_tools": "Abilita l'uso dei tools personalizzati definiti nelle opzioni principali dell'integrazione (formato Extended OpenAI). ATTENZIONE: Abilitando questa opzione, i tools nativi di Home Assistant verranno disabilitati per questo agente, indipendentemente dalla modalità."
+
           }
         }
       },
@@ -142,7 +152,6 @@
             "name": "Nome",
             "prompt": "Prompt",
             "vision_prompt": "Prompt per analisi foto",
-            "api_host": "Host API ('api.x.ai', 'us-east-1.api.x.ai' o 'eu-west-1.api.x.ai')",
             "chat_model": "Modello",
             "image_model": "Modello per immagini",
             "vision_model": "Modello per analisi foto",
@@ -154,7 +163,6 @@
             "name": "Nome descrittivo per questa attività AI.",
             "prompt": "Prompt di sistema completo per l'attività AI. Sostituisce quello predefinito. Modificalo con cautela, poiché definisce il comportamento del modello (es. formato di output JSON).",
             "vision_prompt": "Prompt di sistema per l'analisi foto. Definisce come il modello vision deve analizzare le immagini (es. conciso, dettagliato, fattuale).",
-            "api_host": "Hostname dell'endpoint API. Usa 'api.x.ai' per il routing globale con ridirezione automatica a un host regionale oppure specifica direttamente un host regionale.",
             "chat_model": "Seleziona il modello Grok da utilizzare.",
             "image_model": "Modello utilizzato esclusivamente per la generazione di immagini.",
             "vision_model": "Modello utilizzato esclusivamente per l'analisi delle foto (documenti, diagrammi, grafici, screenshot, fotografie).",
@@ -180,7 +188,6 @@
           "data": {
             "name": "Nome",
             "prompt_code": "Prompt",
-            "api_host": "Host API ('api.x.ai', 'us-east-1.api.x.ai' o 'eu-west-1.api.x.ai')",
             "chat_model": "Modello",
             "max_tokens": "Token massimi",
             "temperature": "Temperatura",
@@ -193,7 +200,6 @@
           "data_description": {
             "name": "Nome descrittivo per questa attività Grok Code Fast.",
             "prompt_code": "Istruzioni personalizzate opzionali aggiunte al prompt predefinito. Utile per regole specifiche del progetto o convenzioni di codifica. Lasciare vuoto per usare solo il prompt predefinito.",
-            "api_host": "Hostname dell'endpoint API. Usa 'api.x.ai' per il routing globale con ridirezione automatica a un host regionale oppure specifica direttamente un host regionale.",
             "chat_model": "Seleziona il modello Grok da utilizzare.",
             "max_tokens": "Numero massimo di token da generare.",
             "temperature": "Controlla la casualità delle risposte (0.0 = deterministica, 2.0 = molto creativa).",

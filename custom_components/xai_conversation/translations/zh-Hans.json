@@ -3,10 +3,10 @@
     "step": {
       "user": {
         "title": "xAI Grok 配置",
-        "description": "为 Home Assistant 配置 xAI Grok 集成。",
+        "description": "为 Home Assistant 配置 xAI Grok 集成。API 端点为所有代理全局配置。工具和智能管道设置可根据需要按代理进行调整。",
         "data": {
           "api_key": "API 密钥",
-          "api_host": "API 主机（默认：'api.x.ai'、'us-east-1.api.x.ai' 或 'eu-west-1.api.x.ai'）",
+          "api_host": "API 端点",
           "assistant_name": "助手名称",
           "live_search": "实时搜索模式"
         },
@@ -30,9 +30,12 @@
   "options": {
     "step": {
       "init": {
-        "title": "xAI 内存配置",
-        "description": "配置用户和语音助手设备的内存参数。集成会自动检测请求来自用户（智能手机/PC/平板电脑）还是设备（语音卫星）并应用相应的设置。",
+        "title": "xAI 配置",
+        "description": "配置用户和语音助手设备的内存参数，以及扩展工具。",
         "data": {
+          "api_host": "API 端点",
+          "use_extended_tools": "启用 Extended Tools 配置",
+          "extended_tools_yaml": "Extended Tools YAML 配置",
           "memory_user_ttl_hours": "用户内存持续时间（小时）",
           "memory_user_max_turns": "用户内存最大轮次",
           "memory_device_ttl_hours": "设备内存持续时间（小时）",
@@ -40,11 +43,16 @@
           "memory_cleanup_interval_hours": "内存清理间隔（小时）"
         },
         "data_description": {
+          "api_host": "API 端点主机名。使用 'api.x.ai' 进行全局路由并自动重定向到区域主机，或直接指定区域主机：'us-east-1.api.x.ai' 或 'eu-west-1.api.x.ai'。",
+          "use_extended_tools": "启用以配置 Extended OpenAI Conversation 格式的自定义工具。",
+          "extended_tools_yaml": "在此处定义您的自定义工具。格式与 Extended OpenAI Conversation 完全兼容。您可以直接复制粘贴现有配置。",
           "memory_user_ttl_hours": "用户对话的持续时间（智能手机、PC、平板电脑）。默认：720 小时（30 天）",
           "memory_user_max_turns": "为用户存储的最大对话轮次。默认：1000 轮",
           "memory_device_ttl_hours": "设备对话的持续时间（语音助手卫星）。默认：168 小时（7 天）",
           "memory_device_max_turns": "为设备存储的最大对话轮次。默认：100 轮",
           "memory_cleanup_interval_hours": "清理过期内存条目的频率。默认：24 小时"
+        }
+      }
         }
       }
     }
@@ -75,7 +83,8 @@
             "store_messages": "存储消息",
             "send_user_name": "在消息中包含用户名",
             "show_citations": "在聊天中显示引用",
-            "reasoning_effort": "推理级别"
+            "reasoning_effort": "推理级别",
+            "use_extended_tools": "使用 Extended Tools（全局配置）"
           },
           "data_description": {
             "assistant_name": "助手用于标识自己的名称（例如 'Jarvis'、'Alexa'、'HAL'）。更改此值将开始新对话，之前的历史记录将无法访问。",
@@ -92,7 +101,8 @@
             "show_citations": "将搜索引用添加到聊天响应。对 UI/聊天界面有用，但对语音助手可能会很嘈杂。默认：关闭（建议用于语音）。",
             "live_search": "启用网络搜索功能：'off'（禁用）、'auto'（模型决定）、'on'（始终启用）。适用于管道和工具模式。",
             "prompt": "代理的自定义指令（仅工具模式）。",
-            "reasoning_effort": "支持此功能的模型的推理级别（低、中、高、最大）。仅适用于 grok-4 和 grok-4-fast 模型。"
+            "reasoning_effort": "支持此功能的模型的推理级别（低、中、高、最大）。仅适用于 grok-4 和 grok-4-fast 模型。",
+            "use_extended_tools": "启用在主集成选项中定义的自定义工具（Extended OpenAI 格式）。警告：启用此选项将禁用此代理的标准 Home Assistant 原生工具，无论使用何种模式。"
           }
         }
       },

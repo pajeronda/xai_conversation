@@ -17,30 +17,19 @@ from .const import (
     DOMAIN,
     LOGGER,
     RECOMMENDED_HISTORY_LIMIT_TURNS,
-    SUBENTRY_TYPE_CODE_TASK,
-    CONF_CHAT_MODEL,
-    RECOMMENDED_CHAT_MODEL,
 )
-from .exceptions import raise_generic_error, raise_validation_error
+from .exceptions import (
+    raise_generic_error,
+    raise_validation_error,
+)
 from .helpers import (
     parse_grok_code_response,
     parse_id_list,
     LogTimeServices,
-    PromptManager,
-    save_response_metadata,
-    XAIGateway,
+    get_xai_entity,
+    extract_user_id,
 )
-
-# gRPC imports for error handling
-try:
-    from grpc import StatusCode
-    from grpc._channel import _InactiveRpcError
-
-    GRPC_AVAILABLE = True
-except ImportError:
-    StatusCode = None
-    _InactiveRpcError = None
-    GRPC_AVAILABLE = False
+from .xai_gateway import XAIGateway
 
 import base64
 from datetime import datetime
@@ -52,129 +41,6 @@ from homeassistant.core import (
 )
 from homeassistant.helpers import entity_registry as ha_entity_registry
 from homeassistant.util.json import json_loads as ha_json_loads
-
-
-# ==============================================================================
-# HELPER: Service Registration
-# ==============================================================================
-
-
-def register_services(hass: HA_HomeAssistant, entry: HA_ConfigEntry) -> None:
-    """Register all xAI services.
-
-    Args:
-        hass: Home Assistant instance
-        entry: Config entry for xAI Conversation
-    """
-    # Initialize service handlers
-    grok_code_fast = GrokCodeFastService(hass, entry)
-    clear_memory = ClearMemoryService(hass)
-    clear_code_memory = ClearCodeMemoryService(hass)
-    sync_chat_history = SyncChatHistoryService(hass)
-    reset_token_stats = ResetTokenStatsService(hass)
-    reload_pricing = ReloadPricingService(hass, entry)
-    photo_analysis = PhotoAnalysisService(hass, entry)
-    ask_service = AskService(hass, entry)
-
-    # Register services
-    hass.services.async_register(
-        DOMAIN,
-        "grok_code_fast",
-        grok_code_fast.async_handle,
-        supports_response=SupportsResponse.ONLY,
-    )
-
-    hass.services.async_register(
-        DOMAIN,
-        "clear_memory",
-        clear_memory.async_handle,
-        supports_response=SupportsResponse.OPTIONAL,
-    )
-
-    hass.services.async_register(
-        DOMAIN,
-        "clear_code_memory",
-        clear_code_memory.async_handle,
-        supports_response=SupportsResponse.OPTIONAL,
-    )
-
-    hass.services.async_register(
-        DOMAIN,
-        "sync_chat_history",
-        sync_chat_history.async_handle,
-        supports_response=SupportsResponse.ONLY,
-    )
-
-    hass.services.async_register(
-        DOMAIN,
-        "reset_token_stats",
-        reset_token_stats.async_handle,
-        supports_response=SupportsResponse.OPTIONAL,
-    )
-
-    hass.services.async_register(
-        DOMAIN,
-        "reload_pricing",
-        reload_pricing.async_handle,
-        supports_response=SupportsResponse.OPTIONAL,
-    )
-
-    hass.services.async_register(
-        DOMAIN,
-        "photo_analysis",
-        photo_analysis.async_handle,
-        supports_response=SupportsResponse.ONLY,
-    )
-
-    hass.services.async_register(
-        DOMAIN,
-        "ask",
-        ask_service.async_handle,
-        supports_response=SupportsResponse.ONLY,
-    )
-
-    LOGGER.debug("All xAI services registered successfully")
-
-
-# ==============================================================================
-# HELPER FUNCTIONS
-# ==============================================================================
-
-
-def _get_conversation_entity(hass: HA_HomeAssistant):
-    """Get xAI conversation entity for gateway access.
-
-    Shared helper used by multiple services (clear_memory, clear_code_memory, etc.)
-
-    Args:
-        hass: Home Assistant instance
-
-    Returns:
-        XAI conversation entity
-
-    Raises:
-        ServiceValidationError: If no xAI conversation entity found
-        XAIError: If target entity not found
-    """
-    ent_reg = ha_entity_registry.async_get(hass)
-    xai_entities = [
-        e
-        for e in ent_reg.entities.values()
-        if e.platform == DOMAIN and e.domain == "conversation"
-    ]
-
-    if not xai_entities:
-        raise_validation_error("No xAI conversation entity found")
-
-    target_entity = (
-        hass.data.get("entity_components", {})
-        .get("conversation")
-        .get_entity(xai_entities[0].entity_id)
-    )
-    if not target_entity:
-        raise_generic_error("Target entity not found")
-
-    return target_entity
 
 
 # ==============================================================================
@@ -197,91 +63,29 @@ class AskService:
         self.gateway = XAIGateway(hass, entry)
 
     async def async_handle(self, call: HA_ServiceCall) -> HA_ServiceResponse:
-        """Handle the ask service call.
+        """Handle the ask service call."""
+        instructions = call.data.get("instructions", "").strip()
+        input_data = call.data.get("input_data", "").strip()
+        model_override = call.data.get("model")
+        max_tokens_override = call.data.get("max_tokens")
+        temp_override = call.data.get("temperature")
 
-        Args:
-            call: Service call with instructions, input_data, model, etc.
+        if not instructions or not input_data:
+            raise_validation_error("Instructions and Input Data are required")
 
-        Returns:
-            Service response with response_text
-        """
-        context_id = call.context.id
+        response_text = await self.gateway.execute_stateless_chat(
+            input_data=input_data,
+            system_prompt=instructions,
+            service_type="ask",
+            model_override=model_override,
+            max_tokens_override=max_tokens_override,
+            temp_override=temp_override,
+        )
 
-        async with LogTimeServices(LOGGER, "ask_service") as timer:
-            # Parse request data
-            instructions = call.data.get("instructions", "").strip()
-            input_data = call.data.get("input_data", "").strip()
-            # Allow model override or use default conversation model
-            model = call.data.get("model")
-            
-            # Optional params
-            max_tokens = call.data.get("max_tokens")
-            temperature = call.data.get("temperature")
-
-            if not instructions:
-                raise_validation_error("Instructions are required")
-            if not input_data:
-                raise_validation_error("Input Data is required")
-
-            # Fallback for model if not provided
-            if not model:
-                 # Try to get default chat model from first conversation subentry found
-                 # This is a reasonable default if user doesn't specify one
-                 # Or we could just use RECOMMENDED_CHAT_MODEL
-                 model = RECOMMENDED_CHAT_MODEL
-                 # Try to find a better default from config
-                 from .const import SUBENTRY_TYPE_CONVERSATION
-                 for subentry in self.entry.subentries.values():
-                    if subentry.subentry_type == SUBENTRY_TYPE_CONVERSATION:
-                        model = subentry.data.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL)
-                        break
-
-            LOGGER.debug(
-                f"[Context: {context_id}] Ask Request: "
-                f"model={model}, instructions_len={len(instructions)}, input_len={len(input_data)}"
-            )
-
-            # Create client
-            client = self.gateway.create_client()
-            
-            # Build chat parameters manually to ensure statelessness and custom model
-            chat_args = {
-                "model": model,
-                "store_messages": False, # Always stateless
-            }
-            if max_tokens:
-                chat_args["max_tokens"] = int(max_tokens)
-            if temperature is not None:
-                chat_args["temperature"] = float(temperature)
-
-            # Create chat
-            chat = client.chat.create(**chat_args)
-            
-            # Append messages
-            chat.append(XAIGateway.system_msg(instructions))
-            chat.append(XAIGateway.user_msg(input_data))
-
-            # Execute
-            async with timer.record_api_call():
-                response = await chat.sample()
-
-            content_text = getattr(response, "content", "")
-            usage = getattr(response, "usage", None)
-            
-            # Save metadata (token counting)
-            await save_response_metadata(
-                hass=self.hass,
-                entry_id=self.entry.entry_id,
-                usage=usage,
-                model=model, # Explicitly pass the model we used
-                service_type="ask_service",
-                store_messages=False,
-            )
-
-            return {
-                "response_text": content_text,
-                "timestamp": datetime.now().isoformat(),
-            }
+        return {
+            "response_text": response_text,
+            "timestamp": datetime.now().isoformat(),
+        }
 
 
 # ==============================================================================
@@ -313,81 +117,56 @@ class PhotoAnalysisService:
         """
         context_id = call.context.id
 
-        async with LogTimeServices(LOGGER, "photo_analysis"):
-            # Parse request data
-            prompt = call.data.get("prompt", "").strip()
-            if not prompt:
-                raise_validation_error("Prompt is required for photo analysis")
+        # Parse request data
+        prompt = call.data.get("prompt", "").strip()
+        if not prompt:
+            raise_validation_error("Prompt is required for photo analysis")
 
-            # Get images from multiple sources
-            images = call.data.get("images", [])
-            if isinstance(images, str):
-                images = [images]  # Single image string to list
+        # Get images from multiple sources
+        images = call.data.get("images", [])
+        if isinstance(images, str):
+            images = [images]  # Single image string to list
 
-            # Get attachments if provided (from HA automation context)
-            attachments = call.data.get("attachments")
+        # Get attachments if provided (from HA automation context)
+        attachments = call.data.get("attachments")
 
-            # Validate at least one image source
-            if not images and not attachments:
-                raise_validation_error(
-                    "At least one image (path/URL or attachment) is required"
-                )
-
-            LOGGER.debug(
-                f"[Context: {context_id}] Request data: "
-                f"prompt_length={len(prompt)}, images={len(images)}, "
-                f"has_attachments={bool(attachments)}"
+        # Validate at least one image source
+        if not images and not attachments:
+            raise_validation_error(
+                "At least one image (path/URL or attachment) is required"
             )
 
-            # Get AI Task entity (uses its config for vision_model, temperature, etc.)
-            ai_task_entity = self._get_ai_task_entity()
+        LOGGER.debug(
+            "[Context: %s] Request data: prompt_length=%d, images=%d, has_attachments=%s",
+            context_id,
+            len(prompt),
+            len(images),
+            bool(attachments),
+        )
 
-            # Call entity method for photo analysis
-            analysis_text = await ai_task_entity.analyze_photo(
-                prompt=prompt,
-                images=images if images else None,
-                attachments=attachments,
-            )
+        # Get AI Task entity (uses its config for vision_model, temperature, etc.)
+        ai_task_entity = self._get_ai_task_entity()
 
-            return {
-                "analysis": analysis_text,
-                "timestamp": datetime.now().isoformat(),
-            }
+        # Call entity method for photo analysis
+        analysis_text = await ai_task_entity.analyze_photo(
+            prompt=prompt,
+            images=images if images else None,
+            attachments=attachments,
+        )
+
+        return {
+            "analysis": analysis_text,
+            "timestamp": datetime.now().isoformat(),
+        }
 
     def _get_ai_task_entity(self):
         """Get AI Task entity to access gateway and config."""
-        from .const import SUBENTRY_TYPE_AI_TASK
-
-        # Find ai_task subentry
-        ai_task_subentry = None
-        for subentry in self.entry.subentries.values():
-            if subentry.subentry_type == SUBENTRY_TYPE_AI_TASK:
-                ai_task_subentry = subentry
-                break
-
-        if not ai_task_subentry:
+        entity = get_xai_entity(self.hass, domain_type="ai_task")
+        if not entity:
             raise_generic_error(
-                "AI Task not configured. Please add AI Task in xAI integration settings."
+                "AI Task entity not found. Please add AI Task in xAI integration settings."
             )
-
-        # Get entity from entity component
-        entity_component = self.hass.data.get("entity_components", {}).get("ai_task")
-        if not entity_component:
-            raise_generic_error("AI Task component not loaded")
-
-        # Find entity by matching entry and subentry
-        for entity in entity_component.entities:
-            if (
-                hasattr(entity, "entry")
-                and entity.entry.entry_id == self.entry.entry_id
-                and hasattr(entity, "subentry")
-                and entity.subentry.subentry_id == ai_task_subentry.subentry_id
-            ):
-                return entity
-
-        raise_generic_error(
-            "AI Task entity not found. Please reload the xAI integration."
-        )
+        return entity
 
 
 # ==============================================================================
@@ -427,105 +206,72 @@ class GrokCodeFastService:
                 request_data = self._parse_request(call, context_id)
                 user_prompt = request_data["prompt"]
                 user_id = request_data["user_id"]
-                previous_response_id = request_data.get("previous_response_id")
                 current_code = request_data.get("code")
                 attachments = request_data.get("attachments", [])
 
-                # Get configuration via Gateway
+                # Get configuration and store_messages setting
                 config = self.gateway.get_service_config("code_fast")
                 store_messages = config["store_messages"]
 
-                # Get subentry data for memory key calculation
-                # We retain this helper as PromptManager might need raw access to subentry fields
-                subentry_data = self._get_code_fast_subentry_data()
-
-                # Calculate conv_key and recover previous_response_id if not provided
-                conv_key = None
-                if user_id:
-                    prompt_mgr = PromptManager(subentry_data, mode="code")
-                    base_prompt = prompt_mgr.build_base_prompt_with_user_instructions()
-                    conv_key = self.code_memory.calculate_conv_key_simple(
-                        user_id, "code", base_prompt
-                    )
-
-                if not previous_response_id and store_messages and conv_key:
-                    previous_response_id = (
-                        await self.code_memory.get_response_id_by_key(conv_key)
-                    )
-                    if previous_response_id:
-                        LOGGER.debug(
-                            f"[Context: {context_id}] Recovered previous_response_id from memory: {previous_response_id[:8]}"
-                        )
-
-                LOGGER.debug(
-                    f"[Context: {context_id}] Request data: "
-                    f"prompt_length={len(user_prompt)}, "
-                    f"previous_response_id={previous_response_id[:8] if previous_response_id else 'None'}, "
-                    f"conv_key={conv_key if conv_key else 'None'}, "
-                    f"has_code={bool(current_code)}, "
-                    f"attachments={len(attachments)}"
+                # Use unified create_chat from Gateway, which now handles prompt and conv_key generation
+                chat, conv_key = await self.gateway.create_chat(
+                    service_type="code_fast",
+                    scope="user" if user_id else None,
+                    identifier=user_id,
                 )
 
-                # Validate API key explicitly
+                LOGGER.debug(
+                    "[Context: %s] Request data: prompt_length=%d, conv_key=%s, has_code=%s, attachments=%d",
+                    context_id,
+                    len(user_prompt),
+                    conv_key or "None",
+                    bool(current_code),
+                    len(attachments),
+                )
+
                 if not self.entry.data.get("api_key"):
                     raise_generic_error("xAI API key not configured")
 
-                # No standalone client creation needed manually anymore
-                # Gateway handles client caching and creation internally
+                # Load history for client-side mode
+                if not store_messages and user_id:
+                    await self._load_client_side_history(chat, user_id, context_id)
 
-                response = None
-                for attempt in range(2):  # Allow one retry
+                # Build user message
+                user_message = user_prompt
+                if current_code:
+                    user_message += f"\n\nCurrent code:\n```\n{current_code}\n```"
+                for att in attachments:
                     try:
-                        # Use unified create_chat from Gateway
-                        # This automatically handles tools injection (web search) if configured!
-                        chat = self.gateway.create_chat(
-                            service_type="code_fast",
-                            previous_response_id=previous_response_id
-                            if store_messages
-                            else None,
-                            # No client_tools for code_fast
+                        att_name = att.get("filename") or att.get("name", "unknown")
+                        att_content_base64 = att.get("content", "")
+                        content = base64.b64decode(att_content_base64).decode("utf-8")
+                        user_message += f"\n\nFile: {att_name}\n```\n{content}\n```"
+                    except Exception as e:
+                        LOGGER.warning(
+                            "Failed to process attachment %s: %s",
+                            att.get("filename"),
+                            e,
                         )
 
-                        # Build and send messages
-                        await self._build_and_send_messages(
-                            chat,
-                            user_prompt,
-                            current_code,
-                            attachments,
-                            user_id,
-                            previous_response_id if store_messages else None,
-                            store_messages,
-                            subentry_data,
-                            context_id,
+                chat.append(XAIGateway.user_msg(user_message))
+
+                # Save user message to chat history
+                if user_id:
+                    chat_history = self.hass.data.get(DOMAIN, {}).get("chat_history")
+                    if chat_history:
+                        user_message_for_history = json.dumps(
+                            {
+                                "response_text": user_prompt,
+                                "response_code": current_code or "",
+                            }
+                        )
+                        chat_history.save_message_async(
+                            user_id, "code", "user", user_message_for_history
                         )
 
-                        # Call xAI API, wrapped with the timer
-                        async with timer.record_api_call():
-                            response = await self._call_xai_api(
-                                chat, config["model"], context_id
-                            )
-
-                        break  # Success, exit loop
-
-                    except _InactiveRpcError as err:
-                        # Use centralized handler for NOT_FOUND errors
-                        from .helpers.response import (
-                            handle_response_not_found_error,
-                        )
-
-                        should_retry = await handle_response_not_found_error(
-                            err=err,
-                            attempt=attempt,
-                            memory=self.code_memory,
-                            conv_key=conv_key,
-                            mode="code",
-                            context_id=context_id,
-                        )
-
-                        if should_retry:
-                            previous_response_id = None  # Fresh start
-                            continue  # Retry
-                        raise
+                # Call xAI API
+                async with timer.record_api_call():
+                    response = await chat.sample()
 
                 if response is None:
                     raise_generic_error(
@@ -534,35 +280,16 @@ class GrokCodeFastService:
 
                 content = getattr(response, "content", "")
                 response_id = getattr(response, "id", None)
-                usage = getattr(response, "usage", None)
-                server_tool_usage = getattr(response, "server_side_tool_usage", None)
 
-                # Save response metadata
-                await save_response_metadata(
-                    hass=self.hass,
-                    entry_id=self.entry.entry_id,
-                    usage=usage,
-                    model=config["model"],
+                # Use centralized logging from Gateway
+                await self.gateway.async_log_completion(
+                    response=response,
                     service_type="code_fast",
-                    server_side_tool_usage=server_tool_usage,
+                    conv_key=conv_key,
                 )
 
-                # Save response_id using conv_key
-                await self._save_response_id(
-                    conv_key, response_id, store_messages, context_id
-                )
-
-                # Parse response
-                response_text, response_code = self._parse_response(
-                    content, context_id
-                )
-
-                # Save to chat history
-                await self._save_to_chat_history(
-                    user_id, response_text, response_code
-                )
-
-                # Fire event for frontend
+                response_text, response_code = self._parse_response(content, context_id)
+                await self._save_to_chat_history(user_id, response_text, response_code)
                 self._fire_response_event(user_prompt, response_text, response_code)
 
                 return {
@@ -573,11 +300,11 @@ class GrokCodeFastService:
                 }
             except Exception as err:
                 LOGGER.error(
-                    f"[Context: {context_id}] Error in Grok Code Fast service: %s",
+                    "[Context: %s] Error in Grok Code Fast service: %s",
+                    context_id,
                     err,
                     exc_info=True,
                 )
-                # Re-raise the exception to be caught by the LogTimeServices context manager
                 raise err
 
     def _parse_request(self, call: HA_ServiceCall, context_id: str) -> dict:
@@ -592,111 +319,16 @@ class GrokCodeFastService:
         if not user_prompt:
             raise_generic_error("Prompt is required")
 
-        # Get user_id
-        user_id = request_data.get("user_id") or call.context.user_id
-        if user_id and not request_data.get("user_id"):
+        # Get user_id using the helper
+        user_id = extract_user_id(call)
+        if user_id:
             LOGGER.debug(
-                f"[Context: {context_id}] Using user_id from context: {user_id}"
+                "[Context: %s] Using user_id from context: %s", context_id, user_id
             )
 
         request_data["user_id"] = user_id
         request_data["prompt"] = user_prompt
         return request_data
-
-
-    def _get_code_fast_subentry_data(self) -> dict:
-        """Get code_fast subentry data for PromptManager.
-
-        Returns:
-            Dictionary with subentry.data for code_fast configuration
-        """
-        for subentry in self.entry.subentries.values():
-            if subentry.subentry_type == SUBENTRY_TYPE_CODE_TASK:
-                return dict(subentry.data)
-        raise_generic_error(
-            "No code_task configuration found. Please configure Grok Code Fast in xAI integration settings."
-        )
-
-    async def _build_and_send_messages(
-        self,
-        chat,
-        user_prompt: str,
-        current_code: str | None,
-        attachments: list,
-        user_id: str | None,
-        previous_response_id: str | None,
-        store_messages: bool,
-        subentry_data: dict,
-        context_id: str,
-    ) -> None:
-        """Build system/user messages and append to chat."""
-
-        # Add system prompt (only on first message in server-side mode)
-        if not previous_response_id:
-            prompt_mgr = PromptManager(subentry_data, mode="code")
-            base_prompt = prompt_mgr.build_base_prompt_with_user_instructions()
-            chat.append(XAIGateway.system_msg(base_prompt))
-            LOGGER.debug(
-                f"[Context: {context_id}] Server-side mode - FIRST MESSAGE: Sending system prompt (built with PromptManager)"
-            )
-        else:
-            LOGGER.debug(
-                f"[Context: {context_id}] Server-side mode - SUBSEQUENT MESSAGE: Skipping system prompt (using previous_response_id)"
-            )
-
-        # Load history for client-side mode
-        if not store_messages and user_id:
-            await self._load_client_side_history(chat, user_id, context_id)
-
-        # Build user message
-        user_message = user_prompt
-        if current_code:
-            user_message += f"\n\nCurrent code:\n```\n{current_code}\n```"
-
-        # Process attachments
-        for att in attachments:
-            try:
-                att_name = att.get("filename") or att.get("name", "unknown")
-                att_content_base64 = att.get("content", "")
-
-                content = base64.b64decode(att_content_base64).decode("utf-8")
-
-                # Try UTF-8 first, fallback to latin-1
-                try:
-                    if isinstance(content, bytes):
-                        try:
-                            content = content.decode("utf-8")
-                        except UnicodeDecodeError:
-                            content = content.decode("latin-1")
-                except Exception:
-                    content = att_content_base64
-
-                LOGGER.debug(
-                    f"[Context: {context_id}] Processing attachment: {att_name}, content_length={len(content)}"
-                )
-                user_message += f"\n\nFile: {att_name}\n```\n{content}\n```"
-            except Exception as e:
-                LOGGER.warning(
-                    f"[Context: {context_id}] Failed to process attachment %s: %s",
-                    att.get("filename", att.get("name")),
-                    e,
-                )
-
-        chat.append(XAIGateway.user_msg(user_message))
-
-        # Save user message to chat history in a structured format
-        if user_id:
-            chat_history = self.hass.data.get(DOMAIN, {}).get("chat_history")
-            if chat_history:
-                user_message_for_history = json.dumps(
-                    {
-                        "response_text": user_prompt,
-                        "response_code": current_code if current_code else "",
-                    }
-                )
-                chat_history.save_message_async(
-                    user_id, "code", "user", user_message_for_history
-                )
 
     async def _load_client_side_history(
         self,
@@ -708,7 +340,8 @@ class GrokCodeFastService:
         chat_history = self.hass.data.get(DOMAIN, {}).get("chat_history")
         if not chat_history:
             LOGGER.warning(
-                f"[Context: {context_id}] Client-side mode but chat_history service not available"
+                "[Context: %s] Client-side mode but chat_history service not available",
+                context_id,
             )
             return
 
@@ -716,7 +349,9 @@ class GrokCodeFastService:
         messages = await chat_history.load_history(user_id, "code", limit)
 
         LOGGER.debug(
-            f"[Context: {context_id}] Client-side mode: loading {len(messages)} messages from history"
+            "[Context: %s] Client-side mode: loading %d messages from history",
+            context_id,
+            len(messages),
         )
 
         for msg in messages:
@@ -740,7 +375,9 @@ class GrokCodeFastService:
             except (json.JSONDecodeError, TypeError):
                 # Fallback for old plain-text messages
                 LOGGER.warning(
-                    f"[Context: {context_id}] Failed to parse message as JSON, using raw content. Role: {msg['role']}"
+                    "[Context: %s] Failed to parse message as JSON, using raw content. Role: %s",
+                    context_id,
+                    msg["role"],
                 )
                 full_content = msg["content"]
 
@@ -750,63 +387,31 @@ class GrokCodeFastService:
             elif msg["role"] == "assistant":
                 chat.append(XAIGateway.assistant_msg(full_content))
 
-    async def _call_xai_api(self, chat, model: str, context_id: str):
-        """Call xAI API and return response."""
-        LOGGER.debug(f"[Context: {context_id}] Calling xAI API with model '{model}'.")
-        response = await chat.sample()
-
-        # Convert dict to JSON string if needed
-        content = getattr(response, "content", "")
-        if isinstance(content, dict):
-            content = json.dumps(content)
-
-        return response
-
-    async def _save_response_id(
-        self,
-        conv_key: str | None,
-        response_id: str | None,
-        store_messages: bool,
-        context_id: str,
-    ) -> None:
-        """Save response_id to memory using conv_key."""
-        if not response_id or not conv_key:
-            if not conv_key:
-                LOGGER.warning(
-                    f"[Context: {context_id}] No conv_key provided, cannot save conversation"
-                )
-            return
-
-        # Only save if store_messages is enabled (server-side memory)
-        if not store_messages:
-            LOGGER.debug(
-                f"[Context: {context_id}] Skipping save (store_messages=False, client-side mode)"
-            )
-            return
-
-        await self.code_memory.save_response_id_by_key(conv_key, response_id)
-        LOGGER.debug(
-            f"[Context: {context_id}] Saved response_id={response_id[:8]} with conv_key={conv_key[:30]}... (server-side)"
-        )
-
     def _parse_response(self, content: str, context_id: str) -> tuple[str, str]:
         """Parse Grok Code Fast response content using modular strategies."""
         LOGGER.debug(
-            f"[Context: {context_id}] Raw xAI response content (full): %s", content
+            "[Context: %s] Raw xAI response content (full): %s", context_id, content
         )
         response_text, response_code = parse_grok_code_response(content)
         LOGGER.debug(
-            f"[Context: {context_id}] Parsed - text_length={len(response_text)}, code_length={len(response_code)}"
+            "[Context: %s] Parsed - text_length=%d, code_length=%d",
+            context_id,
+            len(response_text),
+            len(response_code),
         )
         if response_code:
             LOGGER.debug(
-                f"[Context: {context_id}] Response code (first 200 chars): %s",
+                "[Context: %s] Response code (first 200 chars): %s",
+                context_id,
                 response_code[:200],
             )
         return response_text, response_code
 
     async def _save_to_chat_history(
-        self, user_id: str | None, response_text: str, response_code: str
+        self,
+        user_id: str | None,
+        response_text: str,
+        response_code: str,
     ) -> None:
         """Save assistant response to chat history."""
         if not user_id:
@@ -822,7 +427,10 @@ class GrokCodeFastService:
             )
 
     def _fire_response_event(
-        self, prompt: str, response_text: str, response_code: str
+        self,
+        prompt: str,
+        response_text: str,
+        response_code: str,
     ) -> None:
         """Fire event for frontend listeners."""
         self.hass.bus.async_fire(
@@ -850,161 +458,144 @@ class ClearMemoryService:
 
     async def async_handle(self, call: HA_ServiceCall) -> HA_ServiceResponse:
         """Handle the clear_memory service call."""
-        # Find xAI conversation entity (for gateway access)
-        target_entity = _get_conversation_entity(self.hass)
-
-        # Get global ConversationMemory instance
+        target_entity = get_xai_entity(self.hass)
         conversation_memory = self.hass.data[DOMAIN]["conversation_memory"]
 
         # Check for physical delete
         if call.data.get("delete_storage_file", False):
-            await self._clear_memory_with_remote_deletion(
-                target_entity, conversation_memory, physical_delete=True
+            await self._clear_scope(
+                target_entity,
+                conversation_memory,
+                physical_delete=True,
+                remote_delete=call.data.get("remote_delete", True),
             )
             return {"status": "ok", "message": "Memory storage file physically deleted"}
 
-        # Get user IDs from person entities
-        user_ids, user_names = self._get_user_ids_from_persons(
-            call.data.get("user_id", [])
-        )
-
-        # Get device IDs from satellite entities
-        satellite_device_ids, satellite_names = self._get_device_ids_from_satellites(
+        # Get user and device IDs
+        user_ids = self._get_user_ids_from_persons(call.data.get("user_id", []))
+        device_ids = self._get_device_ids_from_satellites(
             call.data.get("satellite_id", [])
         )
 
         # Validate selection
-        if not user_ids and not satellite_device_ids:
+        if not user_ids and not device_ids:
             raise_validation_error(
                 "Must select users, satellites, or enable 'Delete Storage File'"
             )
 
-        # Clear memory for users
+        remote_delete = call.data.get("remote_delete", True)
         cleared_items = []
-        for uid, name in zip(user_ids, user_names):
-            await self._clear_memory_with_remote_deletion(
-                target_entity, conversation_memory, scope="user", target_id=uid
-            )
-            cleared_items.append(f"user:{name}")
 
-        # Clear memory for satellites
-        for did, name in zip(satellite_device_ids, satellite_names):
-            await self._clear_memory_with_remote_deletion(
-                target_entity, conversation_memory, scope="device", target_id=did
+        # Clear memory for users
+        for uid in user_ids:
+            await self._clear_scope(
+                target_entity,
+                conversation_memory,
+                scope="user",
+                target_id=uid,
+                remote_delete=remote_delete,
             )
-            cleared_items.append(f"satellite:{name}")
+            cleared_items.append(f"user:{uid[:8]}")
+
+        # Clear memory for devices
+        for device_id in device_ids:
+            await self._clear_scope(
+                target_entity,
+                conversation_memory,
+                scope="device",
+                target_id=device_id,
+                remote_delete=remote_delete,
+            )
+            cleared_items.append(f"device:{device_id[:8]}")
 
         return {
             "status": "ok",
-            "message": f"Memory cleared for: {', '.join(cleared_items)}",
+            "message": f"Memory cleared (remote: {remote_delete}): {', '.join(cleared_items)}",
         }
 
-    def _get_user_ids_from_persons(self, person_entity_ids) -> tuple[list, list]:
-        """Convert person entity IDs to user IDs."""
-        if isinstance(person_entity_ids, str):
-            person_entity_ids = [person_entity_ids] if person_entity_ids else []
+    def _get_user_ids_from_persons(self, person_entity_ids) -> list[str]:
+        """Extract user IDs from person entity IDs."""
+        person_entity_ids = parse_id_list(person_entity_ids)
+        return [
+            state.attributes["user_id"]
+            for entity_id in person_entity_ids
+            if (state := self.hass.states.get(entity_id))
+            and state.attributes.get("user_id")
+        ]
 
-        user_ids = []
-        user_names = []
-        for person_entity_id in person_entity_ids:
-            person_state = self.hass.states.get(person_entity_id)
-            if person_state and person_state.attributes.get("user_id"):
-                user_ids.append(person_state.attributes["user_id"])
-                user_names.append(
-                    person_state.attributes.get("friendly_name") or person_state.name
-                )
-
-        return user_ids, user_names
-
-    def _get_device_ids_from_satellites(
-        self,
-        satellite_entity_ids
-    ) -> tuple[list, list]:
+    def _get_device_ids_from_satellites(self, satellite_entity_ids) -> list[str]:
         """Extract device IDs from satellite entity IDs."""
         satellite_entity_ids = parse_id_list(satellite_entity_ids)
-        satellite_device_ids = []
-        satellite_names = []
-
         ent_reg = ha_entity_registry.async_get(self.hass)
-        for satellite_entity_id in satellite_entity_ids:
-            satellite_state = self.hass.states.get(satellite_entity_id)
-            if satellite_state:
-                entity_entry = ent_reg.async_get(satellite_entity_id)
-                if entity_entry and entity_entry.device_id:
-                    satellite_device_ids.append(entity_entry.device_id)
-                    satellite_names.append(
-                        satellite_state.attributes.get("friendly_name")
-                        or satellite_state.name
-                    )
+        return [
+            entity.device_id
+            for entity_id in satellite_entity_ids
+            if (entity := ent_reg.async_get(entity_id)) and entity.device_id
+        ]
 
-        return satellite_device_ids, satellite_names
-
-    async def _clear_memory_with_remote_deletion(
+    async def _clear_scope(
         self,
         entity,
         conversation_memory,
-        clear_all: bool = False,
         scope: str | None = None,
         target_id: str | None = None,
         physical_delete: bool = False,
+        remote_delete: bool = True,
     ) -> None:
-        """Clear memory locally and remotely.
+        """Clear memory locally and optionally on remote xAI servers.
 
         Args:
             entity: XAI conversation entity (for gateway access)
             conversation_memory: ConversationMemory instance
-            clear_all: If True, clear all memory entries
             scope: Memory scope ("user" or "device")
             target_id: User ID or device ID
             physical_delete: If True, physically delete storage file
+            remote_delete: If True, attempt remote deletion on xAI servers
 
         Raises:
             XAIValidationError: If parameters are invalid
         """
         try:
-            # Get response IDs from ConversationMemory based on operation type
+            # Determine operation and get response IDs
             if physical_delete:
-                response_ids = await conversation_memory.physical_delete_storage()
-                context = "physical_delete"
-            elif clear_all:
-                response_ids = await conversation_memory.clear_all_memory()
-                context = "clear_all"
+                response_ids = await conversation_memory.async_physical_delete()
+                desc = "physical_delete"
             else:
-                # Validate scope-specific parameters
-                if not scope:
-                    raise_validation_error("scope is required when not clearing all")
-                if scope not in ("user", "device"):
-                    raise_validation_error("invalid scope, must be 'user' or 'device'")
-                if not target_id:
+                if not scope or not target_id:
                     raise_validation_error(
-                        "target_id is required when scope is user or device"
+                        "scope and target_id required for non-physical delete"
                     )
+                if scope not in ("user", "device"):
+                    raise_validation_error("scope must be 'user' or 'device'")
 
-                response_ids = await conversation_memory.clear_memory_by_scope(
+                response_ids = await conversation_memory.async_clear_context(
                     scope, target_id
                 )
-                context = "clear_memory"
+                desc = f"{scope}:{target_id}"
 
-            # Attempt remote deletion via gateway
-            if response_ids:
+            # Perform remote deletion if enabled
+            if remote_delete and response_ids:
                 await entity.gateway.delete_remote_completions(
-                    response_ids, context=context
+                    response_ids, context="clear_memory"
                 )
-
-            # Log success
-            scope_desc = (
-                "physical_delete"
-                if physical_delete
-                else "all"
-                if clear_all
-                else f"{scope}:{target_id}"
-            )
-            LOGGER.info("Memory cleared successfully for scope: %s", scope_desc)
+                LOGGER.info(
+                    "Memory cleared: %s (remote: %d entries deleted)",
+                    desc,
+                    len(response_ids),
+                )
+            elif response_ids:
+                LOGGER.info("Memory cleared: %s (remote deletion disabled)", desc)
+            else:
+                LOGGER.debug("Memory cleared: %s (no entries found)", desc)
 
         except (OSError, PermissionError) as err:
             LOGGER.warning("clear_memory: storage access denied: %s", err)
         except Exception as err:
-            LOGGER.error("clear_memory failed: %s", err)
+            LOGGER.error(
+                "clear_memory failed for %s: %s",
+                desc if "desc" in locals() else "unknown",
+                err,
+            )
             raise
 
 
@@ -1023,19 +614,18 @@ class ClearCodeMemoryService:
 
     async def async_handle(self, call: HA_ServiceCall) -> HA_ServiceResponse:
         """Handle the clear_code_memory service call."""
-        # Get user_id
-        user_id = call.data.get("user_id") or call.context.user_id
-        if user_id and not call.data.get("user_id"):
-            LOGGER.debug(f"clear_code_memory: Using user_id from context: {user_id}")
-
+        user_id = extract_user_id(call)
         if not user_id:
-            raise_validation_error("user_id is required (not found in data or context)")
+            raise_validation_error("user_id is required")
 
         # Get conversation entity for gateway access
-        target_entity = _get_conversation_entity(self.hass)
+        target_entity = get_xai_entity(self.hass)
 
         # Clear memory and get response_ids for remote deletion
-        response_ids = await self.code_memory.clear_memory(user_id, "code")
+        # Filter strictly by "code" mode
+        response_ids = await self.code_memory.async_clear_context(
+            "user", user_id, mode="code"
+        )
 
         # Attempt remote deletion via gateway
         if response_ids:
@@ -1049,11 +639,12 @@ class ClearCodeMemoryService:
             await chat_history.clear_history(user_id, "code")
 
         LOGGER.info(
-            f"Cleared code conversation memory and chat history for user {user_id[:8]}"
+            "Cleared code conversation memory and chat history for user %s",
+            user_id[:8],
         )
         return {
             "status": "ok",
-            "message": "Code conversation memory and chat history cleared",
+            "message": "Code conversation memory and chat history cleared for user {user_id[:8]}",
         }
 
 
@@ -1075,17 +666,13 @@ class SyncChatHistoryService:
 
     async def async_handle(self, call: HA_ServiceCall) -> HA_ServiceResponse:
         """Handle the sync_chat_history service call."""
-        # Get user_id
-        user_id = call.data.get("user_id") or call.context.user_id
-        if user_id and not call.data.get("user_id"):
-            LOGGER.debug(f"sync_chat_history: Using user_id from context: {user_id}")
-
+        user_id = extract_user_id(call)
         if not user_id:
-            raise_validation_error("user_id is required (not found in data or context)")
+            raise_validation_error("user_id is required")
 
         # Get parameters
         mode = call.data.get("mode", "code")
-        limit = call.data.get("limit", 50)
+        limit = call.data.get("limit", RECOMMENDED_HISTORY_LIMIT_TURNS * 2)
 
         # Load history
         chat_history = self.hass.data.get(DOMAIN, {}).get("chat_history")
@@ -1095,7 +682,10 @@ class SyncChatHistoryService:
         messages = await chat_history.load_history(user_id, mode, limit)
 
         LOGGER.info(
-            f"Synced chat history for user {user_id[:8]}, mode={mode}, messages={len(messages)}"
+            "Synced chat history for user %s, mode=%s, messages=%d",
+            user_id[:8],
+            mode,
+            len(messages),
         )
         return {"status": "ok", "messages": messages, "count": len(messages)}
 
@@ -1116,9 +706,6 @@ class ResetTokenStatsService:
         """Handle the reset_token_stats service call."""
         # V2: Use new TokenStats class
         storage = self.hass.data.get(DOMAIN, {}).get("token_stats")
-
-        if not storage:
-            raise_generic_error("Token storage not initialized")
 
         try:
             # Reset all data in storage.
@@ -1178,16 +765,12 @@ class ReloadPricingService:
         try:
             # Get ModelManager
             model_manager = self.hass.data.get(DOMAIN, {}).get("model_manager")
-            if not model_manager:
-                return {"status": "error", "message": "XAIModelManager not available"}
 
-            # Get API Key
-            api_key = self.entry.data.get("api_key")
-            if not api_key:
-                return {"status": "error", "message": "API Key not configured"}
+            # Create a gateway instance to pass to the model manager
+            gateway = XAIGateway(self.hass, self.entry)
 
-            # Force update via manager (fetches from API, updates hass.data and TokenStats)
-            await model_manager.async_update_models(api_key)
+            # Force update via manager
+            await model_manager.async_update_models(gateway)
 
             # Check updated data count
             xai_data = self.hass.data.get(DOMAIN, {}).get("xai_models_data", {})
@@ -1201,3 +784,101 @@ class ReloadPricingService:
         except Exception as err:
             LOGGER.error("Failed to reload pricing data: %s", err, exc_info=True)
             return {"status": "error", "message": f"Failed to reload pricing: {err}"}
+
+
+# ==============================================================================
+# SERVICES METADATA - AT THE BOTTOM AFTER ALL THE CLASSES
+# ==============================================================================
+
+SERVICES_METADATA = [
+    (
+        "grok_code_fast",
+        GrokCodeFastService,
+        SupportsResponse.ONLY,
+        True,
+    ),
+    (
+        "clear_memory",
+        ClearMemoryService,
+        SupportsResponse.OPTIONAL,
+        False,
+    ),
+    (
+        "clear_code_memory",
+        ClearCodeMemoryService,
+        SupportsResponse.OPTIONAL,
+        False,
+    ),
+    (
+        "sync_chat_history",
+        SyncChatHistoryService,
+        SupportsResponse.ONLY,
+        False,
+    ),
+    (
+        "reset_token_stats",
+        ResetTokenStatsService,
+        SupportsResponse.OPTIONAL,
+        False,
+    ),
+    (
+        "reload_pricing",
+        ReloadPricingService,
+        SupportsResponse.OPTIONAL,
+        True,
+    ),
+    (
+        "photo_analysis",
+        PhotoAnalysisService,
+        SupportsResponse.ONLY,
+        True,
+    ),
+    (
+        "ask",
+        AskService,
+        SupportsResponse.ONLY,
+        True,
+    ),
+]
+
+# ==============================================================================
+# HELPER: Service Registration & Unregistration
+# ==============================================================================
+
+
+def register_services(hass: HA_HomeAssistant, entry: HA_ConfigEntry) -> None:
+    """Register all xAI services.
+
+    Args:
+        hass: Home Assistant instance
+        entry: Config entry for xAI Conversation
+    """
+    for name, cls, response_type, requires_entry in SERVICES_METADATA:
+        if requires_entry:
+            instance = cls(hass, entry)
+        else:
+            instance = cls(hass)
+
+        hass.services.async_register(
+            DOMAIN,
+            name,
+            instance.async_handle,
+            supports_response=response_type,
+        )
+
+    LOGGER.debug(
+        "All xAI services registered successfully (%d services)", len(SERVICES_METADATA)
+    )
+
+
+def unregister_services(hass: HA_HomeAssistant) -> None:
+    """Unregister all xAI services.
+
+    Args:
+        hass: Home Assistant instance
+    """
+    for name, _, _, _ in SERVICES_METADATA:
+        if hass.services.has_service(DOMAIN, name):
+            hass.services.async_remove(DOMAIN, name)
+
+    LOGGER.debug("All xAI services unregistered successfully")

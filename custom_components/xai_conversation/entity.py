@@ -15,6 +15,7 @@ from homeassistant.helpers import device_registry as ha_device_registry
 # Local imports
 from .const import (
     CONF_CHAT_MODEL,
+    CONF_EXTENDED_TOOLS_YAML,
     CONF_STORE_MESSAGES,
     CONF_USE_INTELLIGENT_PIPELINE,
     DEFAULT_MANUFACTURER,
@@ -22,10 +23,12 @@ from .const import (
     LOGGER,
     RECOMMENDED_CHAT_MODEL,
     RECOMMENDED_STORE_MESSAGES,
+    SUBENTRY_TYPE_CONVERSATION,
 )
 from .entity_pipeline import IntelligentPipeline
 from .entity_tools import XAIToolsProcessor
-from .helpers import XAIGateway, LogTimeServices
+from .helpers import LogTimeServices, ExtendedToolsRegistry
+from .xai_gateway import XAIGateway
 from .exceptions import handle_api_error
 
 if TYPE_CHECKING:
@@ -56,6 +59,8 @@ class XAIBaseLLMEntity(HA_Entity):
         self.gateway: XAIGateway | None = None
         # Tools processor instance to maintain cache across calls
         self._tools_processor = XAIToolsProcessor(self)
+        # Extended tools registry
+        self._extended_tools_registry: ExtendedToolsRegistry | None = None
         # Track pending I/O tasks for graceful shutdown
         self._pending_save_tasks = set()
         LOGGER.debug(
@@ -68,22 +73,23 @@ class XAIBaseLLMEntity(HA_Entity):
     async def async_added_to_hass(self) -> None:
         """Link to shared sensors and get global ConversationMemory."""
         await super().async_added_to_hass()
-        
+
         # Initialize gateway now that hass is available
         self.gateway = XAIGateway(self.hass, self.entry)
+
+        # Initialize Extended Tools Registry ONLY for conversation entities
+        if self.subentry.subentry_type == SUBENTRY_TYPE_CONVERSATION:
+            # We load it here to ensure hass is available and config is fresh
+            yaml_config = self.entry.data.get(CONF_EXTENDED_TOOLS_YAML, "")
+            self._extended_tools_registry = ExtendedToolsRegistry(
+                self.hass, yaml_config, XAIGateway.tool_def
+            )
+            if not self._extended_tools_registry.is_empty:
+                LOGGER.debug("Extended Tools Registry initialized with tools")
 
         # Get global ConversationMemory instance
         self._conversation_memory = self.hass.data[DOMAIN]["conversation_memory"]
         LOGGER.debug("Entity %s linked to global ConversationMemory", self.entity_id)
-
-        # Store a reference to this entity for easy access by other components, if not already present
-        if self.entry.entry_id not in self.hass.data[DOMAIN]:
-            self.hass.data[DOMAIN][self.entry.entry_id] = self
-            LOGGER.debug(
-                "Stored reference to entity %s for entry %s",
-                self.entity_id,
-                self.entry.entry_id,
-            )
 
     async def async_will_remove_from_hass(self) -> None:
         """Cleanup when entity is being removed."""
@@ -132,13 +138,21 @@ class XAIBaseLLMEntity(HA_Entity):
         Generate an answer for the chat log, with logging and timing handled by LogTimeServices.
         The timer context is created here and passed down to the processors.
         """
-        use_pipeline_raw = self._get_option(CONF_USE_INTELLIGENT_PIPELINE, True)
-        store_messages = self._get_option(
-            CONF_STORE_MESSAGES, RECOMMENDED_STORE_MESSAGES
+        # Resolve config via gateway to ensure consistency
+        # We assume "conversation" type because this is a ConversationEntity
+        config = self.gateway.get_service_config(
+            "conversation", self.subentry.subentry_id
         )
 
+        use_pipeline_raw = config.get(CONF_USE_INTELLIGENT_PIPELINE, True)
+        store_messages = config.get(CONF_STORE_MESSAGES, RECOMMENDED_STORE_MESSAGES)
+        model = config.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL)
+
         mode = "intelligent_pipeline" if use_pipeline_raw else "tools_mode"
-        context = {"memory": "with_memory" if store_messages else "no_memory"}
+        context = {
+            "memory": "with_memory" if store_messages else "no_memory",
+            "model": model,
+        }
 
         async with LogTimeServices(LOGGER, mode, context) as timer:
             try:
@@ -171,23 +185,13 @@ class XAIBaseLLMEntity(HA_Entity):
             pass
 
     def _get_option(self, key: str, default=None):
-        """Get an option from subentry data with a fallback to defaults."""
-        # Try options first (for modified settings), then data (for defaults)
-        if (
-            hasattr(self.subentry, "options")
-            and self.subentry.options
-            and key in self.subentry.options
-        ):
-            return self.subentry.options[key]
-        return self.subentry.data.get(key, default)
+        """Get an option from gateway resolved config with a fallback to defaults."""
+        # Delegate to gateway to ensure consistent merge logic (data + options)
+        if not self.gateway:
+            # Fallback during init if gateway not ready (unlikely for runtime options)
+            return self.subentry.data.get(key, default)
 
-    def _get_int_option(self, key: str, default: int) -> int:
-        """Get an integer option with type safety."""
-        return int(self._get_option(key, default))
-
-    def _get_float_option(self, key: str, default: float) -> float:
-        """Get a float option with type safety and locale handling."""
-        value = self._get_option(key, default)
-        if isinstance(value, str):
-            value = value.replace(",", ".")
-        return float(value)
+        config = self.gateway.get_service_config(
+            "conversation", self.subentry.subentry_id
+        )
+        return config.get(key, default)

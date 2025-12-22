@@ -3,10 +3,10 @@
     "step": {
       "user": {
         "title": "Configuración xAI Grok",
-        "description": "Configura la integración xAI Grok para Home Assistant.",
+        "description": "Configura la integración xAI Grok para Home Assistant. El punto final de la API se configura globalmente para todos los agentes. La configuración de herramientas y pipeline inteligente se puede ajustar por agente si es necesario.",
         "data": {
           "api_key": "Clave API",
-          "api_host": "Host API (predeterminado: 'api.x.ai', 'us-east-1.api.x.ai' o 'eu-west-1.api.x.ai')",
+          "api_host": "Punto final de la API",
           "assistant_name": "Nombre del asistente",
           "live_search": "Modo de búsqueda en vivo"
         },
@@ -30,9 +30,12 @@
   "options": {
     "step": {
       "init": {
-        "title": "Configuración de memoria xAI",
-        "description": "Configura los parámetros de memoria para usuarios y dispositivos asistentes de voz. La integración detecta automáticamente si una solicitud proviene de un usuario (smartphone/PC/tablet) o de un dispositivo (satélite de voz) y aplica la configuración apropiada.",
+        "title": "Configuración xAI",
+        "description": "Configura los parámetros de memoria para usuarios y dispositivos asistentes de voz, así como herramientas extendidas.",
         "data": {
+          "api_host": "Punto final de la API",
+          "use_extended_tools": "Habilitar Config Herramientas Extendidas",
+          "extended_tools_yaml": "Configuración YAML de Herramientas Extendidas",
           "memory_user_ttl_hours": "Memoria de usuario: Duración (horas)",
           "memory_user_max_turns": "Memoria de usuario: Máx. turnos",
           "memory_device_ttl_hours": "Memoria de dispositivo: Duración (horas)",
@@ -40,11 +43,16 @@
           "memory_cleanup_interval_hours": "Intervalo de limpieza de memoria (horas)"
         },
         "data_description": {
+          "api_host": "Nombre de host del punto final de la API. Usa 'api.x.ai' para enrutamiento global con redirección automática a un host regional o especifica directamente un host regional: 'us-east-1.api.x.ai' o 'eu-west-1.api.x.ai'.",
+          "use_extended_tools": "Habilitar para configurar herramientas personalizadas en formato Extended OpenAI Conversation.",
+          "extended_tools_yaml": "Defina aquí sus herramientas personalizadas. El formato es totalmente compatible con Extended OpenAI Conversation. Puede copiar/pegar su configuración existente.",
           "memory_user_ttl_hours": "Duración de las conversaciones de los usuarios (smartphone, PC, tablet). Predeterminado: 720 horas (30 días)",
           "memory_user_max_turns": "Número máximo de turnos de conversación almacenados para los usuarios. Predeterminado: 1000 turnos",
           "memory_device_ttl_hours": "Duración de las conversaciones de los dispositivos (satélites asistente de voz). Predeterminado: 168 horas (7 días)",
           "memory_device_max_turns": "Número máximo de turnos de conversación almacenados para los dispositivos. Predeterminado: 100 turnos",
           "memory_cleanup_interval_hours": "Frecuencia con la que las entradas de memoria caducadas se limpian. Predeterminado: 24 horas"
+        }
+      }
         }
       }
     }
@@ -76,7 +84,8 @@
             "show_citations": "Mostrar citas",
             "assistant_name": "Nombre del asistente",
             "send_user_name": "Incluir nombre de usuario en mensajes",
-            "reasoning_effort": "Nivel de razonamiento"
+            "reasoning_effort": "Nivel de razonamiento",
+            "use_extended_tools": "Usar Herramientas Extendidas (Config Global)"
           },
           "data_description": {
             "assistant_name": "El nombre con el que el asistente se identificará (ej. 'Jarvis', 'Alexa', 'HAL'). Modificar este valor iniciará una nueva conversación y el historial anterior ya no será accesible.",
@@ -94,7 +103,8 @@
             "show_citations": "Agregar citas de búsqueda a las respuestas del chat. Útil para interfaces de UI/chat pero puede ser ruidoso para asistentes de voz. Predeterminado: APAGADO (recomendado para voz).",
             "live_search": "Habilita capacidades de búsqueda web: 'off' (deshabilitado), 'auto' (el modelo decide), 'on' (siempre habilitado). Se aplica tanto al modo pipeline como al de herramientas.",
             "prompt": "Instrucciones personalizadas para el agente (solo modo herramientas).",
-            "reasoning_effort": "Nivel de esfuerzo en razonamiento para los modelos que lo soportan (bajo, medio, alto, máximo). Disponible solo para los modelos grok-4 y grok-4-fast."
+            "reasoning_effort": "Nivel de esfuerzo en razonamiento para los modelos que lo soportan (bajo, medio, alto, máximo). Disponible solo para los modelos grok-4 y grok-4-fast.",
+            "use_extended_tools": "Habilita el uso de herramientas personalizadas definidas en las opciones principales de integración (formato Extended OpenAI). ADVERTENCIA: Al habilitar esta opción, se deshabilitarán las herramientas nativas de Home Assistant para este agente, independientemente del modo."
           }
         }
       },
