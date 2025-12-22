@@ -53,8 +53,6 @@
           "memory_cleanup_interval_hours": "清理过期内存条目的频率。默认：24 小时"
         }
       }
-        }
-      }
     }
   },
   "config_subentries": {

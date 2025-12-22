@@ -53,8 +53,6 @@
           "memory_cleanup_interval_hours": "Frecuencia con la que las entradas de memoria caducadas se limpian. Predeterminado: 24 horas"
         }
       }
-        }
-      }
     }
   },
   "config_subentries": {
@@ -82,7 +80,6 @@
             "live_search": "Modo de búsqueda en vivo",
             "store_messages": "Almacenar mensajes",
             "show_citations": "Mostrar citas",
-            "assistant_name": "Nombre del asistente",
             "send_user_name": "Incluir nombre de usuario en mensajes",
             "reasoning_effort": "Nivel de razonamiento",
             "use_extended_tools": "Usar Herramientas Extendidas (Config Global)"
@@ -98,7 +95,6 @@
             "pipeline_prompt": "Texto opcional añadido al prompt de la canalización predeterminada. Úsalo para intenciones personalizadas o reglas locales.",
             "allow_smart_home_control": "Si está habilitado, el asistente puede ejecutar comandos de hogar inteligente. Si está deshabilitado, solo responde de manera conversacional. Modificar esta configuración iniciará una nueva conversación.",
             "store_messages": "Usa la memoria del lado del servidor de xAI para reducir los tokens a enviar en cada solicitud. Los parámetros de la memoria (duración, máx. turnos) se configuran a nivel de integración.",
-            "assistant_name": "El nombre con el que el asistente se identificará (ej. 'Jarvis', 'Alexa', 'HAL'). Modificar este valor iniciará una nueva conversación y el historial anterior ya no será accesible.",
             "send_user_name": "Agrega el nombre de usuario de Home Assistant o el nombre del dispositivo Assist voice al chat con Grok.",
             "show_citations": "Agregar citas de búsqueda a las respuestas del chat. Útil para interfaces de UI/chat pero puede ser ruidoso para asistentes de voz. Predeterminado: APAGADO (recomendado para voz).",
             "live_search": "Habilita capacidades de búsqueda web: 'off' (deshabilitado), 'auto' (el modelo decide), 'on' (siempre habilitado). Se aplica tanto al modo pipeline como al de herramientas.",

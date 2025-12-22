@@ -53,8 +53,6 @@
           "memory_cleanup_interval_hours": "Частота очистки устаревших записей памяти. По умолчанию: 24 часа"
         }
       }
-        }
-      }
     }
   },
   "config_subentries": {

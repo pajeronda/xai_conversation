@@ -53,8 +53,6 @@
           "memory_cleanup_interval_hours": "Częstotliwość czyszczenia wygasłych wpisów pamięci. Domyślnie: 24 godziny"
         }
       }
-        }
-      }
     }
   },
   "config_subentries": {
@@ -81,7 +79,6 @@
             "allow_smart_home_control": "Zezwól na kontrolę inteligentnego domu",
             "live_search": "Tryb wyszukiwania na żywo",
             "store_messages": "Przechowuj wiadomości",
-            "assistant_name": "Nazwa asystenta",
             "send_user_name": "Dołącz nazwę użytkownika w wiadomościach",
             "show_citations": "Pokaż cytaty w czacie",
             "reasoning_effort": "Poziom rozumowania",
@@ -98,7 +95,6 @@
             "pipeline_prompt": "Opcjonalny tekst dodany do domyślnego promptu potoku. Przydatne dla niestandardowych reguł lub lokalnych intencji.",
             "allow_smart_home_control": "Jeśli włączone, asystent może wykonywać polecenia inteligentnego domu. Jeśli wyłączone, odpowiada tylko w sposób konwersacyjny. Zmiana tego ustawienia rozpocznie nową konwersację.",
             "store_messages": "Użyj pamięci po stronie serwera xAI, aby zmniejszyć liczbę tokenów do wysłania w każdym żądaniu. Parametry pamięci (czas trwania, liczba tur) są konfigurowane na poziomie integracji.",
-            "assistant_name": "Nazwa, którą asystent będzie używał do identyfikacji (np. 'Jarvis', 'Alexa', 'HAL'). Zmiana tej wartości rozpocznie nową konwersację, a poprzednia historia nie będzie już dostępna.",
             "send_user_name": "Dołącz nazwę użytkownika Home Assistant lub nazwę urządzenia Assist voice do czatu z Grok.",
             "show_citations": "Dołącz cytaty wyszukiwania do odpowiedzi czatu. Przydatne dla interfejsów UI/czatu, ale może być głośne dla asystentów głosowych. Domyślnie: WYŁ. (zalecane dla głosu).",
             "live_search": "Włącz możliwości wyszukiwania w sieci: 'off' (wyłączone), 'auto' (model decyduje), 'on' (zawsze włączone). Dotyczy zarówno trybu potoku, jak i narzędzi.",

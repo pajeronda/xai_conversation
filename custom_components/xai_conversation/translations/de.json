@@ -53,8 +53,6 @@
           "memory_cleanup_interval_hours": "Häufigkeit, mit der abgelaufene Speichereinträge bereinigt werden. Standard: 24 Stunden"
         }
       }
-        }
-      }
     }
   },
   "config_subentries": {
@@ -82,7 +80,6 @@
             "live_search": "Live-Suchmodus",
             "store_messages": "Nachrichten speichern",
             "show_citations": "Zitate anzeigen",
-            "assistant_name": "Assistentenname",
             "send_user_name": "Benutzernamen in Nachrichten einbeziehen",
             "reasoning_effort": "Denkaufwand",
             "use_extended_tools": "Erweiterte Tools verwenden (Globale Konfig)"
@@ -98,7 +95,6 @@
             "pipeline_prompt": "Optionaler Text, der zum Standard-Pipeline-Prompt hinzugefügt wird. Verwenden Sie ihn für benutzerdefinierte Absichten oder lokale Regeln.",
             "allow_smart_home_control": "Wenn aktiviert, kann der Assistent Smart-Home-Befehle ausführen. Wenn deaktiviert, antwortet er nur im Gesprächsmodus. Das Ändern dieser Einstellung startet eine neue Konversation.",
             "store_messages": "Verwenden Sie den serverseitigen Speicher von xAI, um die zu sendenden Tokens pro Anfrage zu reduzieren. Die Speicherparameter (Dauer, Anzahl der Runden) werden auf Integrationsebene konfiguriert.",
-            "assistant_name": "Der Name, mit dem sich der Assistent identifiziert (z.B. 'Jarvis', 'Alexa', 'HAL'). Das Ändern dieses Werts startet eine neue Konversation und die vorherige Historie wird nicht mehr zugänglich sein.",
             "send_user_name": "Fügen Sie den Home Assistant-Benutzernamen oder Assist Voice-Gerätenamen zum Chat mit Grok hinzu.",
             "show_citations": "Suchzitate zu Chat-Antworten hinzufügen. Nützlich für UI/Chat-Schnittstellen, kann aber für Sprachassistenten störend sein. Standard: AUS (empfohlen für Sprache).",
             "live_search": "Web-Suchfunktionen aktivieren: 'off' (deaktiviert), 'auto' (Modell entscheidet), 'on' (immer aktiviert). Gilt sowohl für Pipeline- als auch für Tools-Modus.",

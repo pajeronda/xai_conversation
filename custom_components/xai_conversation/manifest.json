@@ -1,16 +1,31 @@
 {
   "domain": "xai_conversation",
   "name": "xAI Conversation",
-  "after_dependencies": ["assist_pipeline", "intent"],
-  "codeowners": ["@pajeronda"],
+  "after_dependencies": [
+    "assist_pipeline",
+    "intent"
+  ],
+  "codeowners": [
+    "@pajeronda"
+  ],
   "config_flow": true,
-  "dependencies": ["conversation", "ai_task"],
+  "dependencies": [
+    "conversation",
+    "ai_task",
+    "scrape",
+    "rest",
+    "recorder",
+    "history",
+    "energy"
+  ],
   "documentation": "https://www.github.com/pajeronda/xai_conversation",
   "integration_type": "service",
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/pajeronda/xai_conversation/issues",
   "quality_scale": "bronze",
-  "requirements": ["xai_sdk>=1.4.0"],
+  "requirements": [
+    "xai_sdk>=1.4.0"
+  ],
   "single_config_entry": true,
   "version": "2.0.1"
 }
