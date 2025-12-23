@@ -15,7 +15,7 @@
 ### ⚙️ xAI Python SDK: 
 - This component uses [xAI Python SDK](https://github.com/xai-org/xai-sdk-python)
 
-- 🗣️ 🧠 Grok functions as an advanced ASR/NLU system.
+### 🗣️ 🧠 Grok functions as an advanced ASR/NLU system.
 
 ### 💬 Intelligent Conversation Agent
 - **Two Operating Modes**:
