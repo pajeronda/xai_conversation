@@ -87,6 +87,44 @@ data:
  response_variable: output_ai
 ```
 
+## 🛠️ Extended Tools
+
+Starting from release 2.1.0, you can use new tools in YAML format, fully compatible with the format used in the [Extended OpenAI Conversation](https://github.com/jekalmin/extended_openai_conversation) integration.
+
+### Configuration
+
+1. **Global Definition**: Go to the integration page and click on the general configuration icon (Configure).
+
+   <img src="https://github.com/pajeronda/xai_conversation/blob/main/images/extended_tools_global.png?raw=true" alt="Global Configuration" width="500">
+
+   When the configuration dialog opens, toggle the **"Enable Extended Tools Configuration"** boolean and click **Submit**.
+   Now a new editor field will appear where you can create or paste functions in YAML mode to be used as tools.
+
+   **YAML Example**
+   ```yaml
+   - spec:
+       name: get_attributes
+       description: Get attributes of any home assistant entity
+       parameters:
+         type: object
+         properties:
+           entity_id:
+             type: string
+             description: entity_id
+         required:
+         - entity_id
+     function:
+       type: template
+       value_template: "{{states[entity_id]}}"
+   ```
+
+2. **Enable per Agent**: Go to the options of the specific agent (xAI Conversation or any manually configured one) and toggle the **"Use Extended Tools (Global Config)"** boolean. Click **Submit** to save.
+   
+   *Note: This setting applies only to the selected conversation sub-entry. Other conversation sub-entries will continue to use the default standard HA tools.*
+
+   <img src="https://github.com/pajeronda/xai_conversation/blob/main/images/extended_tools_enable.png?raw=true" alt="Enable per Agent" width="500">
+
+
 ### 💬 Conversation Memory Management
 - **Server-side**: Persistent conversations managed by xAI (saves tokens and costs)
 - **Client-side**: Conversations managed with local history (Home Assistant standard, more expensive)
@@ -158,45 +196,6 @@ Click this badge to install **Grok code fast card** via **HACS** (recommended)
 
 **Manual**
 - Follow the instructions on the GitHub page [Grok code fast card](https://github.com/pajeronda/grok-code-fast-card/)
-
-
-## 🛠️ Extended Tools
-
-Starting from release 2.1.0, you can use new tools in YAML format, fully compatible with the format used in the [Extended OpenAI Conversation](https://github.com/jekalmin/extended_openai_conversation) integration.
-
-### Configuration
-
-1. **Global Definition**: Go to the integration page and click on the general configuration icon (Configure).
-
-   <img src="https://github.com/pajeronda/xai_conversation/blob/main/images/extended_tools_global.png?raw=true" alt="Global Configuration" width="500">
-
-   When the configuration dialog opens, toggle the **"Enable Extended Tools Configuration"** boolean and click **Submit**.
-   Now a new editor field will appear where you can create or paste functions in YAML mode to be used as tools.
-
-   **YAML Example**
-   ```yaml
-   - spec:
-       name: get_attributes
-       description: Get attributes of any home assistant entity
-       parameters:
-         type: object
-         properties:
-           entity_id:
-             type: string
-             description: entity_id
-         required:
-         - entity_id
-     function:
-       type: template
-       value_template: "{{states[entity_id]}}"
-   ```
-
-2. **Enable per Agent**: Go to the options of the specific agent (xAI Conversation or any manually configured one) and check the box **"Use Extended Tools (Global Config)"**. Click **Submit** to save.
-   
-   *Note: This setting applies only to the selected conversation sub-entry. Other conversation sub-entries will continue to use the default standard HA tools.*
-
-   <img src="https://github.com/pajeronda/xai_conversation/blob/main/images/extended_tools_enable.png?raw=true" alt="Enable per Agent" width="500">
-
 
 ## Configuration
 
