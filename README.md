@@ -89,7 +89,7 @@ data:
 
 ## 🛠️ Extended Tools
 
-Starting from release 2.1.0, you can use new tools in YAML format, fully compatible with the format used in the [Extended OpenAI Conversation](https://github.com/jekalmin/extended_openai_conversation) integration.
+Starting from release 2.2.0, you can use new tools in YAML format, fully compatible with the format used in the [Extended OpenAI Conversation](https://github.com/jekalmin/extended_openai_conversation) integration.
 
 ### Configuration
 

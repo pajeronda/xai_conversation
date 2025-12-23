@@ -27,5 +27,5 @@
     "xai_sdk>=1.4.0"
   ],
   "single_config_entry": true,
-  "version": "2.1.0"
+  "version": "2.2.0"
 }
