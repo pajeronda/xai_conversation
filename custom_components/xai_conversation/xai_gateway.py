@@ -563,12 +563,13 @@ class XAIGateway:
         service_type: str = "ai_task",
         model_target: str = "chat",
         system_prompt: str | None = None,
-        extra_messages: list[Any] | None = None,
+        extra_content: list[Any] | None = None,
         model_override: str | None = None,
         max_tokens_override: int | None = None,
         temp_override: float | None = None,
         mixed_content: list[Any] | None = None,
         entity: Any | None = None,
+        mode_override: str | None = None,
     ) -> str | None:
         """Execute a stateless chat (no memory, one-shot).
 
@@ -588,31 +589,56 @@ class XAIGateway:
             temperature_override=temp_override,
             store_messages_override=False,
             entity=entity,
+            mode_override=mode_override,
         )
 
         context = {"mode": "stateless", "service": service_type}
         async with LogTimeServices(LOGGER, service_type, context) as timer:
             try:
-                # Handle mixed content first (e.g., text and images)
-                if mixed_content:
-                    chat.append(self.user_msg(mixed_content))
-                else:
-                    # Add extra messages (e.g. images) if provided
-                    if extra_messages:
-                        for msg in extra_messages:
-                            chat.append(msg)
+                # 1. Resolve effective content
+                # We want to merge images/attachments with the main input into a mixed-content user message.
+                combined_content: list[Any] = []
 
-                    # Handle Input Data
-                    if isinstance(input_data, ha_conversation.ChatLog):
-                        for content in input_data.content:
-                            if isinstance(content, ha_conversation.UserContent):
-                                if content.content:
-                                    chat.append(xai_user(content.content))
-                            elif isinstance(content, ha_conversation.AssistantContent):
-                                chat.append(xai_assistant(content.content or ""))
-                    elif input_data:
-                        # String input (Ask Service)
-                        chat.append(self.user_msg(input_data))
+                if mixed_content:
+                    combined_content.extend(mixed_content)
+
+                if extra_content:
+                    combined_content.extend(extra_content)
+
+                # 2. Append to chat
+                if combined_content and not isinstance(
+                    input_data, ha_conversation.ChatLog
+                ):
+                    # Simple case: merge everything with string input
+                    if isinstance(input_data, str) and input_data:
+                        combined_content.insert(0, input_data)
+                    chat.append(self.user_msg(combined_content))
+                elif isinstance(input_data, ha_conversation.ChatLog):
+                    # ChatLog case: we must preserve history but images go into the last user message
+                    # or as a new message if no user message exists.
+                    for i, content in enumerate(input_data.content):
+                        is_last = i == len(input_data.content) - 1
+                        if isinstance(content, ha_conversation.UserContent):
+                            if is_last and combined_content:
+                                # Merge images with the last user message
+                                msg_parts = [content.content] if content.content else []
+                                msg_parts.extend(combined_content)
+                                chat.append(self.user_msg(msg_parts))
+                                combined_content = []  # Consumed
+                            elif content.content:
+                                chat.append(self.user_msg(content.content))
+                        elif isinstance(content, ha_conversation.AssistantContent):
+                            chat.append(self.assistant_msg(content.content or ""))
+
+                    # If we still have combined_content (no user message found to attach to), append it now
+                    if combined_content:
+                        chat.append(self.user_msg(combined_content))
+                elif input_data:
+                    # String input (Ask Service) with no mixed content yet
+                    chat.append(self.user_msg(input_data))
+                elif combined_content:
+                    # Only mixed content / extra messages, no input_data
+                    chat.append(self.user_msg(combined_content))
 
                 # Execute
                 async with timer.record_api_call():

@@ -162,12 +162,21 @@ class XAITaskEntity(
         For structured outputs, provide a structure parameter in the task.
         Supports attachments (images/media) via task.attachments.
         """
-        # Pre-process attachments into image messages
-        extra_messages = await self._prepare_attachments(task.attachments)
+        # Pre-process attachments into image messages (content parts)
+        extra_content = await self._prepare_attachments(task.attachments)
+
+        # Decide model target: use vision model if images are present
+        model_target = "vision" if extra_content else "chat"
 
         # Execute stateless chat via gateway
+        # Note: we explicitly pass mode_override="ai_task" to preserve the structured prompt
+        # even if we switch to a vision model.
         await self.gateway.execute_stateless_chat(
-            chat_log, extra_messages=extra_messages, service_type="ai_task"
+            chat_log,
+            extra_content=extra_content,
+            service_type="ai_task",
+            model_target=model_target,
+            mode_override="ai_task",
         )
 
         if not isinstance(chat_log.content[-1], ha_conversation.AssistantContent):
@@ -277,13 +286,13 @@ class XAITaskEntity(
     ) -> str:
         """Analyze photos using vision model by delegating to the gateway."""
         # Pre-process images using the shared helper
-        image_messages = await self._prepare_attachments(attachments, images)
-        if not image_messages:
+        extra_content = await self._prepare_attachments(attachments, images)
+        if not extra_content:
             raise_validation_error("No valid images found for analysis.")
 
         # Construct the mixed-content message for the gateway
         message_content = [prompt]
-        message_content.extend(image_messages)
+        message_content.extend(extra_content)
 
         # The gateway's `execute_stateless_chat` will handle LogTimeServices,
         # API call, and response logging.
@@ -292,6 +301,7 @@ class XAITaskEntity(
             mixed_content=message_content,
             service_type="ai_task",
             model_target="vision",
+            mode_override="vision",
         )
 
         return analysis_text or ""

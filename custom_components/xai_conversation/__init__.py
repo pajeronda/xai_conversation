@@ -71,12 +71,12 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     coordinator: XaiInitManager = hass.data[DOMAIN].get(entry.entry_id)
     if coordinator:
         await coordinator.async_remove()
-    
+
     # Ensure storage folder is deleted even if coordinator is gone
     folder_name = DEFAULT_CONVERSATION_NAME.lower().replace(" ", "_")
     storage_base = Path(hass.config.path(".storage"))
     memory_folder = storage_base / folder_name
-    
+
     if memory_folder.exists() and memory_folder.is_dir():
         try:
             await hass.async_add_executor_job(shutil.rmtree, memory_folder)

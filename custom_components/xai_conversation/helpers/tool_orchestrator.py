@@ -319,8 +319,6 @@ class ToolOrchestrator:
         """Get the cached static context (entities, areas, etc.) for prompt building."""
         return self._cached_static_context_csv or ""
 
-
-
     def _parse_arguments_if_needed(self, arguments: Any) -> dict:
         """Helper to safely parse JSON arguments if passed as string."""
         if isinstance(arguments, dict):
@@ -380,17 +378,25 @@ class ToolOrchestrator:
 
             else:
                 ha_tool = self._cached_ha_tools_map.get(tool_name)
-                
+
                 # Fallback: Try case-insensitive lookup if exact match fails
                 if not ha_tool:
                     # Case-insensitive map (built on demand or cached if frequent)
                     # For now, simple iteration is fast enough for <50 tools
                     for cached_name, tool_obj in self._cached_ha_tools_map.items():
-                        if cached_name.lower() == tool_name.lower() or cached_name.lower().replace("hass", "") == tool_name.lower().replace("hass", ""):
+                        if (
+                            cached_name.lower() == tool_name.lower()
+                            or cached_name.lower().replace("hass", "")
+                            == tool_name.lower().replace("hass", "")
+                        ):
                             ha_tool = tool_obj
-                            LOGGER.warning("Tool fuzzy match: '%s' resolved to '%s'", tool_name, cached_name)
+                            LOGGER.warning(
+                                "Tool fuzzy match: '%s' resolved to '%s'",
+                                tool_name,
+                                cached_name,
+                            )
                             break
-                            
+
                 if not ha_tool:
                     raise_generic_error(
                         f"Tool '{tool_name}' not found in cached native tools"

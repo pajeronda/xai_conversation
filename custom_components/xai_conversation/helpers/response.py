@@ -490,14 +490,13 @@ async def save_response_metadata(
 
     # EXECUTE: Either await or dispatch to background
     if tasks:
+
         async def _background_save():
             """Task that executes I/O operations."""
             try:
                 await asyncio.gather(*tasks, return_exceptions=True)
             except Exception as err:
-                LOGGER.error(
-                    "Save task failed for %s: %s", service_type, err
-                )
+                LOGGER.error("Save task failed for %s: %s", service_type, err)
 
         if await_save:
             # Sequential execution for critical paths (e.g. tool loop memory)

@@ -46,6 +46,7 @@ except ImportError:
 try:
     from grpc import StatusCode
     from grpc._channel import _InactiveRpcError
+
     try:
         from grpc.aio import AioRpcError
     except ImportError:
@@ -121,9 +122,8 @@ class XAIToolsProcessor:
                     await asyncio.sleep(0)
 
             except Exception as err:
-                is_grpc_error = (
-                    _InactiveRpcError is not None
-                    and isinstance(err, (_InactiveRpcError, AioRpcError))
+                is_grpc_error = _InactiveRpcError is not None and isinstance(
+                    err, (_InactiveRpcError, AioRpcError)
                 )
                 if is_grpc_error:
                     should_retry = await handle_response_not_found_error(
@@ -220,7 +220,11 @@ class XAIToolsProcessor:
                         tool_name,
                         tool_time,
                     )
-                    LOGGER.debug("tool_exec_result: name=%s result='%s'", tool_name, str(result.result)[:500])
+                    LOGGER.debug(
+                        "tool_exec_result: name=%s result='%s'",
+                        tool_name,
+                        str(result.result)[:500],
+                    )
 
                 tool_results.append(
                     ToolOutput(
@@ -237,7 +241,9 @@ class XAIToolsProcessor:
                     tool_results, conv_key, user_input, chat_log, timer
                 )
             else:
-                LOGGER.debug("tools_loop: no client-side tool results to report (server-side tools may have run).")
+                LOGGER.debug(
+                    "tools_loop: no client-side tool results to report (server-side tools may have run)."
+                )
             break
 
         else:
@@ -350,7 +356,11 @@ class XAIToolsProcessor:
                 if not result.is_error
                 else f"Error: {result.tool_result}"
             )
-            LOGGER.debug("Appending tool result to chat history: name=%s content='%s'", result.tool_name, tool_output_content[:500])
+            LOGGER.debug(
+                "Appending tool result to chat history: name=%s content='%s'",
+                result.tool_name,
+                tool_output_content[:500],
+            )
             chat.append(XAIGateway.tool_msg(tool_output_content))
 
         response_holder = {"response": None}
