@@ -113,6 +113,9 @@ class XAITaskEntity(
         # Process local file paths / URLs
         if images:
             for img in images:
+                if isinstance(img, dict) and "url" in img:
+                    img = img["url"]
+
                 if isinstance(img, str):
                     if img.startswith(("http://", "https://")):
                         messages.append(XAIGateway.img_msg(img))

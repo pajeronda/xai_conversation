@@ -3,6 +3,7 @@
 from abc import ABC, abstractmethod
 from datetime import timedelta
 from typing import Any
+import asyncio
 import os
 import sqlite3
 import time
@@ -174,7 +175,7 @@ class NativeFunctionExecutor(FunctionExecutor):
         exposed_entities,
     ):
         name = function["name"]
-        if name == "execute_service":
+        if name in ("execute_service", "execute_services"):
             return await self.execute_service(
                 hass, function, arguments, context, exposed_entities
             )
@@ -251,6 +252,16 @@ class NativeFunctionExecutor(FunctionExecutor):
         context: Context,
         exposed_entities,
     ):
+        delay = arguments.get("delay")
+        if delay:
+            hours = int(delay.get("hours", 0))
+            minutes = int(delay.get("minutes", 0))
+            seconds = int(delay.get("seconds", 0))
+            delay_seconds = hours * 3600 + minutes * 60 + seconds
+            if delay_seconds > 0:
+                LOGGER.debug("Delaying service execution by %d seconds", delay_seconds)
+                await asyncio.sleep(delay_seconds)
+
         result = []
         for service_argument in arguments.get("list", []):
             result.append(
