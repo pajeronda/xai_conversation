@@ -40,6 +40,7 @@ from homeassistant.exceptions import HomeAssistantError, ServiceNotFound
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.script import Script
 from homeassistant.helpers.template import Template
+from homeassistant.helpers.event import async_call_later
 import homeassistant.util.dt as dt_util
 
 from ..const import (
@@ -252,16 +253,6 @@ class NativeFunctionExecutor(FunctionExecutor):
         context: Context,
         exposed_entities,
     ):
-        delay = arguments.get("delay")
-        if delay:
-            hours = int(delay.get("hours", 0))
-            minutes = int(delay.get("minutes", 0))
-            seconds = int(delay.get("seconds", 0))
-            delay_seconds = hours * 3600 + minutes * 60 + seconds
-            if delay_seconds > 0:
-                LOGGER.debug("Delaying service execution by %d seconds", delay_seconds)
-                await asyncio.sleep(delay_seconds)
-
         result = []
         for service_argument in arguments.get("list", []):
             result.append(
@@ -827,6 +818,44 @@ class ExtendedToolsRegistry:
     def has_function(self, name: str) -> bool:
         """Check if function exists."""
         return name in self._tools
+
+    def get_tool_config(self, name: str) -> dict | None:
+        """Get the full tool configuration (spec + function)."""
+        return self._tools.get(name)
+
+    def get_delayed_function_config(self, function_config: dict, delay_args: Any) -> dict:
+        """Wrap a function config in a composite sequence with a script delay."""
+        return {
+            "type": "composite",
+            "sequence": [
+                {
+                    "type": "script",
+                    "sequence": [{"delay": delay_args}],
+                },
+                function_config,
+            ],
+        }
+
+    async def async_execute_raw_config(
+        self,
+        func_config: dict,
+        arguments: dict,
+        context: Context,
+        exposed_entities: list = None,
+    ) -> Any:
+        """Execute a raw function configuration."""
+        func_type = func_config.get("type")
+        executor = FUNCTION_EXECUTORS.get(func_type)
+        if not executor:
+            raise ExtendedToolError(f"Executor type '{func_type}' not supported")
+
+        try:
+            return await executor.execute(
+                self._hass, func_config, arguments, context, exposed_entities or []
+            )
+        except Exception as err:
+            LOGGER.exception("Error executing extended tool config")
+            raise ExtendedToolError(f"Execution failed: {err}")
 
     async def execute(
         self,

@@ -364,8 +364,26 @@ class ToolOrchestrator:
                         self._entity.hass
                     )
 
-                # Extended tools usually expect dict. Parse if string.
                 parsed_args = self._parse_arguments_if_needed(arguments)
+
+                # Delay handling: wrap in composite/script delay and background
+                if "delay" in parsed_args:
+                    tool_data = registry.get_tool_config(tool_name)
+                    if tool_data:
+                        LOGGER.debug("Scheduling extended tool '%s' for background execution with delay", tool_name)
+                        delayed_func = registry.get_delayed_function_config(
+                            tool_data["function"], parsed_args["delay"]
+                        )
+                        # Execute the wrapped sequence in a background task
+                        self._entity.hass.async_create_task(
+                            registry.async_execute_raw_config(
+                                delayed_func,
+                                parsed_args,
+                                user_input.context,
+                                self._cached_enriched_entities,
+                            )
+                        )
+                        return ToolExecutionResult(result="Scheduled")
 
                 # Use user_input.context for extended tools
                 result_data = await registry.execute(
