@@ -8,7 +8,7 @@
   [![GitHub Release](https://img.shields.io/github/release/pajeronda/xai_conversation.svg?style=flat-square)](https://github.com/pajeronda/xai_conversation/releases)
   [![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2025.10%2B-green)](https://www.home-assistant.io/blog/categories/core/)
   [![hacs](https://img.shields.io/badge/HACS-Default-blue.svg?style=flat-square)](https://my.home-assistant.io/redirect/config_flow_start/?domain=xai_conversation)
-  [![License](https://img.shields.io/github/license/pajeronda/xai_conversation.svg?style=flat-square)](https://github.com/pajeronda/xai_conversation/LICENSE)
+  [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg?style=flat-square)](LICENSE)
 </div>
 
 ---
