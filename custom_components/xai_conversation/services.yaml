@@ -47,17 +47,67 @@ ask:
           min: 0
           max: 2
           step: 0.1
+    top_p:
+      name: Top P
+      description: Nucleus sampling (determines diversity). Recommended 1.0 for logic/code.
+      required: false
+      selector:
+        number:
+          min: 0
+          max: 1
+          step: 0.05
+    reasoning_effort:
+      name: Reasoning Effort
+      description: >
+        For reasoning models only. Controls how much time/effort the model spends thinking.
+        Values: low, medium, high, max.
+      required: false
+      selector:
+        select:
+          options:
+            - label: "Low"
+              value: "low"
+            - label: "Medium"
+              value: "medium"
+            - label: "High"
+              value: "high"
+            - label: "Max"
+              value: "max"
+    live_search:
+      name: Live Search
+      description: Enable server-side tools (Web/X Search). Defaults to 'off'.
+      required: false
+      default: "off"
+      selector:
+        select:
+          options:
+            - label: "Off"
+              value: "off"
+            - label: "Web Search"
+              value: "web search"
+            - label: "X Search"
+              value: "x search"
+            - label: "Full (Web + X)"
+              value: "full"
+    show_citations:
+      name: Show Citations
+      description: >
+        Append search citations to the response when live_search is enabled.
+        Useful for tracking sources. Default: off.
+      required: false
+      default: false
+      selector:
+        boolean:
 
 clear_memory:
   name: Clear Conversation Memory
   description: >
-    Delete conversation memory for selected users/satellites, or entire storage file.
-    NOTE: This will clear ALL conversation histories for the selected users/satellites,
-    including conversations with different assistant names, custom prompts, and control modes.
+    Clear conversation memory for selected users or voice satellites.
+    The service automatically handles both local and server-side data based on your configuration.
   fields:
     user_id:
       name: Users
-      description: Select specific users to clear memory for
+      description: Select users whose conversation history should be cleared
       required: false
       selector:
         entity:
@@ -65,35 +115,62 @@ clear_memory:
           filter:
             - domain: person
     satellite_id:
-      name: Assist Satellites
-      description: Select specific voice assistant satellites to clear memory for
+      name: Voice Satellites
+      description: Select voice assistant devices whose conversation history should be cleared
       required: false
       selector:
         entity:
           multiple: true
           filter:
             - domain: assist_satellite
-    delete_storage_file:
-      name: Delete all
-      description: Clear all memory data for user and device satellites
+    delete_all:
+      name: Delete All
+      description: Clear ALL conversation memory (all users and devices). Use with caution.
       required: false
       default: false
       selector:
         boolean:
-    remote_delete:
-      name: Delete on xAI servers
-      description: If enabled, also delete conversation records on xAI remote servers. If disabled, only local data is cleared.
+    include_server:
+      name: Include Server Data
+      description: Also delete conversations stored on xAI servers (if any). Local-only data (ZDR mode) is always cleared.
       required: false
       default: true
       selector:
         boolean:
+    only_inactive:
+      name: Only Inactive Conversations
+      description: Only clear conversations that have been inactive for more than the configured period (default 28 days).
+      required: false
+      default: false
+      selector:
+        boolean:
 
+manage_sensors:
+  name: Manage Sensors
+  description: >
+    Perform maintenance operations on xAI integration sensors.
+    Select one or both actions to execute.
+  fields:
+    reload_pricing:
+      name: Reload Pricing Data
+      description: Force refresh of model pricing data from xAI API.
+      required: false
+      default: false
+      selector:
+        boolean:
+    reset_stats:
+      name: Reset Token Statistics
+      description: Reset all token usage counters to zero.
+      required: false
+      default: false
+      selector:
+        boolean:
+              
 photo_analysis:
   name: Photo Analysis
   description: >
     Analyze one or multiple photos using Grok Vision AI.
     Supports both local file paths and URLs. Can process documents, diagrams, charts, screenshots, and photographs.
-    Uses the vision model configured in AI Task settings.
   fields:
     prompt:
       name: Prompt
@@ -112,14 +189,28 @@ photo_analysis:
       example: ["/config/www/camera_snapshot.jpg"]
       selector:
         object:
+    temperature:
+      name: Temperature
+      description: Creativity (0.0 = precise, 1.0 = creative).
+      required: false
+      selector:
+        number:
+          min: 0
+          max: 2
+          step: 0.1
+    top_p:
+      name: Top P
+      description: Nucleus sampling (determines diversity). Recommended 1.0 for logic/code.
+      required: false
+      selector:
+        number:
+          min: 0
+          max: 1
+          step: 0.05
+    model:
+      name: Model
+      description: Vision model to use. Defaults to a Grok model with vision capabilities.
+      required: false
+      selector:
+        text:
 
-reload_pricing:
-  name: Reload Pricing Data
-  description: >
-    Manually triggers an update of the xAI model pricing information from the API.
-    This will fetch the latest pricing for all models and update the pricing sensors.
-  fields: {}
-                  
-reset_token_stats:
-  name: Reset Token Statistics
-  description: Reset all token sensors for the entire xAI Conversation integration. Useful when you reload credits on xAI and want to track consumption from that point.

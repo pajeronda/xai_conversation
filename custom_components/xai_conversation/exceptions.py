@@ -37,42 +37,39 @@ class XAIConnectionError(HA_HomeAssistantError):
 
         # Map gRPC status codes to user-friendly messages
         if status_code == grpc.StatusCode.UNAUTHENTICATED:
-            LOGGER.error("Authentication failed: Invalid API key")
+            LOGGER.error("[xai] auth failed: invalid API key")
             message = (
                 "Authentication failed. Please check your xAI API key configuration."
             )
         elif status_code == grpc.StatusCode.PERMISSION_DENIED:
-            LOGGER.error("Permission denied: API key lacks required permissions")
+            LOGGER.error("[xai] permission denied")
             message = "Permission denied. Your API key may not have the required permissions for this operation."
         elif status_code == grpc.StatusCode.RESOURCE_EXHAUSTED:
-            LOGGER.warning("Rate limit or quota exceeded")
+            LOGGER.warning("[xai] rate limit exceeded")
             message = "Rate limit exceeded or quota depleted. Please try again later or check your xAI account usage."
         elif status_code == grpc.StatusCode.UNAVAILABLE:
-            LOGGER.warning("xAI service temporarily unavailable")
+            LOGGER.warning("[xai] service unavailable")
             message = "The xAI service is temporarily unavailable. Please try again in a few moments."
         elif status_code == grpc.StatusCode.DEADLINE_EXCEEDED:
-            LOGGER.warning("Request timeout")
+            LOGGER.warning("[xai] timeout")
             message = "Request timed out. The operation took longer than expected. Please try again."
         elif status_code == grpc.StatusCode.INTERNAL:
-            LOGGER.error("Internal server error from xAI API")
+            LOGGER.error("[xai] internal server error")
             message = "Internal server error occurred. Please try again later."
         elif status_code == grpc.StatusCode.INVALID_ARGUMENT:
-            LOGGER.error("Invalid request parameters: %s", error_details)
+            LOGGER.error("[xai] invalid params: %s", error_details)
             message = "Invalid request parameters. Please check your configuration."
         elif status_code == grpc.StatusCode.NOT_FOUND:
-            LOGGER.error("Model or endpoint not found: %s", error_details)
+            LOGGER.error("[xai] not found: %s", error_details)
             message = "The requested model or endpoint was not found. Please check your model configuration."
         elif status_code == grpc.StatusCode.CANCELLED:
-            LOGGER.info("Request was cancelled")
+            LOGGER.debug("[xai] request cancelled")
             message = "The request was cancelled. Please try again."
         elif status_code == grpc.StatusCode.DATA_LOSS:
-            LOGGER.error(
-                "Data loss error (likely failed to fetch image from URL): %s",
-                error_details,
-            )
+            LOGGER.error("[xai] data loss (image fetch failed): %s", error_details)
             message = "Failed to fetch image from provided URL. Please check the image URL is accessible."
         else:
-            LOGGER.error("Unknown gRPC error: %s - %s", status_code, error_details)
+            LOGGER.error("[xai] gRPC error: %s - %s", status_code, error_details)
             message = (
                 f"An error occurred while communicating with xAI: {status_code.name}"
             )
@@ -170,7 +167,7 @@ def handle_api_error(
     # Handle gRPC errors specifically
     if isinstance(err, grpc.RpcError):
         LOGGER.error(
-            "gRPC error in %s after %.2f seconds: %s (status: %s)",
+            "[xai] gRPC error %s (%.2fs): %s [%s]",
             context,
             elapsed,
             err.details(),
@@ -183,7 +180,7 @@ def handle_api_error(
 
     if "Tool has no" in error_msg and "field" in error_msg:
         LOGGER.error(
-            "Tool validation error in %s after %.2f seconds: %s",
+            "[xai] tool validation error %s (%.2fs): %s",
             context,
             elapsed,
             err,
@@ -195,25 +192,17 @@ def handle_api_error(
         )
     elif "grpc" in error_msg.lower() or "channel" in error_msg.lower():
         LOGGER.error(
-            "gRPC communication error in %s after %.2f seconds: %s",
-            context,
-            elapsed,
-            err,
-            exc_info=True,
+            "[xai] gRPC comm error %s (%.2fs): %s", context, elapsed, err, exc_info=True
         )
         raise_communication_error()
     elif "authentication" in error_msg.lower() or "api_key" in error_msg.lower():
         LOGGER.error(
-            "Authentication error in %s after %.2f seconds: %s",
-            context,
-            elapsed,
-            err,
-            exc_info=True,
+            "[xai] auth error %s (%.2fs): %s", context, elapsed, err, exc_info=True
         )
         raise_auth_error()
     else:
         LOGGER.error(
-            "Unexpected error in %s after %.2f seconds: %s",
+            "[xai] unexpected error %s (%.2fs): %s",
             context,
             elapsed,
             err,
@@ -222,6 +211,25 @@ def handle_api_error(
         raise_generic_error(
             f"An unexpected error occurred during {context}: {error_msg}"
         )
+
+
+def is_not_found_error(err: Exception) -> bool:
+    """Check if exception is a gRPC NOT_FOUND error (stateless context expired)."""
+    try:
+        from grpc import StatusCode
+        from grpc._channel import _InactiveRpcError
+
+        try:
+            from grpc.aio import AioRpcError
+        except ImportError:
+            AioRpcError = _InactiveRpcError  # Fallback
+
+        if isinstance(err, (_InactiveRpcError, AioRpcError)):
+            return err.code() == StatusCode.NOT_FOUND
+    except ImportError:
+        pass
+
+    return False
 
 
 async def handle_response_not_found_error(
@@ -247,24 +255,7 @@ async def handle_response_not_found_error(
     Returns:
         True if should retry (cleared memory), False if should re-raise error
     """
-    # Check if it's a gRPC NOT_FOUND error (handles both sync and async)
-    is_not_found = False
-    try:
-        from grpc import StatusCode
-        from grpc._channel import _InactiveRpcError
-
-        try:
-            from grpc.aio import AioRpcError
-        except ImportError:
-            AioRpcError = _InactiveRpcError  # Fallback
-
-        if isinstance(err, (_InactiveRpcError, AioRpcError)):
-            if err.code() == StatusCode.NOT_FOUND:
-                is_not_found = True
-    except ImportError:
-        pass
-
-    if not is_not_found:
+    if not is_not_found_error(err):
         return False
 
     # Only retry on first attempt
@@ -272,25 +263,20 @@ async def handle_response_not_found_error(
         return False
 
     # Log the retry
-    context_prefix = f"[Context: {context_id}] " if context_id else ""
-    LOGGER.warning(
-        "%sConversation context not found on xAI server (expired response_id). "
-        "Clearing local memory and retrying with fresh conversation.",
-        context_prefix,
-    )
+    context_info = f" ctx={context_id}" if context_id else ""
+    LOGGER.info("[xai] NOT_FOUND: expired response_id%s, clearing memory", context_info)
 
-    # Clear memory by key if available (assuming MemoryManager is used)
-    if conv_key:
+    # Clear memory by key if available
+    if conv_key and memory:
         try:
-            await memory.async_clear_key(conv_key)
-            LOGGER.debug("Cleared expired memory for conv_key=%s", conv_key)
-            return True
+            await memory.async_delete(key=conv_key)
+            LOGGER.debug("[xai] memory cleared: key=%s", conv_key)
         except Exception as clear_err:
             LOGGER.warning(
-                "Failed to clear memory for conv_key=%s: %s", conv_key, clear_err
+                "[xai] clear memory failed: key=%s err=%s", conv_key, clear_err
             )
 
-    return True  # Signal to retry even if clear specific key failed, hoping a fresh start helps
+    return True  # Signal to retry
 
 
 # ==============================================================================
@@ -410,6 +396,7 @@ __all__ = [
     "raise_config_not_ready",
     "handle_api_error",
     "handle_response_not_found_error",
+    "is_not_found_error",
     # Re-exported HA exceptions
     "HA_HomeAssistantError",
     "HA_ConfigEntryNotReady",

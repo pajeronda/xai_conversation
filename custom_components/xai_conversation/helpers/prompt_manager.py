@@ -1,213 +1,192 @@
-"Prompt management for xAI conversation."
+"""Prompt management for xAI conversation."""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from ..const import (
+    CHAT_MODE_CHATONLY,
+    CHAT_MODE_PIPELINE,
+    CHAT_MODE_TOOLS,
+    PROMPT_SEARCH_USAGE,
+    CONF_AI_TASK_PROMPT,
     CONF_ALLOW_SMART_HOME_CONTROL,
     CONF_ASSISTANT_NAME,
-    CONF_PROMPT,
-    CONF_PROMPT_TOOLS,
-    CONF_PROMPT_CODE,
-    CONF_PROMPT_PIPELINE,
     CONF_STORE_MESSAGES,
-    DEFAULT_GROK_CODE_FAST_NAME,
+    CONF_ZDR,
+    CONF_LIVE_SEARCH,
+    CONF_PROMPT_PIPELINE,
+    CONF_PROMPT_TOOLS,
     GROK_AI_TASK_PROMPT,
-    VISION_ANALYSIS_PROMPT,
-    PROMPT_CODE_OUTPUT_FORMAT,
-    PROMPT_CODE_ROLE,
-    PROMPT_CUSTOM_RULES,
+    LIVE_SEARCH_OFF,
     PROMPT_IDENTITY,
-    PROMPT_MEMORY_CLIENTSIDE,
     PROMPT_MEMORY_SERVERSIDE,
-    PROMPT_MODE_TOOLS,
+    PROMPT_MEMORY_ZDR,
+    PROMPT_MEMORY_CLIENTSIDE,
+    PROMPT_ROLE_BASE,
     PROMPT_NO_CONTROL,
-    PROMPT_OUTPUT_FORMAT,
+    PROMPT_SMART_HOME_RECOGNITION,
+    PROMPT_CUSTOM_RULES,
     PROMPT_PIPELINE_DECISION_LOGIC,
     PROMPT_PIPELINE_EXAMPLES,
-    PROMPT_ROLE_BASE,
-    PROMPT_SMART_HOME_RECOGNITION,
-    RECOMMENDED_ASSISTANT_NAME,
+    PROMPT_MODE_TOOLS,
+    PROMPT_OUTPUT_FORMAT,
+    CONF_VISION_PROMPT,
+    VISION_ANALYSIS_PROMPT,
 )
-from .utils import hash_text, build_session_context_info
+from .utils import hash_text
 
 if TYPE_CHECKING:
-    from homeassistant.core import HomeAssistant
-
-
-def build_system_prompt(
-    entity: Any | None = None,
-    mode: str = "tools",
-    hass: HomeAssistant | None = None,
-    config: dict | None = None,
-) -> str:
-    """Helper function to build a system prompt with a single call.
-    Can be called as build_system_prompt(entity, mode=mode).
-    """
-    # 1. Resolve Hass
-    active_hass = hass or (entity.hass if entity else None)
-    if not active_hass:
-        raise ValueError("HomeAssistant instance required to build prompt")
-
-    # 2. Resolve Config
-    active_config = config
-    if not active_config and entity and hasattr(entity, "gateway") and entity.gateway:
-        active_config = entity.gateway.get_service_config(
-            "conversation", entity.subentry.subentry_id
-        )
-
-    # 3. Build Prompt
-    manager = PromptManager(config=active_config or {}, mode=mode)
-    return manager.build_system_prompt(active_hass, entity)
+    pass
 
 
 class PromptManager:
-    """Centralized, stateless prompt management."""
+    """Autonomous prompt management - builds and caches prompts."""
 
-    def __init__(self, config: dict, mode: str):
-        """Initialize PromptManager.
+    def __init__(self):
+        """Initialize shared prompt manager.
+
+        Configuration and context are now passed per request to ensure pure,
+        stateless operation and integration-level sharing.
+        """
+        self._cache: dict[str, str] = {}
+        self._hash_cache: dict[str, str] = {}
+
+    # ==========================================================================
+    # PUBLIC API - Gateway chiede solo MODE
+    # ==========================================================================
+
+    def get_prompt(self, mode: str, config: dict, orchestrator=None) -> str:
+        """Get prompt for mode. Cached.
 
         Args:
-            config: Configuration dictionary (merged data and options).
-            mode: "pipeline", "tools", or "code".
+            mode: "pipeline", "tools", "chatonly", "ai_task", "vision"
+            config: Configuration dict to use.
+            orchestrator: Optional ToolOrchestrator for static context.
         """
-        self.config = config
-        self.mode = mode
+        cache_key = self._get_cache_key(mode, config, orchestrator)
+        if cache_key in self._cache:
+            return self._cache[cache_key]
 
-        if self.mode not in ("pipeline", "tools", "code", "ai_task", "vision"):
-            raise ValueError(
-                f"Invalid mode '{self.mode}', must be 'pipeline', 'tools', 'code', 'ai_task', or 'vision'"
-            )
+        prompt = self._build_prompt(mode, config, orchestrator)
+        self._cache[cache_key] = prompt
+        return prompt
 
-    def build_system_prompt(
-        self,
-        hass: HomeAssistant,
-        entity: Any | None = None,
+    def get_prompt_hash(self, mode: str, config: dict, orchestrator=None) -> str:
+        """Get hash of prompt for memory keys. Cached."""
+        cache_key = self._get_cache_key(mode, config, orchestrator)
+        if cache_key in self._hash_cache:
+            return self._hash_cache[cache_key]
+
+        prompt = self.get_prompt(mode, config, orchestrator)
+        prompt_hash = hash_text(prompt)
+        self._hash_cache[cache_key] = prompt_hash
+        return prompt_hash
+
+    # ==========================================================================
+    # INTERNAL - Build prompts autonomously
+    # ==========================================================================
+
+    def _get_cache_key(self, mode: str, config: dict, orchestrator=None) -> str:
+        """Generate cache key based on mode and variable components."""
+        components = [
+            mode,
+            config.get(CONF_ASSISTANT_NAME, ""),
+            str(config.get(CONF_STORE_MESSAGES, False)),
+            str(config.get(CONF_ALLOW_SMART_HOME_CONTROL, True)),
+            str(config.get(CONF_LIVE_SEARCH, LIVE_SEARCH_OFF) != LIVE_SEARCH_OFF),
+            config.get(CONF_AI_TASK_PROMPT, ""),
+            self._get_user_instructions(mode, config),
+        ]
+
+        # For tools mode, include CSV hash (already cached in orchestrator)
+        if mode == CHAT_MODE_TOOLS and orchestrator:
+            csv_content = orchestrator.get_static_context_csv()
+            components.append(csv_content)
+
+        return f"{mode}:{hash_text('|'.join(components))[:12]}"
+
+    def _build_prompt(self, mode: str, config: dict, orchestrator=None) -> str:
+        """Build prompt for mode."""
+        if mode == "ai_task":
+            return config.get(CONF_AI_TASK_PROMPT) or GROK_AI_TASK_PROMPT
+
+        if mode == "vision":
+            return config.get(CONF_VISION_PROMPT) or VISION_ANALYSIS_PROMPT
+
+        if mode in (CHAT_MODE_TOOLS, CHAT_MODE_PIPELINE, CHAT_MODE_CHATONLY):
+            return self._build_conversation_prompt(mode, config, orchestrator)
+
+        return ""
+
+    def _build_conversation_prompt(
+        self, mode: str, config: dict, orchestrator=None
     ) -> str:
-        """Build the complete system prompt including dynamic context.
-
-        Args:
-            hass: Home Assistant instance (for time/location context).
-            entity: The entity instance, used to derive the orchestrator in tools mode.
-        """
-        # 1. Get dynamic context if needed
-        static_context = ""
-
-        if self.mode == "tools" and entity and hasattr(entity, "_tools_processor"):
-            orchestrator = entity._tools_processor._orchestrator
-            static_context = orchestrator.get_static_context_csv()
-
-        # 2. Build base prompt content
-        base_prompt = self._build_base_prompt_content(static_context)
-
-        # 3. Append session context (time, location) - always dynamic
-        session_context = build_session_context_info(hass)
-
-        return f"{base_prompt}\n\n{session_context}".strip()
-
-    def build_base_prompt_with_user_instructions(self) -> str:
-        """Build the base system prompt for hash calculation.
-
-        Excludes dynamic context (time, location) and tool definitions
-        to ensure a stable hash for memory keys.
-        """
-        return self._build_base_prompt_content(static_context="")
-
-    @staticmethod
-    def get_stable_hash_from_prompt(prompt: str) -> str:
-        """Get the hash of a given prompt string."""
-        return hash_text(prompt)
-
-    def get_stable_hash(self) -> str:
-        """Get the hash of the stable base prompt."""
-        return self.get_stable_hash_from_prompt(
-            self.build_base_prompt_with_user_instructions()
-        )
-
-    def _build_base_prompt_content(
-        self,
-        static_context: str,
-    ) -> str:
-        """Build the core logical blocks of the prompt."""
-        # AI Task mode: return dedicated prompt only (no dynamic context)
-        if self.mode == "ai_task":
-            return GROK_AI_TASK_PROMPT
-
-        # Vision mode: return dedicated vision prompt
-        if self.mode == "vision":
-            return VISION_ANALYSIS_PROMPT
-
+        """Build prompt for tools/pipeline/chatonly modes."""
         blocks = []
+        instructions = self._get_user_instructions(mode, config)
 
         # --- A. Identity ---
-        name_key = CONF_ASSISTANT_NAME
-        default_name = (
-            DEFAULT_GROK_CODE_FAST_NAME
-            if self.mode == "code"
-            else RECOMMENDED_ASSISTANT_NAME
-        )
-        assistant_name = self.config.get(name_key, default_name)
-        blocks.append(PROMPT_IDENTITY.format(assistant_name=assistant_name))
+        assistant_name = config.get(CONF_ASSISTANT_NAME)
+        if assistant_name:
+            blocks.append(PROMPT_IDENTITY.format(assistant_name=assistant_name))
 
-        # --- B. Base Role (Conversation modes only) ---
-        if self.mode in ("pipeline", "tools"):
-            blocks.append(PROMPT_ROLE_BASE)
-
-        # --- C. Memory Management ---
-        store_messages = self.config.get(CONF_STORE_MESSAGES, True)
-        if store_messages:
+        # --- B. Memory Management ---
+        if config.get(CONF_STORE_MESSAGES):
             blocks.append(PROMPT_MEMORY_SERVERSIDE)
-        elif self.mode in ("tools", "code"):
+        elif config.get(CONF_ZDR):
+            blocks.append(PROMPT_MEMORY_ZDR)
+        else:
             blocks.append(PROMPT_MEMORY_CLIENTSIDE)
 
-        # --- D. Mode-Specific Logic ---
-        allow_control = self.config.get(CONF_ALLOW_SMART_HOME_CONTROL, True)
-        user_instructions = self._get_user_instructions()
+        # --- C. Base Role ---
+        blocks.append(PROMPT_ROLE_BASE)
 
-        if self.mode == "code":
-            blocks.append(PROMPT_CODE_ROLE)
-            if user_instructions:
-                blocks.append(self._format_user_instructions(user_instructions))
-            blocks.append(PROMPT_CODE_OUTPUT_FORMAT)
+        # --- D. Mode-specific content ---
+        allow_control = config.get(CONF_ALLOW_SMART_HOME_CONTROL, True)
 
-        elif not allow_control:
+        if not allow_control:
+            # Universal block when control is disabled across all modes
             blocks.append(PROMPT_NO_CONTROL)
-            if user_instructions:
-                blocks.append(self._format_user_instructions(user_instructions))
-
-        elif self.mode == "pipeline":
+        elif mode == CHAT_MODE_PIPELINE:
             blocks.append(PROMPT_SMART_HOME_RECOGNITION)
-            if user_instructions:
+            if instructions:
                 blocks.append(PROMPT_CUSTOM_RULES)
-            blocks.append(PROMPT_PIPELINE_DECISION_LOGIC)
-            blocks.append(PROMPT_PIPELINE_EXAMPLES)
-            # Legacy behavior: append user instructions at the end for pipeline too
-            if user_instructions:
-                blocks.append(self._format_user_instructions(user_instructions))
-            blocks.append(PROMPT_OUTPUT_FORMAT)
-
-        elif self.mode == "tools":
-            blocks.append(
-                PROMPT_MODE_TOOLS.format(
-                    static_context=static_context,
-                )
+            blocks.extend(
+                [
+                    PROMPT_PIPELINE_DECISION_LOGIC.strip(),
+                    PROMPT_PIPELINE_EXAMPLES.strip(),
+                ]
             )
-            if user_instructions:
-                blocks.append(self._format_user_instructions(user_instructions))
-            blocks.append(PROMPT_OUTPUT_FORMAT)
+        elif mode == CHAT_MODE_TOOLS:
+            static_context = self._get_static_context(orchestrator)
+            blocks.append(
+                PROMPT_MODE_TOOLS.format(static_context=static_context).strip()
+            )
+
+        # --- E. User Instructions ---
+        if instructions:
+            blocks.append(f"# --- USER INSTRUCTIONS ---\n{instructions}")
+
+        # --- F. Search Usage Rule ---
+        if config.get(CONF_LIVE_SEARCH, LIVE_SEARCH_OFF) != LIVE_SEARCH_OFF:
+            blocks.append(PROMPT_SEARCH_USAGE)
+
+        # --- G. Output Formatting ---
+        blocks.append(PROMPT_OUTPUT_FORMAT)
 
         return "\n\n".join(blocks).strip()
 
-    def _get_user_instructions(self) -> str:
-        """Retrieve mode-specific user instructions."""
-        if self.mode == "pipeline":
-            return self.config.get(CONF_PROMPT_PIPELINE, "")
-        elif self.mode == "code":
-            return self.config.get(CONF_PROMPT_CODE, "")
-        # Tools mode (fallback to old CONF_PROMPT for backward compatibility)
-        return self.config.get(CONF_PROMPT_TOOLS, self.config.get(CONF_PROMPT, ""))
+    def _get_user_instructions(self, mode: str, config: dict) -> str:
+        """Get user instructions from config."""
+        if mode == CHAT_MODE_PIPELINE:
+            return config.get(CONF_PROMPT_PIPELINE, "").strip()
+        if mode == CHAT_MODE_TOOLS:
+            return config.get(CONF_PROMPT_TOOLS, "").strip()
+        return ""
 
-    def _format_user_instructions(self, instructions: str) -> str:
-        """Format user instructions with a standard header."""
-        return f"# --- USER INSTRUCTIONS (appended to default) ---\n{instructions}"
+    def _get_static_context(self, orchestrator=None) -> str:
+        """Get static context CSV from ToolOrchestrator."""
+        if orchestrator:
+            return orchestrator.get_static_context_csv()
+        return ""

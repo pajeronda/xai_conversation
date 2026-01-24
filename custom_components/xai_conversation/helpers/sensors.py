@@ -1,10 +1,7 @@
-"""Token statistics manager for xAI Conversation integration - V2 Simplified.
+"""Token statistics manager for xAI Conversation integration.
 
-This module provides a clean, focused implementation of token tracking:
-- Single responsibility: manage token statistics and pricing storage
-- No sensor logic mixed in
-- Clear separation between data and presentation
-- Simplified concurrency model
+Manages token statistics, pricing storage, and concurrent usage tracking.
+Separates data management from sensor presentation logic.
 """
 
 from __future__ import annotations
@@ -16,35 +13,25 @@ from homeassistant.util import dt as dt_util
 
 from ..const import (
     CONF_TOKENS_PER_MILLION,
-    CONF_COST_PER_TOOL_CALL,
+    CONF_XAI_PRICING_CONVERSION_FACTOR,
+    DEFAULT_TOOL_PRICE_RAW,
     LOGGER,
-    RECOMMENDED_TOKENS_PER_MILLION,
-    RECOMMENDED_COST_PER_TOOL_CALL,
-    TOOL_PRICING,
 )
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
-    from .. import XAIConfigEntry
+    from homeassistant.config_entries import ConfigEntry
 
 
 class TokenStats:
     """Central storage and calculator for token statistics and costs.
 
-    This class is responsible for:
-    - Accumulating usage data from services (fire-and-forget).
-    - Storing pricing data (pushed by XAIModelManager).
-    - Managing a persistent list of known models for new model detection.
-    - Calculating aggregated statistics and costs.
-    - Persisting data to disk.
-    - Notifying listeners (sensors) of changes.
-
-    NOTE: This class is NOT responsible for fetching model data or detecting new models.
-    That responsibility lies with XAIModelManager.
+    Accumulates usage data, stores pricing, manages known models list,
+    and handles persistence and change notifications.
     """
 
     def __init__(
-        self, hass: HomeAssistant, storage_path: str, entry: XAIConfigEntry
+        self, hass: HomeAssistant, storage_path: str, entry: ConfigEntry
     ) -> None:
         """Initialize token statistics manager.
 
@@ -57,7 +44,7 @@ class TokenStats:
 
         self.hass = hass
         self.entry = entry
-        self._store = Store(hass, 1, storage_path)
+        self._store = Store(hass, 2, storage_path, minor_version=0)
         self._data: dict = {}
         self._loaded = False
         self._dirty = False
@@ -66,28 +53,6 @@ class TokenStats:
 
         # Track background tasks to prevent garbage collection
         self._background_tasks: set = set()
-
-    def _get_tokens_per_million(self) -> int:
-        """Get tokens per million from sensors subentry config."""
-        for subentry in self.entry.subentries.values():
-            if subentry.subentry_type == "sensors":
-                return int(
-                    subentry.data.get(
-                        CONF_TOKENS_PER_MILLION, RECOMMENDED_TOKENS_PER_MILLION
-                    )
-                )
-        return RECOMMENDED_TOKENS_PER_MILLION
-
-    def _get_cost_per_tool_call(self) -> float:
-        """Get cost per tool call from sensors subentry config."""
-        for subentry in self.entry.subentries.values():
-            if subentry.subentry_type == "sensors":
-                return float(
-                    subentry.data.get(
-                        CONF_COST_PER_TOOL_CALL, RECOMMENDED_COST_PER_TOOL_CALL
-                    )
-                )
-        return RECOMMENDED_COST_PER_TOOL_CALL
 
     # =========================================================================
     # LISTENER MANAGEMENT (Observer Pattern)
@@ -118,7 +83,7 @@ class TokenStats:
                 if asyncio.iscoroutine(res):
                     self.hass.async_create_task(res)
             except Exception as err:
-                LOGGER.error("Error notifying token stats listener: %s", err)
+                LOGGER.error("[stats] listener notification failed: %s", err)
 
     # =========================================================================
     # INTERNAL: STORAGE MANAGEMENT
@@ -145,9 +110,7 @@ class TokenStats:
                     if old_acknowledged:
                         current_known = self._data.get("known_models", [])
                         if not current_known:
-                            LOGGER.info(
-                                "Migrating legacy known models data to V2 format..."
-                            )
+                            LOGGER.debug("[stats] migrating legacy known models to V2")
                             self._data["known_models"] = list(
                                 set(old_acknowledged)
                             )  # deduplicate
@@ -170,9 +133,8 @@ class TokenStats:
                 self._data["processed_ids"] = []
 
             self._loaded = True
-            LOGGER.debug("Loaded token stats from storage")
         except Exception as err:
-            LOGGER.warning("Failed to load token stats storage: %s", err)
+            LOGGER.warning("[stats] load failed: %s", err)
             self._data = {}
             # Ensure critical fields exist even if load failed
             self._data["known_models"] = []
@@ -187,9 +149,9 @@ class TokenStats:
         try:
             await self._store.async_save(self._data)
             self._dirty = False
-            LOGGER.debug("Token stats flushed to disk")
+            LOGGER.debug("[stats] flushed to disk")
         except Exception as err:
-            LOGGER.error("Failed to save token stats: %s", err)
+            LOGGER.error("[stats] save failed: %s", err)
 
     # =========================================================================
     # PUBLIC API: USAGE TRACKING
@@ -206,17 +168,18 @@ class TokenStats:
         server_side_tool_usage: dict | None = None,
         num_sources_used: int = 0,
         response_id: str | None = None,
+        reasoning_tokens: int = 0,
     ) -> None:
         """Update token usage statistics (fire-and-forget).
 
         This method returns immediately without blocking the caller.
         The actual processing happens asynchronously in the background.
 
-        CRITICAL: This ensures conversation/ai_task/code_fast services
+        CRITICAL: This ensures conversation/ai_task services
         are NOT delayed by token tracking I/O operations.
 
         Args:
-            service_type: "conversation", "ai_task", or "code_fast"
+            service_type: "conversation", "ai_task"
             model: Model name
             usage: xAI response usage object or dict
             mode: "pipeline" or "tools" (conversation only)
@@ -241,6 +204,7 @@ class TokenStats:
                 server_side_tool_usage,
                 num_sources_used,
                 response_id,
+                reasoning_tokens,
             )
         )
 
@@ -259,6 +223,7 @@ class TokenStats:
         server_side_tool_usage: dict | None = None,
         num_sources_used: int = 0,
         response_id: str | None = None,
+        reasoning_tokens: int = 0,
     ) -> None:
         """Internal: Process usage update with lock and I/O (runs in background)."""
         try:
@@ -271,10 +236,6 @@ class TokenStats:
                         self._data["processed_ids"] = []
 
                     if response_id in self._data["processed_ids"]:
-                        LOGGER.debug(
-                            "TokenStats: Skipping duplicate response_id: %s",
-                            response_id,
-                        )
                         return
 
                     # Add to processed list and keep it manageable (max 100)
@@ -298,6 +259,7 @@ class TokenStats:
                     mode=mode,
                     is_fallback=is_fallback,
                     store_messages=store_messages,
+                    reasoning_tokens=reasoning_tokens,
                 )
 
                 # 2. Update aggregated stats
@@ -309,6 +271,7 @@ class TokenStats:
                     usage,
                     model,
                     is_service_stats=False,
+                    reasoning_tokens=reasoning_tokens,
                 )
 
                 # 3. Update Server-Side Tool Stats (Accumulation)
@@ -369,13 +332,6 @@ class TokenStats:
                                 count
                             )
 
-                    LOGGER.debug(
-                        "Tracked server tool usage: %s, sources=%d (service=%s)",
-                        server_side_tool_usage,
-                        num_sources_used,
-                        service_type,
-                    )
-
                 # 4. Mark as dirty (write-behind)
                 self._dirty = True
 
@@ -384,7 +340,7 @@ class TokenStats:
 
         except Exception as err:
             LOGGER.error(
-                "Failed to process token usage update for %s/%s: %s",
+                "[stats] update failed %s/%s: %s",
                 service_type,
                 model,
                 err,
@@ -400,6 +356,7 @@ class TokenStats:
         mode: str = "pipeline",
         is_fallback: bool = False,
         store_messages: bool = True,
+        reasoning_tokens: int = 0,
     ) -> None:
         """Calculate and accumulate stats into a dictionary.
 
@@ -416,7 +373,14 @@ class TokenStats:
         completion = self._get_token_count(usage, "completion_tokens")
         prompt = self._get_token_count(usage, "prompt_tokens")
         cached = self._get_token_count(usage, "cached_prompt_text_tokens")
-        reasoning = self._get_token_count(usage, "reasoning_tokens")
+        reasoning = reasoning_tokens
+        if reasoning == 0:
+            reasoning = self._get_token_count(usage, "reasoning_tokens")
+            if reasoning == 0:
+                # Try nested structure (xAI / OpenAI standard)
+                details = getattr(usage, "completion_tokens_details", None)
+                if details:
+                    reasoning = getattr(details, "reasoning_tokens", 0) or 0
 
         # Initialize counters if missing
         defaults = {
@@ -521,14 +485,14 @@ class TokenStats:
         return int(val) if val is not None else 0
 
     # =========================================================================
-    # PUBLIC API: GETTERS (Read-Only)
+    # PUBLIC API: STATISTICS, PRICING & COST ANALYSIS
     # =========================================================================
 
     async def get_service_stats(self, service_type: str) -> dict:
         """Get stats for a specific service.
 
         Args:
-            service_type: "conversation", "ai_task", or "code_fast"
+            service_type: "conversation" or "ai_task"
 
         Returns:
             Dictionary with service-specific statistics
@@ -560,11 +524,11 @@ class TokenStats:
             await self._ensure_loaded()
             return self._data.get("server_tools", {}).copy()
 
-    async def get_pricing(self, model: str, price_type: str) -> float | None:
+    async def get_pricing(self, model_name: str, price_type: str) -> float | None:
         """Get pricing data for a model.
 
         Args:
-            model: Model name
+            model_name: Model name
             price_type: "input_price", "output_price", or "cached_input_price"
 
         Returns:
@@ -572,28 +536,21 @@ class TokenStats:
         """
         async with self._lock:
             await self._ensure_loaded()
-            return self._data.get("pricing_data", {}).get(model, {}).get(price_type)
-
-    async def get_all_pricing_data(self) -> dict:
-        """Get all stored pricing data.
-
-        Returns:
-            Dictionary mapping model_name -> {price_type: price}
-        """
-        async with self._lock:
-            await self._ensure_loaded()
-            return self._data.get("pricing_data", {}).copy()
+            return (
+                self._data.get("pricing_data", {}).get(model_name, {}).get(price_type)
+            )
 
     async def get_costs(self) -> dict:
-        """Calculate and return cost data ready for presentation.
+        """Calculate and return raw cost data ready for presentation.
 
-        Calculates costs on-demand based on current tokens and pricing.
-        This ensures costs are always up-to-date even if pricing changes.
+        Accumulates raw totals (units * raw_price) without conversion.
+        Conversion to USD happens in the sensor layer.
 
         Returns:
             Dictionary with:
-                - total_cost: float (USD)
-                - cost_by_model: dict with per-model breakdown
+                - total_raw: float
+                - tool_raw: float
+                - cost_by_model: dict with per-model raw breakdown
                 - tokens_by_model: dict with token counts
         """
         async with self._lock:
@@ -606,61 +563,70 @@ class TokenStats:
             # Get pricing data
             pricing_data = self._data.get("pricing_data", {})
 
-            # Calculate costs
-            total_cost = 0.0
+            # Calculate raw costs (Units * Raw API Price)
+            total_raw = 0.0
             cost_breakdown = {}
-
-            # Get tokens_per_million from config
-            tokens_per_million = self._get_tokens_per_million()
 
             for model, counts in tokens_by_model.items():
                 model_pricing = pricing_data.get(model, {})
+
+                # Use RAW API VALUES directly
                 input_price = model_pricing.get("input_price", 0.0)
                 output_price = model_pricing.get("output_price", 0.0)
-                cached_price = model_pricing.get("cached_input_price", input_price)
+                cached_price = model_pricing.get("cached_input_price", 0.0)
+                if cached_price == 0:
+                    cached_price = input_price
 
-                # Calculate costs per type (per million tokens)
-                c_prompt = (counts.get("prompt", 0) / tokens_per_million) * input_price
-                c_cached = (counts.get("cached", 0) / tokens_per_million) * cached_price
-                c_completion = (
-                    counts.get("completion", 0) / tokens_per_million
-                ) * output_price
+                # Calculate raw values per type
+                r_prompt = counts.get("prompt", 0) * input_price
+                r_cached = counts.get("cached", 0) * cached_price
+                r_completion = counts.get("completion", 0) * output_price
 
-                model_total = c_prompt + c_cached + c_completion
-                total_cost += model_total
+                model_total_raw = r_prompt + r_cached + r_completion
+                total_raw += model_total_raw
 
                 cost_breakdown[model] = {
-                    "prompt_cost": round(c_prompt, 4),
-                    "cached_cost": round(c_cached, 4),
-                    "completion_cost": round(c_completion, 4),
-                    "total_cost": round(model_total, 4),
+                    "prompt_raw": r_prompt,
+                    "cached_raw": r_cached,
+                    "completion_raw": r_completion,
+                    "total_raw": model_total_raw,
                     "tokens": counts.copy(),
+                    "pricing_raw": {
+                        "input": input_price,
+                        "output": output_price,
+                        "cached": cached_price,
+                    },
                 }
 
-            # Calculate Tool Costs (Invocation based with per-tool pricing)
+            # Calculate Tool Costs (Raw based on per-tool pricing)
             server_tools = self._data.get("server_tools", {})
             by_tool = server_tools.get("by_tool", {})
-
-            # Calculate cost for each tool type using official pricing
-            tool_cost = 0.0
+            tool_raw = 0.0
             tool_cost_breakdown = {}
 
+            # Search price from API is also "per 1M calls" in raw units
+            dynamic_search_price_raw = pricing_data.get("grok-2-1212", {}).get(
+                "search_price", 0.0
+            )
+
             for tool_name, invocations in by_tool.items():
-                # Get price for this specific tool (fallback to default if not in map)
-                price = TOOL_PRICING.get(tool_name, self._get_cost_per_tool_call())
-                cost = invocations * price
-                tool_cost += cost
+                price_raw = 0.0
+                if tool_name in ["web_search", "x_search"]:
+                    price_raw = dynamic_search_price_raw or DEFAULT_TOOL_PRICE_RAW
+
+                c_raw = invocations * price_raw
+                tool_raw += c_raw
                 tool_cost_breakdown[tool_name] = {
                     "invocations": invocations,
-                    "cost_per_call": price,
-                    "total_cost": round(cost, 4),
+                    "price_raw": price_raw,
+                    "total_raw": c_raw,
                 }
 
-            total_cost += tool_cost
+            total_raw += tool_raw
 
             return {
-                "total_cost": round(total_cost, 4),
-                "tool_cost": round(tool_cost, 4),
+                "total_raw": total_raw,
+                "tool_raw": tool_raw,
                 "tool_cost_breakdown": tool_cost_breakdown,
                 "cost_by_model": cost_breakdown,
                 "tokens_by_model": tokens_by_model.copy(),
@@ -692,37 +658,25 @@ class TokenStats:
                 await self.async_flush()
         self._notify_listeners()
 
+    async def set_known_models(self, models: list[str]) -> None:
+        """Overwrite the list of known models and persist to disk.
+
+        Args:
+            models: The exact list of model names to store.
+        """
+        async with self._lock:
+            await self._ensure_loaded()
+            self._data["known_models"] = sorted(list(set(models)))
+            self._dirty = True
+            await self.async_flush()
+        self._notify_listeners()
+
     # =========================================================================
     # PUBLIC API: SETTERS (Admin Operations)
     # =========================================================================
 
-    async def save_pricing(self, model: str, price_type: str, price: float) -> None:
-        """Save pricing data for a model.
-
-        Args:
-            model: Model name
-            price_type: "input_price", "output_price", or "cached_input_price"
-            price: Price per million tokens
-        """
-        async with self._lock:
-            await self._ensure_loaded()
-            if "pricing_data" not in self._data:
-                self._data["pricing_data"] = {}
-            if model not in self._data["pricing_data"]:
-                self._data["pricing_data"][model] = {}
-
-            self._data["pricing_data"][model][price_type] = price
-            self._data["pricing_data"][model]["last_updated"] = (
-                dt_util.now().timestamp()
-            )
-
-            self._dirty = True
-            await self.async_flush()
-
-        self._notify_listeners()
-
     async def save_pricing_batch(
-        self, pricing_updates: dict[str, dict[str, float]]
+        self, pricing_updates: dict[str, dict[str, Any]]
     ) -> None:
         """Save pricing data for multiple models at once.
 
@@ -751,6 +705,33 @@ class TokenStats:
                 await self.async_flush()
 
         self._notify_listeners()
+
+    async def prune_pricing(self, supported_models: list[str]) -> None:
+        """Remove pricing for models no longer supported/available.
+
+        Args:
+            supported_models: List of model names/aliases that should be kept.
+        """
+        async with self._lock:
+            await self._ensure_loaded()
+            if "pricing_data" not in self._data:
+                return
+
+            keep = set(supported_models)
+            current_models = list(self._data["pricing_data"].keys())
+            removed = []
+
+            for model in current_models:
+                if model not in keep:
+                    del self._data["pricing_data"][model]
+                    removed.append(model)
+
+            if removed:
+                self._dirty = True
+                await self.async_flush()
+
+        if removed:
+            self._notify_listeners()
 
     # =========================================================================
     # PUBLIC API: SERVICES INTEGRATION
@@ -783,6 +764,34 @@ class TokenStats:
 
             self._dirty = True
             await self.async_flush()
-            LOGGER.info("Token statistics reset (pricing and known models preserved)")
+            LOGGER.debug("[stats] reset (pricing and known models preserved)")
 
         self._notify_listeners()
+
+
+# =============================================================================
+# CONFIG HELPERS (for pricing display conversion)
+# =============================================================================
+
+
+def _get_sensors_config(entry: ConfigEntry) -> dict:
+    """Get sensors subentry config."""
+    for subentry in entry.subentries.values():
+        if subentry.subentry_type == "sensors":
+            config = dict(subentry.data)
+            if hasattr(subentry, "options") and subentry.options:
+                config.update(subentry.options)
+            return config
+    return {}
+
+
+def get_pricing_conversion_factor(entry: ConfigEntry) -> float:
+    """Resolve pricing conversion factor from sensors subentry."""
+    config = _get_sensors_config(entry)
+    return config.get(CONF_XAI_PRICING_CONVERSION_FACTOR)
+
+
+def get_tokens_per_million(entry: ConfigEntry) -> int:
+    """Resolve tokens per million from sensors subentry."""
+    config = _get_sensors_config(entry)
+    return config.get(CONF_TOKENS_PER_MILLION)

@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from homeassistant.helpers import llm as ha_llm
 
 from ..const import LOGGER
-from ..exceptions import raise_tool_error
 
 
 def _normalize_json_dict(data: Any) -> Any:
@@ -34,7 +34,7 @@ def _normalize_json_dict(data: Any) -> Any:
         return data
 
 
-def _convert_schema_to_xai(schema, tool_name: str = "unknown") -> dict:
+def convert_ha_schema_to_xai(schema, tool_name: str = "unknown") -> dict:
     """Convert HA schema to xAI function parameters format with robust voluptuous handling."""
     if not schema:
         return {"type": "object", "properties": {}, "required": []}
@@ -48,11 +48,7 @@ def _convert_schema_to_xai(schema, tool_name: str = "unknown") -> dict:
         )
         return result
     except Exception as err:
-        LOGGER.warning(
-            "Failed to convert schema for tool '%s' using voluptuous-openapi: %s. Using fallback.",
-            tool_name,
-            err,
-        )
+        LOGGER.warning("[ha-to-xai] schema convert failed '%s': %s", tool_name, err)
         return {"type": "object", "properties": {}, "required": []}
 
 
@@ -446,16 +442,12 @@ def _get_fallback_tool_schema(tool_name: str) -> dict | None:
     return None
 
 
-def format_tools_for_xai(ha_tools: list[ha_llm.Tool], xai_tool_constructor) -> list:
-    """Convert HA LLM tools to xAI format using the SDK's tool constructor.
+def format_tools_for_xai(ha_tools: list[ha_llm.Tool]) -> tuple[list[dict], dict]:
+    """Convert HA LLM tools to xAI format (neutral dict format).
 
     Args:
         ha_tools: List of Home Assistant LLM tools
-        xai_tool_constructor: xAI SDK tool constructor (from xai_sdk.chat.tool) - REQUIRED
     """
-    if xai_tool_constructor is None:
-        raise_tool_error("all_tools", "xAI tool constructor is required but was None")
-
     xai_tools = []
 
     # Track schema conversion statistics
@@ -474,7 +466,7 @@ def format_tools_for_xai(ha_tools: list[ha_llm.Tool], xai_tool_constructor) -> l
         # Convert parameters to xAI JSON schema
         try:
             schema_stats["total"] += 1
-            parameters = _convert_schema_to_xai(ha_tool.parameters, str(ha_tool.name))
+            parameters = convert_ha_schema_to_xai(ha_tool.parameters, str(ha_tool.name))
 
             # If schema lacks properties, provide a minimal known schema for common HA tools
             try:
@@ -488,10 +480,6 @@ def format_tools_for_xai(ha_tools: list[ha_llm.Tool], xai_tool_constructor) -> l
             if not props:
                 fallback = _get_fallback_tool_schema(str(ha_tool.name))
                 if fallback:
-                    LOGGER.debug(
-                        "Tool '%s' has no properties, using fallback schema.",
-                        ha_tool.name,
-                    )
                     parameters = fallback
                     schema_stats["fallback_used"] += 1
                 else:
@@ -503,35 +491,45 @@ def format_tools_for_xai(ha_tools: list[ha_llm.Tool], xai_tool_constructor) -> l
             # Sort keys recursively to ensure stable JSON representation
             parameters = _normalize_json_dict(parameters)
 
-            xai_tool_obj = xai_tool_constructor(
-                name=str(ha_tool.name),
-                description=str(ha_tool.description or "Home Assistant tool"),
-                parameters=parameters,
-            )
+            xai_tool_obj = {
+                "name": str(ha_tool.name),
+                "description": str(ha_tool.description or "Home Assistant tool"),
+                "parameters": parameters,
+            }
             xai_tools.append(xai_tool_obj)
 
         except Exception as err:
             LOGGER.error(
-                "Error converting tool %s: %s", ha_tool.name, err, exc_info=True
+                "[ha-to-xai] convert '%s' failed: %s", ha_tool.name, err, exc_info=True
             )
             schema_stats["failed"] += 1
             continue
 
-    # Log summary statistics instead of individual conversions
-    LOGGER.debug(
-        "Schema conversion completed: %d total, %d converted, %d fallback, %d failed",
-        schema_stats["total"],
-        schema_stats["converted"],
-        schema_stats["fallback_used"],
-        schema_stats["failed"],
+    return xai_tools, schema_stats
+
+
+def convert_ha_to_xai_tool_call(tool_call: Any, chat_pb2: Any) -> Any:
+    """Convert Home Assistant ToolInput to xAI ToolCall protobuf object.
+
+    Args:
+        tool_call: Home Assistant ToolInput or similar object with tool_name and tool_args.
+        chat_pb2: xAI protobuf module for creating ToolCall/FunctionCall objects.
+    """
+    if not (hasattr(tool_call, "tool_name") and hasattr(tool_call, "tool_args")):
+        return tool_call
+
+    return chat_pb2.ToolCall(
+        id=getattr(tool_call, "tool_call_id", ""),
+        function=chat_pb2.FunctionCall(
+            name=tool_call.tool_name,
+            arguments=json.dumps(tool_call.tool_args),
+        ),
     )
 
-    return xai_tools
 
-
-def filter_tools_by_exposed_domains(
+def _filter_tools_by_exposed_domains(
     ha_tools: list[Any], exposed_entities: dict
-) -> list[Any]:
+) -> tuple[list[Any], int]:
     """Filter HA tools based on exposed entity domains.
 
     Args:
@@ -539,11 +537,11 @@ def filter_tools_by_exposed_domains(
         exposed_entities: Dictionary of exposed entities from ha_llm._get_exposed_entities
 
     Returns:
-        Filtered list of HA tool objects
+        Tuple of (Filtered list of HA tool objects, dropped_count)
     """
     if not exposed_entities or "entities" not in exposed_entities:
         # If no exposed entities info available, return all tools conservatively
-        return ha_tools
+        return ha_tools, 0
 
     # Extract active domains from exposed entities
     active_domains = {
@@ -571,19 +569,6 @@ def filter_tools_by_exposed_domains(
         if not active_domains.isdisjoint(required_domains):
             filtered_tools.append(tool)
         else:
-            LOGGER.debug(
-                "Filtering out tool '%s' because required domains %s are not active",
-                tool.name,
-                required_domains,
-            )
             dropped_count += 1
 
-    if dropped_count > 0:
-        LOGGER.debug(
-            "Tool filtering: kept %d tools, dropped %d based on active domains %s",
-            len(filtered_tools),
-            dropped_count,
-            active_domains,
-        )
-
-    return filtered_tools
+    return filtered_tools, dropped_count

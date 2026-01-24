@@ -7,7 +7,7 @@ from datetime import timedelta
 from pathlib import Path
 import shutil
 from types import MappingProxyType
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from homeassistant.config_entries import ConfigSubentry
 from homeassistant.const import (
@@ -20,9 +20,9 @@ from homeassistant.helpers.event import async_track_time_interval
 
 from .const import (
     CONF_MEMORY_CLEANUP_INTERVAL_HOURS,
+    CONF_MEMORY_REMOTE_DELETE,
     CONF_PRICING_UPDATE_INTERVAL_HOURS,
     DEFAULT_AI_TASK_NAME,
-    DEFAULT_GROK_CODE_FAST_NAME,
     DEFAULT_CONVERSATION_NAME,
     DEFAULT_SENSORS_NAME,
     DOMAIN,
@@ -30,19 +30,14 @@ from .const import (
     MEMORY_DEFAULTS,
     MEMORY_FLUSH_INTERVAL_MINUTES,
     RECOMMENDED_AI_TASK_OPTIONS,
-    RECOMMENDED_GROK_CODE_FAST_OPTIONS,
     RECOMMENDED_MEMORY_CLEANUP_INTERVAL_HOURS,
     RECOMMENDED_PIPELINE_OPTIONS,
     RECOMMENDED_PRICING_UPDATE_INTERVAL_HOURS,
     RECOMMENDED_SENSORS_OPTIONS,
-    SUBENTRY_TYPE_AI_TASK,
-    SUBENTRY_TYPE_CODE_TASK,
-    SUBENTRY_TYPE_CONVERSATION,
-    SUBENTRY_TYPE_SENSORS,
+    XAIConfigEntry,
 )
 from .helpers import (
     MemoryManager,
-    ChatHistoryService,
     TokenStats,
     XAIModelManager,
 )
@@ -52,7 +47,6 @@ from .services import unregister_services
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
-    from . import XAIConfigEntry
 
 
 class XaiInitManager:
@@ -64,19 +58,16 @@ class XaiInitManager:
         self.entry = entry
         self._unload_listeners = []
         self.model_manager: XAIModelManager | None = None
+        self.gateway = XAIGateway(hass, entry)
 
-    @staticmethod
     async def _async_update_models_with_retry(
-        model_manager: XAIModelManager,
-        gateway: XAIGateway,
+        self,
         max_retries: int = 3,
         context: str = "initial",
     ) -> bool:
         """Update models from API with exponential backoff retry logic.
 
         Args:
-            model_manager: XAIModelManager instance
-            gateway: XAIGateway instance
             max_retries: Maximum number of retry attempts
             context: Context string for logging
 
@@ -85,28 +76,30 @@ class XaiInitManager:
         """
         for retry_count in range(max_retries):
             try:
-                await model_manager.async_update_models(gateway)
-                LOGGER.debug(f"Coordinator: Model data fetch on {context} succeeded")
+                await self.gateway.async_update_models()
+                await self._async_cleanup_orphaned_pricing_sensors()
                 return True
             except Exception as err:
                 retry_count_actual = retry_count + 1
                 if retry_count_actual < max_retries:
                     LOGGER.debug(
-                        f"Coordinator: Model fetch retry {retry_count_actual}/{max_retries} failed: %s",
+                        "Coordinator: Model fetch retry %d/%d failed: %s",
+                        retry_count_actual,
+                        max_retries,
                         err,
                     )
                     await asyncio.sleep(2**retry_count_actual)  # Exponential backoff
                 else:
                     LOGGER.error(
-                        f"Coordinator: Model fetch on {context} failed after {max_retries} retries: %s",
+                        "Coordinator: Model fetch on %s failed after %d retries: %s",
+                        context,
+                        max_retries,
                         err,
                     )
                     return False
 
     async def async_setup(self) -> None:
         """Set up the integration."""
-        LOGGER.debug("Coordinator: Starting setup")
-
         # Initialize placeholder for models data
         if "xai_models_data" not in self.hass.data[DOMAIN]:
             self.hass.data[DOMAIN]["xai_models_data"] = {}
@@ -115,107 +108,277 @@ class XaiInitManager:
         # Create global storage instances
         folder_name = DEFAULT_CONVERSATION_NAME.lower().replace(" ", "_")
         memory_path = f"{folder_name}/{DOMAIN}.memory"
-        chat_history_path = f"{folder_name}/{DOMAIN}.chat_history"
         token_stats_path = f"{folder_name}/{DOMAIN}.token_stats"
 
         self.hass.data[DOMAIN]["conversation_memory"] = MemoryManager(
             self.hass, memory_path, self.entry
         )
-        self.hass.data[DOMAIN]["chat_history"] = ChatHistoryService(
-            self.hass, chat_history_path, self.entry
-        )
         self.hass.data[DOMAIN]["token_stats"] = TokenStats(
             self.hass, token_stats_path, self.entry
         )
-        LOGGER.debug("Created global ConversationMemory instance at %s", memory_path)
-        LOGGER.debug(
-            "Created global ChatHistoryService instance at %s", chat_history_path
+        LOGGER.info(
+            "Setup: initialized storage (memory=%s, stats=%s)",
+            memory_path,
+            token_stats_path,
         )
-        LOGGER.debug("Created global TokenStats instance at %s", token_stats_path)
 
         # Initialize Model Manager
         self.model_manager = XAIModelManager(self.hass)
         self.hass.data[DOMAIN]["model_manager"] = self.model_manager
 
         # Perform initial model fetch (non-blocking, will retry on startup if needed)
-        # Create a temporary Gateway instance just for this operation
-        gateway = XAIGateway(self.hass, self.entry)
-        await self._async_update_models_with_retry(
-            self.model_manager,
-            gateway,
-            context="initial",
-        )
+        await self._async_update_models_with_retry(context="initial")
 
-        # Run migration and setup tasks
-        self._migrate_subentry_types()
-        self._ensure_memory_params_in_entry_data()
-        self._add_subentries_if_needed()
+        # Run setup tasks (idempotent, safe to run on every startup)
+        await self._async_add_subentries_if_needed()
+
+        # FINAL SYNC: Ensure self.entry is updated after all subentry modifications
+        self.entry = self.hass.config_entries.async_get_entry(self.entry.entry_id)
 
         # Set up listeners and periodic tasks (will raise on failure)
         try:
             self._setup_listeners()
-            LOGGER.debug(
-                "Coordinator: All listeners and periodic tasks registered successfully"
-            )
+            LOGGER.info("Setup: completed successfully")
         except Exception as err:
-            LOGGER.error(
-                "Coordinator: Failed to setup listeners: %s", err, exc_info=True
-            )
+            LOGGER.error("Setup: failed to register listeners - %s", err, exc_info=True)
             raise
 
-    def _migrate_subentry_types(self) -> None:
-        """Migrate old subentry_type values to new format."""
-        needs_migration = any(
-            sub.subentry_type in ("ai_task_data", "code_task")
-            for sub in self.entry.subentries.values()
+    def _async_remove_registered_entities(
+        self,
+        filter_func: Callable[[ha_entity_registry.RegistryEntry], bool],
+        label: str,
+    ) -> int:
+        """Helper to remove entities from registry based on a filter.
+
+        Returns:
+            Number of successfully removed entities.
+        """
+        ent_reg = ha_entity_registry.async_get(self.hass)
+        to_remove = [
+            entity.entity_id
+            for entity in ent_reg.entities.values()
+            if entity.config_entry_id == self.entry.entry_id and filter_func(entity)
+        ]
+
+        if not to_remove:
+            return 0
+
+        removed_count = 0
+        for entity_id in to_remove:
+            try:
+                ent_reg.async_remove(entity_id)
+                removed_count += 1
+            except Exception as err:
+                LOGGER.warning(
+                    "Cleanup: failed to remove %s %s - %s", label, entity_id, err
+                )
+
+        if removed_count > 0:
+            LOGGER.info("Cleanup: removed %d %s entities", removed_count, label)
+        return removed_count
+
+    async def _async_cleanup_orphaned_pricing_sensors(self) -> None:
+        """Remove pricing sensors for discontinued models or zero-price types."""
+        xai_models_data = self.hass.data[DOMAIN].get("xai_models_data", {})
+        if not xai_models_data:
+            return
+
+        pricing_suffixes = (
+            "input_price",
+            "output_price",
+            "cached_input_price",
+            "input_image_price",
+            "search_price",
         )
 
-        if needs_migration:
-            LOGGER.info("Migrating old subentry_type values to new format")
-            for subentry_id, subentry in list(self.entry.subentries.items()):
-                new_type = None
-                if subentry.subentry_type == "ai_task_data":
-                    new_type = "ai_task"
-                elif subentry.subentry_type == "code_task":
-                    new_type = "code_fast"
+        def is_orphaned_pricing_sensor(
+            entity: ha_entity_registry.RegistryEntry,
+        ) -> bool:
+            uid = entity.unique_id
+            suffix = next((s for s in pricing_suffixes if uid.endswith(s)), None)
+            if not suffix:
+                return False
 
-                if new_type:
-                    self.hass.config_entries.async_remove_subentry(
-                        self.entry, subentry_id
-                    )
-                    self.hass.config_entries.async_add_subentry(
-                        self.entry,
-                        ConfigSubentry(
-                            subentry_id=subentry_id,
-                            subentry_type=new_type,
-                            title=subentry.title,
-                            data=dict(subentry.data),
-                            unique_id=subentry.unique_id,
-                        ),
-                    )
-            LOGGER.info("Subentry migration completed successfully")
+            prefix = f"{self.entry.entry_id}_"
+            if not uid.startswith(prefix):
+                return False
 
-    def _ensure_memory_params_in_entry_data(self) -> None:
-        """Ensure memory parameters are in entry.data."""
-        data = dict(self.entry.data)
-        updated = False
+            model_name = uid[len(prefix) : -(len(suffix) + 1)]
 
-        for key, default_value in MEMORY_DEFAULTS.items():
-            if key not in data:
-                data[key] = default_value
-                updated = True
+            # Model gone or price type is zero
+            model_data = xai_models_data.get(model_name)
+            if not model_data:
+                return True
+            return model_data.get(suffix, 0.0) <= 0
 
-        if updated:
-            self.hass.config_entries.async_update_entry(self.entry, data=data)
-            LOGGER.info("Added memory parameters to integration configuration")
+        self._async_remove_registered_entities(
+            is_orphaned_pricing_sensor, "orphaned pricing"
+        )
 
-    def _add_subentries_if_needed(self) -> None:
+    async def clean_deprecated_subentries(self) -> None:
+        """Clean up deprecated subentries and migrate valid types.
+
+        This method:
+        - Converts "ai_task_data" → "ai_task"
+        - Removes subentries with invalid types (not in VALID_SUBENTRY_TYPES)
+        - Can be called from migration or runtime cleanup
+        """
+        current_entry = self.hass.config_entries.async_get_entry(self.entry.entry_id)
+        if not current_entry:
+            return
+
+        valid_types = (
+            "conversation",
+            "ai_task",
+            "sensors",
+        )
+
+        for subentry_id, subentry in list(current_entry.subentries.items()):
+            stype = subentry.subentry_type
+
+            # Migrate ai_task_data → ai_task
+            if stype == "ai_task_data":
+                self.hass.config_entries.async_remove_subentry(
+                    current_entry, subentry_id
+                )
+                current_entry = self.hass.config_entries.async_get_entry(
+                    self.entry.entry_id
+                )
+                self.hass.config_entries.async_add_subentry(
+                    current_entry,
+                    ConfigSubentry(
+                        subentry_id=subentry_id,
+                        subentry_type="ai_task",
+                        title=subentry.title,
+                        data=dict(subentry.data),
+                        unique_id=subentry.unique_id,
+                    ),
+                )
+                current_entry = self.hass.config_entries.async_get_entry(
+                    self.entry.entry_id
+                )
+                LOGGER.info(
+                    "Cleaned subentry '%s': ai_task_data → ai_task", subentry.title
+                )
+
+            # Remove invalid types
+            elif stype not in valid_types:
+                self.hass.config_entries.async_remove_subentry(
+                    current_entry, subentry_id
+                )
+                current_entry = self.hass.config_entries.async_get_entry(
+                    self.entry.entry_id
+                )
+                LOGGER.info(
+                    "Removed invalid subentry '%s' (type: %s)", subentry.title, stype
+                )
+
+    async def clean_deprecated_entities(self) -> None:
+        """Remove entities with deprecated patterns from entity registry.
+
+        Pattern-based cleanup using unique_id matching.
+        Can be called from migration or runtime cleanup.
+        """
+        deprecated_patterns = ("code_fast", "code_task", "grok_code_fast")
+
+        def is_deprecated_entity(entity: ha_entity_registry.RegistryEntry) -> bool:
+            return any(pattern in entity.unique_id for pattern in deprecated_patterns)
+
+        removed = self._async_remove_registered_entities(
+            is_deprecated_entity, "deprecated entities"
+        )
+        if removed > 0:
+            LOGGER.info("Cleaned %d deprecated entities from registry", removed)
+
+    async def clean_deprecated_storage(self) -> None:
+        """Remove deprecated storage files.
+
+        Can be called from migration or runtime cleanup.
+        """
+        folder_name = DEFAULT_CONVERSATION_NAME.lower().replace(" ", "_")
+        storage_base = Path(self.hass.config.path(".storage"))
+
+        # List of deprecated storage files (filename only, without DOMAIN prefix)
+        deprecated_files = ("chat_history", "memory")
+
+        for filename in deprecated_files:
+            file_path = storage_base / folder_name / f"{DOMAIN}.{filename}"
+            if file_path.exists():
+                try:
+                    await self.hass.async_add_executor_job(file_path.unlink)
+                    LOGGER.info("Removed deprecated storage file: %s", filename)
+                except Exception as err:
+                    LOGGER.warning("Failed to remove file %s: %s", filename, err)
+
+    async def ensure_valid_config_keys(self) -> None:
+        """Ensure entry.data and subentry.data contain only valid keys.
+
+        Removes obsolete keys and adds missing defaults based on RECOMMENDED_*_OPTIONS.
+        Can be called from migration or runtime cleanup.
+        """
+        # 1. Clean entry.data
+        new_data = {}
+
+        # Always keep API credentials
+        for key in ("api_key", "api_host"):
+            if key in self.entry.data:
+                new_data[key] = self.entry.data[key]
+
+        # Keep valid memory defaults
+        for key, default in MEMORY_DEFAULTS.items():
+            new_data[key] = self.entry.data.get(key, default)
+
+        # Keep extended tools config
+        for key in ("use_extended_tools", "extended_tools_yaml"):
+            if key in self.entry.data:
+                new_data[key] = self.entry.data[key]
+
+        # Update if changed
+        if new_data != self.entry.data:
+            self.hass.config_entries.async_update_entry(self.entry, data=new_data)
+
+        # 2. Clean subentry.data
+        current_entry = self.hass.config_entries.async_get_entry(self.entry.entry_id)
+        if not current_entry:
+            return
+
+        for subentry_id, subentry in current_entry.subentries.items():
+            stype = subentry.subentry_type
+
+            # Select appropriate defaults
+            if stype == "conversation":
+                defaults = RECOMMENDED_PIPELINE_OPTIONS
+            elif stype == "ai_task":
+                defaults = RECOMMENDED_AI_TASK_OPTIONS
+            elif stype == "sensors":
+                defaults = RECOMMENDED_SENSORS_OPTIONS
+            else:
+                continue
+
+            # Keep only valid keys, add missing defaults
+            new_subdata = {}
+            for key in defaults:
+                new_subdata[key] = subentry.data.get(key, defaults[key])
+
+            # Update if changed
+            if new_subdata != subentry.data:
+                self.hass.config_entries.async_update_subentry(
+                    current_entry, subentry, data=new_subdata
+                )
+
+    async def _async_add_subentries_if_needed(self) -> None:
         """Add subentries if they don't exist."""
-        subentries = {se.subentry_type for se in self.entry.subentries.values()}
+        # Refresh current state from registry
+        current_entry = self.hass.config_entries.async_get_entry(self.entry.entry_id)
+        if not current_entry:
+            return
 
-        if SUBENTRY_TYPE_CONVERSATION not in subentries:
+        subentries = {se.subentry_type for se in current_entry.subentries.values()}
+
+        if "conversation" not in subentries:
+            LOGGER.info("Configuring default conversation subentry")
             self.hass.config_entries.async_add_subentry(
-                self.entry,
+                current_entry,
                 ConfigSubentry(
                     data=MappingProxyType(
                         {
@@ -223,52 +386,50 @@ class XaiInitManager:
                             **RECOMMENDED_PIPELINE_OPTIONS,
                         }
                     ),
-                    subentry_type=SUBENTRY_TYPE_CONVERSATION,
+                    subentry_type="conversation",
                     title=DEFAULT_CONVERSATION_NAME,
                     unique_id=f"{DOMAIN}:conversation",
                 ),
             )
+            current_entry = self.hass.config_entries.async_get_entry(
+                self.entry.entry_id
+            )
+            subentries = {se.subentry_type for se in current_entry.subentries.values()}
 
-        if SUBENTRY_TYPE_AI_TASK not in subentries:
+        if "ai_task" not in subentries:
+            LOGGER.info("Configuring default AI Task subentry")
             self.hass.config_entries.async_add_subentry(
-                self.entry,
+                current_entry,
                 ConfigSubentry(
                     data=MappingProxyType(
                         {"name": DEFAULT_AI_TASK_NAME, **RECOMMENDED_AI_TASK_OPTIONS}
                     ),
-                    subentry_type=SUBENTRY_TYPE_AI_TASK,
+                    subentry_type="ai_task",
                     title=DEFAULT_AI_TASK_NAME,
                     unique_id=f"{DOMAIN}:ai_task",
                 ),
             )
-
-        if SUBENTRY_TYPE_CODE_TASK not in subentries:
-            self.hass.config_entries.async_add_subentry(
-                self.entry,
-                ConfigSubentry(
-                    data=MappingProxyType(
-                        {
-                            "name": DEFAULT_GROK_CODE_FAST_NAME,
-                            **RECOMMENDED_GROK_CODE_FAST_OPTIONS,
-                        }
-                    ),
-                    subentry_type=SUBENTRY_TYPE_CODE_TASK,
-                    title=DEFAULT_GROK_CODE_FAST_NAME,
-                    unique_id=f"{DOMAIN}:grok_code_fast",
-                ),
+            current_entry = self.hass.config_entries.async_get_entry(
+                self.entry.entry_id
             )
+            subentries = {se.subentry_type for se in current_entry.subentries.values()}
 
-        if SUBENTRY_TYPE_SENSORS not in subentries:
+        if "sensors" not in subentries:
+            LOGGER.info("Configuring default sensors subentry")
             self.hass.config_entries.async_add_subentry(
-                self.entry,
+                current_entry,
                 ConfigSubentry(
                     data=MappingProxyType(
                         {"name": DEFAULT_SENSORS_NAME, **RECOMMENDED_SENSORS_OPTIONS}
                     ),
-                    subentry_type=SUBENTRY_TYPE_SENSORS,
+                    subentry_type="sensors",
                     title=DEFAULT_SENSORS_NAME,
                     unique_id=f"{DOMAIN}:sensors",
                 ),
+            )
+            # Last sync, current_entry is updated for callers if needed
+            current_entry = self.hass.config_entries.async_get_entry(
+                self.entry.entry_id
             )
 
     def _setup_listeners(self) -> None:
@@ -287,28 +448,17 @@ class XaiInitManager:
                 )
             )
             listeners_to_register.append(("update_listener", update_listener))
-            LOGGER.debug("Registered: options update listener")
 
             # 2. Startup listener for model fetch retry (onetime, auto-removes after firing)
             async def async_initial_update(event: Event) -> None:
                 """Retry model data fetch when Home Assistant is fully started."""
                 if not self.hass.data[DOMAIN].get("xai_models_data"):
-                    LOGGER.debug(
-                        "Coordinator: HA started, retrying xAI model data fetch..."
-                    )
-                    # Create temporary gateway for this operation
-                    gateway = XAIGateway(self.hass, self.entry)
-                    await self._async_update_models_with_retry(
-                        self.model_manager,
-                        gateway,
-                        context="startup",
-                    )
+                    await self._async_update_models_with_retry(context="startup")
 
             self.hass.bus.async_listen_once(
                 EVENT_HOMEASSISTANT_STARTED, async_initial_update
             )
             # Note: onetime listeners auto-remove after firing, so we don't track them for cleanup
-            LOGGER.debug("Registered: startup model fetch retry (onetime)")
 
             # 3. Periodic memory cleanup
             cleanup_interval_hours = self.entry.data.get(
@@ -316,12 +466,27 @@ class XaiInitManager:
                 RECOMMENDED_MEMORY_CLEANUP_INTERVAL_HOURS,
             )
             memory = self.hass.data[DOMAIN]["conversation_memory"]
-            cleanup_unsub = memory.setup_periodic_cleanup(cleanup_interval_hours)
-            listeners_to_register.append(("memory_cleanup", cleanup_unsub))
-            LOGGER.debug(
-                "Registered: periodic memory cleanup (every %d hours)",
-                cleanup_interval_hours,
+            remote_delete_enabled = self.entry.data.get(
+                CONF_MEMORY_REMOTE_DELETE, False
             )
+
+            async def _handle_remote_cleanup(deleted_ids: list[str]) -> None:
+                # 3. Remote deletion from xAI servers (if enabled)
+                if remote_delete_enabled and deleted_ids:
+                    deleted = await self.gateway.async_delete_remote_completions(
+                        deleted_ids
+                    )
+                    if deleted > 0:
+                        LOGGER.info(
+                            "Periodic cleanup: %d IDs removed from xAI server",
+                            deleted,
+                        )
+
+            cleanup_unsub = memory.setup_periodic_cleanup(
+                cleanup_interval_hours, on_cleanup=_handle_remote_cleanup
+            )
+
+            listeners_to_register.append(("memory_cleanup", cleanup_unsub))
 
             # 4. Periodic memory/stats flush (write-behind cache)
             token_stats = self.hass.data[DOMAIN]["token_stats"]
@@ -331,21 +496,14 @@ class XaiInitManager:
                 try:
                     await memory.async_flush()
                     await token_stats.async_flush()
-                    LOGGER.debug("Coordinator: Periodic flush completed successfully")
                 except Exception as err:
-                    LOGGER.error(
-                        "Coordinator: Periodic flush failed: %s", err, exc_info=True
-                    )
+                    LOGGER.error("Periodic flush failed: %s", err, exc_info=True)
 
             flush_interval = timedelta(minutes=MEMORY_FLUSH_INTERVAL_MINUTES)
             flush_unsub = async_track_time_interval(
                 self.hass, async_flush_all, flush_interval
             )
             listeners_to_register.append(("periodic_flush", flush_unsub))
-            LOGGER.debug(
-                "Registered: periodic flush (every %d minutes)",
-                MEMORY_FLUSH_INTERVAL_MINUTES,
-            )
 
             # 5. Final flush on Home Assistant stop (onetime, critical)
             async def _async_flush_on_stop(event):
@@ -353,24 +511,17 @@ class XaiInitManager:
 
                 This is critical to prevent data loss. Must succeed or log error loudly.
                 """
-                LOGGER.info("Coordinator: HA stopping, performing final data flush...")
                 try:
                     await async_flush_all()
-                    LOGGER.info(
-                        "Coordinator: Final flush on stop completed successfully"
-                    )
                 except Exception as err:
                     LOGGER.critical(
-                        "Coordinator: CRITICAL - Final flush on stop failed: %s",
-                        err,
-                        exc_info=True,
+                        "CRITICAL - Final flush on stop failed: %s", err, exc_info=True
                     )
 
             self.hass.bus.async_listen_once(
                 EVENT_HOMEASSISTANT_STOP, _async_flush_on_stop
             )
             # Note: onetime listeners auto-remove after firing, so we don't track them for cleanup
-            LOGGER.debug("Registered: final flush on stop (onetime)")
 
             # 6. Periodic pricing/model update
             pricing_interval = RECOMMENDED_PRICING_UPDATE_INTERVAL_HOURS
@@ -385,31 +536,20 @@ class XaiInitManager:
             async def _async_update_pricing(now):
                 """Periodically refresh model and pricing data from API."""
                 try:
-                    # Create temporary gateway for this operation
-                    gateway = XAIGateway(self.hass, self.entry)
                     await self._async_update_models_with_retry(
-                        self.model_manager,
-                        gateway,
                         max_retries=1,
                         context="periodic",
                     )
                 except Exception as err:
-                    LOGGER.error("Coordinator: Periodic model update failed: %s", err)
+                    LOGGER.error("Periodic model update failed: %s", err)
 
             pricing_unsub = async_track_time_interval(
                 self.hass, _async_update_pricing, timedelta(hours=pricing_interval)
             )
             listeners_to_register.append(("periodic_pricing", pricing_unsub))
-            LOGGER.debug(
-                "Registered: periodic model update (every %d hours)", pricing_interval
-            )
 
             # All listeners registered successfully, store for cleanup
             self._unload_listeners.extend([unsub for _, unsub in listeners_to_register])
-            LOGGER.info(
-                "Coordinator: All %d persistent listeners registered successfully",
-                len(listeners_to_register),
-            )
 
         except Exception as err:
             LOGGER.error(
@@ -431,66 +571,42 @@ class XaiInitManager:
 
         Ensures all listeners are unsubscribed, all data is flushed, and pending tasks complete.
         """
-        LOGGER.debug(
-            "Coordinator: Starting unload (unsubscribing %d listeners)",
-            len(self._unload_listeners),
-        )
-
         # Step 1: Unsubscribe from all persistent listeners
-        unsubscribe_errors = []
-        for idx, unsub in enumerate(self._unload_listeners):
+        for unsub in self._unload_listeners:
             try:
                 unsub()
-            except (ValueError, RuntimeError) as err:
-                # ValueError: Listener already removed (onetime listener that fired)
-                # RuntimeError: Other subscription errors
-                unsubscribe_errors.append((idx, str(err)))
-
-        if unsubscribe_errors:
-            LOGGER.debug(
-                "Coordinator: %d listeners already removed or had errors",
-                len(unsubscribe_errors),
-            )
+            except (ValueError, RuntimeError):
+                # Listener already removed or subscription error - ignore
+                pass
 
         self._unload_listeners.clear()
 
         # Step 2: Explicitly flush all data before unload (critical)
         try:
-            LOGGER.debug("Coordinator: Performing final data flush before unload...")
             if "conversation_memory" in self.hass.data[DOMAIN]:
                 await self.hass.data[DOMAIN]["conversation_memory"].async_flush()
             if "token_stats" in self.hass.data[DOMAIN]:
                 await self.hass.data[DOMAIN]["token_stats"].async_flush()
-            if "chat_history" in self.hass.data[DOMAIN]:
-                await self.hass.data[DOMAIN]["chat_history"].async_flush()
-            LOGGER.debug("Coordinator: Final flush completed successfully")
         except Exception as err:
             LOGGER.error(
-                "Coordinator: CRITICAL - Final flush on unload failed: %s",
-                err,
-                exc_info=True,
+                "CRITICAL - Final flush on unload failed: %s", err, exc_info=True
             )
 
         # Step 3: Wait for any pending save tasks with timeout
         pending_tasks = self.hass.data.get(DOMAIN, {}).get("pending_save_tasks", set())
         if pending_tasks:
-            LOGGER.info(
-                "Coordinator: Waiting for %d pending save tasks before unload...",
-                len(pending_tasks),
-            )
             try:
                 await asyncio.wait_for(
                     asyncio.gather(*pending_tasks, return_exceptions=True), timeout=30.0
                 )
-                LOGGER.debug("Coordinator: All pending save tasks completed")
             except asyncio.TimeoutError:
                 LOGGER.error(
-                    "Coordinator: TIMEOUT - %d pending save tasks did not complete in 30s",
+                    "Unload: timeout waiting for %d pending save tasks",
                     len(pending_tasks),
                 )
             except Exception as err:
                 LOGGER.error(
-                    "Coordinator: Error waiting for pending save tasks: %s",
+                    "Unload: error waiting for pending save tasks - %s",
                     err,
                     exc_info=True,
                 )
@@ -498,13 +614,14 @@ class XaiInitManager:
         # Step 4: Unregister services
         unregister_services(self.hass)
 
-        LOGGER.info("Coordinator: Unload completed successfully")
+        # Step 5: Close Gateway (gRPC channels cleanup)
+        await self.gateway.close()
+
+        LOGGER.info("Unload: completed successfully")
         return True
 
     async def async_remove(self) -> None:
         """Remove the integration."""
-        LOGGER.debug("Coordinator: Starting removal")
-
         # Remove all entities from entity registry
         ent_reg = ha_entity_registry.async_get(self.hass)
         config_entry_ids = {self.entry.entry_id} | {
@@ -523,7 +640,9 @@ class XaiInitManager:
             if entity_id in restore_data.last_states:
                 del restore_data.last_states[entity_id]
             ent_reg.async_remove(entity_id)
-            LOGGER.debug("Coordinator: Removed entity and state for %s", entity_id)
+
+        if entities_to_remove:
+            LOGGER.info("Removal: cleaned %d entities", len(entities_to_remove))
 
         # Clean up hass.data
         for key in list(self.hass.data[DOMAIN].keys()):
@@ -537,12 +656,8 @@ class XaiInitManager:
         if memory_folder.exists() and memory_folder.is_dir():
             try:
                 await self.hass.async_add_executor_job(shutil.rmtree, memory_folder)
-                LOGGER.info(
-                    "Coordinator: Cleaned up memory storage folder: %s", memory_folder
-                )
+                LOGGER.info("Removal: cleaned storage folder %s", memory_folder)
             except Exception as err:
                 LOGGER.warning(
-                    "Coordinator: Failed to remove memory folder %s: %s",
-                    memory_folder,
-                    err,
+                    "Removal: failed to remove folder %s - %s", memory_folder, err
                 )

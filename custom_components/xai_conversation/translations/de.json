@@ -2,32 +2,44 @@
   "config": {
     "step": {
       "user": {
-        "title": "xAI Grok Konfiguration",
-        "description": "Konfigurieren Sie die xAI Grok Integration für Home Assistant. Der API-Endpunkt wird global für alle Agenten konfiguriert. Tools und intelligente Pipelineeinstellungen können bei Bedarf pro Agent angepasst werden.",
+        "title": "xAI Conversation Konfiguration",
+        "description": "Konfigurieren Sie die xAI Conversation Integration für Home Assistant. Der API-Endpunkt wird global für alle Agenten konfiguriert. Tools und intelligente Pipelineeinstellungen können bei Bedarf pro Agent angepasst werden.",
         "data": {
           "api_key": "API-Schlüssel",
           "api_host": "API-Endpunkt",
           "assistant_name": "Assistenten-Name",
-          "live_search": "Live-Suchmodus"
+          "live_search": "Live-Suchmodus",
+          "send_user_name": "Inkludieren Sie den Benutzernamen in Nachrichten"
         },
         "data_description": {
           "api_key": "Ihr xAI API-Schlüssel (beginnt mit 'xai-').",
           "api_host": "API-Endpunkt Hostname. Verwenden Sie 'api.x.ai' für globales Routing mit automatischer Umleitung zu einem regionalen Host oder geben Sie direkt einen regionalen Host an.",
           "assistant_name": "Der Name, mit dem sich der Assistent identifiziert (z.B. 'Jarvis', 'Alexa', 'HAL').",
-          "live_search": "Web-Suchfunktionen aktivieren: 'off' (deaktiviert), 'auto' (Modell entscheidet), 'on' (immer aktiviert)"
+          "live_search": "Web-Suchfunktionen aktivieren: 'off' (deaktiviert), 'web search', 'x search', 'full' (Web + X)",
+          "send_user_name": "Fügen Sie den Home Assistant-Benutzernamen zum Chat mit Grok hinzu."
         }
+      },
+      "confirm": {
+        "title": "API-Schlüssel-Informationen bestätigen",
+        "description": "API-Schlüssel erfolgreich validiert. Bitte überprüfen Sie die Details unten:\n\n**Name:** {name}\n**Team-ID:** {team_id}\n**Status:** ✅ OK"
       }
     },
     "error": {
       "invalid_api_key": "Ungültiger API-Schlüssel. Muss mit 'xai-' beginnen.",
+      "api_key_disabled": "Der API-Schlüssel wurde im xAI-Dashboard deaktiviert.",
+      "api_key_blocked": "Der API-Schlüssel wurde von xAI gesperrt.",
+      "team_blocked": "Das zugehörige Team-Konto wurde gesperrt.",
       "missing_dependency": "Erforderliche Abhängigkeit 'xai_sdk' ist nicht installiert.",
       "unknown": "Ein unerwarteter Fehler ist aufgetreten. Bitte versuchen Sie es erneut."
     },
     "create_entry": {
-      "default": "xAI Grok Integration erfolgreich konfiguriert!"
+      "default": "xAI Conversation Integration erfolgreich konfiguriert!"
     }
   },
   "options": {
+    "error": {
+      "invalid_yaml": "Ungültige YAML-Konfiguration. Bitte überprüfen Sie die Syntax und die erforderlichen Felder."
+    },
     "step": {
       "init": {
         "title": "xAI Konfiguration",
@@ -37,20 +49,18 @@
           "use_extended_tools": "Erweiterte Tools Konfiguration aktivieren",
           "extended_tools_yaml": "Erweiterte Tools YAML-Konfiguration",
           "memory_user_ttl_hours": "Benutzerspeicher-Dauer (Stunden)",
-          "memory_user_max_turns": "Maximale Gesprächsrunden für Benutzer",
           "memory_device_ttl_hours": "Gerätespeicher-Dauer (Stunden)",
-          "memory_device_max_turns": "Maximale Gesprächsrunden für Geräte",
-          "memory_cleanup_interval_hours": "Speicherbereinigungsintervall (Stunden)"
+          "memory_cleanup_interval_hours": "Speicherbereinigungsintervall (Stunden)",
+          "memory_remote_delete": "Bei Bereinigung von xAI-Servern löschen"
         },
         "data_description": {
           "api_host": "Hostname des API-Endpunkts. Verwenden Sie 'api.x.ai' für globales Routing mit automatischer Umleitung zu einem regionalen Host oder geben Sie direkt einen regionalen Host an: 'us-east-1.api.x.ai' oder 'eu-west-1.api.x.ai'.",
           "use_extended_tools": "Aktivieren Sie diese Option, um benutzerdefinierte Tools im Format Extended OpenAI Conversation zu konfigurieren.",
           "extended_tools_yaml": "Definieren Sie hier Ihre benutzerdefinierten Tools. Das Format ist vollständig kompatibel mit Extended OpenAI Conversation. Sie können Ihre bestehende Konfiguration kopieren/einfügen.",
-          "memory_user_ttl_hours": "Dauer der Benutzerkonversationen (Smartphone, PC, Tablet). Standard: 720 Stunden (30 Tage)",
-          "memory_user_max_turns": "Maximale Anzahl gespeicherter Gesprächsrunden für Benutzer. Standard: 1000 Runden",
-          "memory_device_ttl_hours": "Dauer der Gerätekonversationen (Sprachassistenten-Satelliten). Standard: 168 Stunden (7 Tage)",
-          "memory_device_max_turns": "Maximale Anzahl gespeicherter Gesprächsrunden für Geräte. Standard: 100 Runden",
-          "memory_cleanup_interval_hours": "Häufigkeit, mit der abgelaufene Speichereinträge bereinigt werden. Standard: 24 Stunden"
+          "memory_user_ttl_hours": "Dauer der Benutzerkonversationen (Smartphone, PC, Tablet). Standard: 672 Stunden (30 Tage)",
+          "memory_device_ttl_hours": "Dauer der Gerätekonversationen (Sprachassistenten-Satelliten). Standard: 672 Stunden (7 Tage)",
+          "memory_cleanup_interval_hours": "Häufigkeit, mit der abgelaufene Speichereinträge bereinigt werden. Standard: 24 Stunden",
+          "memory_remote_delete": "Wenn aktiviert, werden lokale Nachrichten bei jeder Bereinigung (periodisch oder manuell) auch dauerhaft von den xAI-Remote-Servern gelöscht."
         }
       }
     }
@@ -67,40 +77,43 @@
           "title": "xAI Conversation",
           "data": {
             "name": "Name",
+            "store_messages": "Serverseitiger Speicher",
+            "zero_data_retention": "Zero Data Retention (ZDR)",
+            "use_intelligent_pipeline": "Intelligente Pipeline aktivieren",
+            "allow_smart_home_control": "Smart-Home-Steuerung erlauben",
+            "use_extended_tools": "Erweiterte Tools verwenden (Globale Konfig)",
+            "send_user_name": "Benutzernamen in Nachrichten einbeziehen",
+            "show_citations": "Zitate anzeigen",
             "assistant_name": "Assistenten-Name",
-            "api_host": "API-Host ('api.x.ai', 'us-east-1.api.x.ai' oder 'eu-west-1.api.x.ai')",
+            "location_context": "Wohnort",
+            "live_search": "Live-Suchmodus",
+            "pipeline_prompt": "Pipeline-Anweisungen (zu den Standardanweisungen hinzugefügt)",
+            "prompt_tools": "Benutzerdefinierter Prompt (Tools-Modus)",
             "chat_model": "Modell",
             "max_tokens": "Maximale Tokens",
             "temperature": "Temperatur",
             "top_p": "Top P",
-            "use_intelligent_pipeline": "Intelligente Pipeline aktivieren",
-            "prompt": "Prompt",
-            "pipeline_prompt": "Pipeline-Anweisungen (zu den Standardanweisungen hinzugefügt)",
-            "allow_smart_home_control": "Smart-Home-Steuerung erlauben",
-            "live_search": "Live-Suchmodus",
-            "store_messages": "Nachrichten speichern",
-            "show_citations": "Zitate anzeigen",
-            "send_user_name": "Benutzernamen in Nachrichten einbeziehen",
-            "reasoning_effort": "Denkaufwand",
-            "use_extended_tools": "Erweiterte Tools verwenden (Globale Konfig)"
+            "reasoning_effort": "Denkaufwand"
           },
           "data_description": {
+            "name": "Name di questo agente conversazionale.",
             "assistant_name": "Der Name, mit dem sich der Assistent identifiziert (z.B. 'Jarvis', 'Alexa', 'HAL'). Das Ändern dieses Werts startet eine neue Konversation und die vorherige Historie wird nicht mehr zugänglich sein.",
-            "api_host": "API-Endpunkt Hostname. Verwenden Sie 'api.x.ai' für globales Routing mit automatischer Umleitung zu einem regionalen Host oder geben Sie direkt einen regionalen Host an.",
+            "location_context": "Stadt oder Ort, wo du wohnst (z.B. 'Rom, IT'). Hilft Grok bei lokalen Suchen wie Wetter und Nachrichten. Wenn leer, wird die Home Assistant Zeitzone verwendet.",
             "chat_model": "Wählen Sie das zu verwendende Grok-Modell.",
             "max_tokens": "Maximale Anzahl zu generierender Tokens.",
             "temperature": "Steuert die Zufälligkeit der Antworten (0.0 = deterministisch, 2.0 = sehr kreativ).",
-            "top_p": "Steuert die Vielfalt der Antworten über Nucleus Sampling (nicht unterstützt von grok-4).",
+            "top_p": "Steuert die Vielfalt über Nucleus-Sampling. Wird von allen Modellen unterstützt.",
             "use_intelligent_pipeline": "Aktiviert einen intelligenten Modus, der Befehle automatisch an Home Assistant weiterleitet oder Gesprächsantworten liefert. Wenn deaktiviert, verwendet die Standard-LLM-API von Home Assistant für Tools.",
             "pipeline_prompt": "Optionaler Text, der zum Standard-Pipeline-Prompt hinzugefügt wird. Verwenden Sie ihn für benutzerdefinierte Absichten oder lokale Regeln.",
             "allow_smart_home_control": "Wenn aktiviert, kann der Assistent Smart-Home-Befehle ausführen. Wenn deaktiviert, antwortet er nur im Gesprächsmodus. Das Ändern dieser Einstellung startet eine neue Konversation.",
             "store_messages": "Verwenden Sie den serverseitigen Speicher von xAI, um die zu sendenden Tokens pro Anfrage zu reduzieren. Die Speicherparameter (Dauer, Anzahl der Runden) werden auf Integrationsebene konfiguriert.",
             "send_user_name": "Fügen Sie den Home Assistant-Benutzernamen oder Assist Voice-Gerätenamen zum Chat mit Grok hinzu.",
             "show_citations": "Suchzitate zu Chat-Antworten hinzufügen. Nützlich für UI/Chat-Schnittstellen, kann aber für Sprachassistenten störend sein. Standard: AUS (empfohlen für Sprache).",
-            "live_search": "Web-Suchfunktionen aktivieren: 'off' (deaktiviert), 'auto' (Modell entscheidet), 'on' (immer aktiviert). Gilt sowohl für Pipeline- als auch für Tools-Modus.",
-            "prompt": "Benutzerdefinierte Anweisungen für den Agenten (nur Tools-Modus).",
-            "reasoning_effort": "Denkaufwand für Modelle, die dies unterstützen (niedrig, mittel, hoch, maximal). Nur verfügbar für grok-4 und grok-4-fast Modelle.",
-            "use_extended_tools": "Aktiviert die Verwendung von benutzerdefinierten Tools, die in den Hauptintegrationsoptionen definiert sind (Extended OpenAI-Format). WARNUNG: Wenn diese Option aktiviert ist, werden die nativen Home Assistant-Tools für diesen Agenten deaktiviert, unabhängig vom Modus."
+            "live_search": "Web-Suchfunktionen aktivieren: 'off' (deaktiviert), 'web search', 'x search', 'full' (Web + X). Gilt sowohl für Pipeline- als auch für Tools-Modus.",
+            "prompt_tools": "Benutzerdefinierte Anweisungen für den Agenten (nur Tools-Modus).",
+            "reasoning_effort": "Grad des Denkaufwands für unterstützte Modelle (niedrig, hoch). Derzeit nur für grok-3-mini verfügbar.",
+            "use_extended_tools": "Aktiviert die Verwendung von benutzerdefinierten Tools, die in den Hauptintegrationsoptionen definiert sind (Extended OpenAI-Format). WARNUNG: Wenn diese Option aktiviert ist, werden die nativen Home Assistant-Tools für diesen Agenten deaktiviert, unabhängig vom Modus.",
+            "zero_data_retention": "Aktiviert den Zero Data Retention-Modus. Der Verlauf wird nicht auf xAI-Servern gespeichert, sondern lokal über ein verschlüsseltes Blob verwaltet. Diese Option deaktiviert automatisch 'Nachrichten speichern'."
           }
         }
       },
@@ -121,15 +134,13 @@
             "name": "Name",
             "tokens_per_million": "Tokens pro Million",
             "xai_pricing_conversion_factor": "xAI Preiskonvertierungsfaktor",
-            "pricing_update_interval_hours": "Preisaktualisierungsintervall (Stunden)",
-            "cost_per_tool_call": "Kosten pro Tool-Aufruf (USD)"
+            "pricing_update_interval_hours": "Preisaktualisierungsintervall (Stunden)"
           },
           "data_description": {
             "name": "Beschreibender Name für die Token-Sensoren.",
             "tokens_per_million": "Teilungsfaktor für Token-Preisberechnungen. Standard: 1.000.000.",
             "xai_pricing_conversion_factor": "xAI API gibt Preise in Einheiten zurück, die in USD pro Million Tokens umgerechnet werden müssen. Standard: 10.000.",
-            "pricing_update_interval_hours": "Wie oft Preise von der xAI API abgerufen werden. Standard: 48 Stunden.",
-            "cost_per_tool_call": "Standardkosten pro serverseitigem Tool-Aufruf (wird als Fallback verwendet, wenn das Tool nicht in der Preisübersicht ist). Die meisten Tools kosten $5.00/1k Aufrufe = 0.005, Collections Search kostet $2.50/1k = 0.0025. Standard: 0.005."
+            "pricing_update_interval_hours": "Wie oft Preise von der xAI API abgerufen werden. Standard: 48 Stunden."
           }
         }
       },
@@ -148,73 +159,74 @@
           "title": "xAI Task",
           "data": {
             "name": "Name",
-            "prompt": "Prompt",
+            "ai_task_prompt": "Prompt",
             "vision_prompt": "Vision-Prompt",
-            "api_host": "API-Host ('api.x.ai', 'us-east-1.api.x.ai' oder 'eu-west-1.api.x.ai')",
             "chat_model": "Modell",
             "image_model": "Bildgenerierungsmodell",
             "vision_model": "Fotoanalysemodell",
             "max_tokens": "Maximale Tokens",
             "temperature": "Temperatur",
-            "top_p": "Top P"
+            "top_p": "Top P",
+            "reasoning_effort": "Denkaufwand"
           },
           "data_description": {
             "name": "Beschreibender Name für diese KI-Aufgabe.",
-            "prompt": "Vollständiger System-Prompt für die KI-Aufgabe. Ersetzt den Standard. Bearbeiten Sie mit Vorsicht, da es das Modellverhalten definiert (z.B. JSON-Ausgabeformat).",
+            "ai_task_prompt": "Vollständiger System-Prompt für die KI-Aufgabe. Ersetzt den Standard. Bearbeiten Sie mit Vorsicht, da es das Modellverhalten definiert (z.B. JSON-Ausgabeformat).",
             "vision_prompt": "System-Prompt für Fotoanalyse. Definiert, wie das Vision-Modell Bilder analysieren soll (z.B. prägnant, detailliert, faktisch).",
-            "api_host": "API-Endpunkt Hostname. Verwenden Sie 'api.x.ai' für globales Routing mit automatischer Umleitung zu einem regionalen Host oder geben Sie direkt einen regionalen Host an.",
             "chat_model": "Wählen Sie das zu verwendende Grok-Modell.",
             "image_model": "Modell ausschließlich für die Bildgenerierung verwendet.",
             "vision_model": "Modell ausschließlich für die Fotoanalyse verwendet (Dokumente, Diagramme, Grafiken, Screenshots, Fotografien).",
             "max_tokens": "Maximale Anzahl zu generierender Tokens.",
             "temperature": "Steuert die Zufälligkeit der Antworten (0.0 = deterministisch, 2.0 = sehr kreativ).",
-            "top_p": "Steuert die Vielfalt der Antworten über Nucleus Sampling (nicht unterstützt von grok-4)."
+            "top_p": "Steuert die Vielfalt über Nucleus-Sampling. Wird von allen Modellen unterstützt.",
+            "reasoning_effort": "Grad des Denkaufwands für unterstützte Modelle (niedrig, hoch). Derzeit nur für grok-3-mini verfügbar."
           }
         }
       },
       "abort": {
         "reconfigure_successful": "Konfiguration erfolgreich aktualisiert!"
       }
-    },
-    "code_fast": {
-      "initiate_flow": {
-        "user": "Grok Code Fast hinzufügen",
-        "reconfigure": "Grok Code Fast neu konfigurieren"
-      },
-      "entry_type": "code_fast",
-      "step": {
-        "init": {
-          "title": "Grok Code Fast",
-          "data": {
-            "name": "Name",
-            "prompt_code": "Prompt",
-            "api_host": "API-Host ('api.x.ai', 'us-east-1.api.x.ai' oder 'eu-west-1.api.x.ai')",
-            "chat_model": "Modell",
-            "max_tokens": "Maximale Tokens",
-            "temperature": "Temperatur",
-            "top_p": "Top P",
-            "live_search": "Live-Suchmodus",
-            "store_messages": "Nachrichten speichern",
-            "assistant_name": "Assistentenname",
-            "reasoning_effort": "Denkaufwand"
-          },
-          "data_description": {
-            "name": "Beschreibender Name für diese Grok Code Fast Aufgabe.",
-            "prompt_code": "Optionale benutzerdefinierte Anweisungen, die an die Standard-Eingabeaufforderung angehängt werden. Verwenden Sie dies für projektspezifische Regeln oder Codierungskonventionen. Lassen Sie das Feld leer, um nur die Standard-Eingabeaufforderung zu verwenden.",
-            "api_host": "API-Endpunkt Hostname. Verwenden Sie 'api.x.ai' für globales Routing mit automatischer Umleitung zu einem regionalen Host oder geben Sie direkt einen regionalen Host an.",
-            "chat_model": "Wählen Sie das zu verwendende Grok-Modell.",
-            "max_tokens": "Maximale Anzahl zu generierender Tokens.",
-            "temperature": "Steuert die Zufälligkeit der Antworten (0.0 = deterministisch, 2.0 = sehr kreativ).",
-            "top_p": "Steuert die Vielfalt der Antworten über Nucleus Sampling (nicht unterstützt von grok-4).",
-            "live_search": "Web-Suchfunktionen aktivieren: 'off' (deaktiviert), 'auto' (Modell entscheidet), 'on' (immer aktiviert)",
-            "store_messages": "Verwenden Sie den serverseitigen Speicher von xAI, um den Konversationskontext beizubehalten. Die Speicherparameter (Dauer, Anzahl der Runden) werden auf Integrationsebene konfiguriert und erkennen automatisch Anfragen von Benutzern oder Geräten.",
-            "assistant_name": "Der Name, den der Assistent zur Identifizierung verwendet (z. B. 'Grok Code Fast', 'CodeBot', 'DevAssistant'). Das Ändern dieses Werts startet eine neue Konversation, und der vorherige Verlauf wird unzugänglich.",
-            "reasoning_effort": "Denkaufwand für Modelle, die dies unterstützen (niedrig, mittel, hoch)"
-          }
+    }
+  },
+  "services": {
+    "clear_memory": {
+      "name": "Konversationsspeicher löschen",
+      "description": "Konversationsspeicher für ausgewählte Benutzer oder Sprachsatelliten löschen. Der Dienst verarbeitet automatisch sowohl lokale als auch serverseitige Daten basierend auf Ihrer Konfiguration.",
+      "fields": {
+        "user_id": {
+          "name": "Benutzer",
+          "description": "Wählen Sie Benutzer aus, deren Konversationsverlauf gelöscht werden soll"
+        },
+        "satellite_id": {
+          "name": "Sprachsatelliten",
+          "description": "Wählen Sie Sprachassistenten-Geräte aus, deren Konversationsverlauf gelöscht werden soll"
+        },
+        "delete_all": {
+          "name": "Alles löschen",
+          "description": "ALLE Konversationsspeicher löschen (alle Benutzer und Geräte). Mit Vorsicht verwenden."
+        },
+        "include_server": {
+          "name": "Serverdaten einschließen",
+          "description": "Auch auf xAI-Servern gespeicherte Konversationen löschen (falls vorhanden). Rein lokale Daten (ZDR-Modus) werden immer gelöscht."
+        },
+        "only_inactive": {
+          "name": "Nur inaktive Konversationen",
+          "description": "Nur Konversationen löschen, die länger als der konfigurierte Zeitraum (Standard 28 Tage) inaktiv waren."
         }
-      },
-      "abort": {
-        "reconfigure_successful": "Konfiguration erfolgreich aktualisiert!"
+      }
+    },
+    "manage_sensors": {
+      "name": "Sensoren verwalten",
+      "description": "Wartungsoperationen für xAI-Integrationssensoren durchführen. Wählen Sie eine oder beide Aktionen.",
+      "fields": {
+        "reload_pricing": {
+          "name": "Preisdaten neu laden",
+          "description": "Erzwingt die Aktualisierung der Modellpreise von der xAI-API."
+        },
+        "reset_stats": {
+          "name": "Token-Statistiken zurücksetzen",
+          "description": "Alle Token-Nutzungszähler auf Null zurücksetzen."
+        }
       }
     }
   }

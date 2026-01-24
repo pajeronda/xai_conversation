@@ -1,0 +1,233 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Configurare xAI Conversation",
+        "description": "Configurează integrarea xAI Conversation pentru Home Assistant. Endpoint-ul API este configurat global pentru toți agenții. Instrumentele și setările pipeline-ului inteligent pot fi ajustate pentru fiecare agent, dacă este necesar.",
+        "data": {
+          "api_key": "Cheie API",
+          "api_host": "Endpoint API",
+          "assistant_name": "Nume Asistent",
+          "live_search": "Mod Căutare Live",
+          "send_user_name": "Include numele utilizatorului în mesaje"
+        },
+        "data_description": {
+          "api_key": "Cheia ta API xAI (începe cu 'xai-').",
+          "api_host": "Hostname-ul endpoint-ului API. Folosește 'api.x.ai' pentru rutare globală cu redirecționare automată către o gazdă regională sau specifică direct o gazdă regională.",
+          "assistant_name": "Numele cu care asistentul se va identifica (ex. 'Jarvis', 'Alexa', 'HAL').",
+          "live_search": "Activează capabilitățile de căutare web: 'off' (dezactivat), 'web search', 'x search', 'full' (web + x)",
+          "send_user_name": "Include numele utilizatorului Home Assistant în mesajele către Grok."
+        }
+      },
+      "confirm": {
+        "title": "Confirmați informațiile cheii API",
+        "description": "Cheie API validată cu succes. Vă rugăm să examinați detaliile de mai jos:\n\n**Nume:** {name}\n**ID-ul echipei:** {team_id}\n**Stare:** ✅ OK"
+      }
+    },
+    "error": {
+      "invalid_api_key": "Cheie API invalidă. Trebuie să înceapă cu 'xai-'.",
+      "api_key_disabled": "Cheia API a fost dezactivată în panoul de control xAI.",
+      "api_key_blocked": "Cheia API a fost blocată de xAI.",
+      "team_blocked": "Contul de echipă asociat a fost blocat.",
+      "missing_dependency": "Dependența necesară 'xai_sdk' nu este instalată.",
+      "unknown": "A apărut o eroare neașteptată. Te rog încearcă din nou."
+    },
+    "create_entry": {
+      "default": "Integrarea xAI Conversation a fost configurată cu succes!"
+    }
+  },
+  "options": {
+    "error": {
+      "invalid_yaml": "Configurație YAML invalidă. Te rog verifică sintaxa și câmpurile obligatorii."
+    },
+    "step": {
+      "init": {
+        "title": "Configurare xAI",
+        "description": "Configurează parametrii de memorie pentru utilizatori și dispozitive de asistență vocală, precum și instrumente extinse.",
+        "data": {
+          "api_host": "Endpoint API",
+          "use_extended_tools": "Activează Configurare Instrumente Extinse",
+          "extended_tools_yaml": "Configurare YAML Instrumente Extinse",
+          "memory_user_ttl_hours": "Memorie Utilizator: Durată (ore)",
+          "memory_device_ttl_hours": "Memorie Dispozitiv: Durată (ore)",
+          "memory_cleanup_interval_hours": "Interval Curățare Memorie (ore)",
+          "memory_remote_delete": "Șterge de pe serverele xAI la curățare"
+        },
+        "data_description": {
+          "api_host": "Hostname-ul endpoint-ului API. Folosește 'api.x.ai' pentru rutare globală cu redirecționare automată către o gazdă regională sau specifică direct o gazdă regională: 'us-east-1.api.x.ai' sau 'eu-west-1.api.x.ai'.",
+          "use_extended_tools": "Activează pentru a configura instrumente personalizate în format Extended OpenAI Conversation.",
+          "extended_tools_yaml": "Definește aici instrumentele tale personalizate. Formatul este complet compatibil cu Extended OpenAI Conversation. Poți copia/lipi configurația existentă.",
+          "memory_user_ttl_hours": "Durata conversațiilor pentru utilizatori (smartphone, PC, tabletă). Implicit: 672 ore (30 zile)",
+          "memory_device_ttl_hours": "Durata conversațiilor pentru dispozitive (sateliți asistență vocală). Implicit: 672 ore (7 zile)",
+          "memory_cleanup_interval_hours": "Frecvența cu care intrările de memorie expirate sunt curățate. Implicit: 24 ore",
+          "memory_remote_delete": "Dacă este activat, oricând mesajele locale sunt curățate (periodic sau manual), acestea vor fi șterse permanent și de pe serverele xAI."
+        }
+      }
+    }
+  },
+  "config_subentries": {
+    "conversation": {
+      "initiate_flow": {
+        "user": "Adaugă agent conversațional",
+        "reconfigure": "Reconfigurează agent conversațional"
+      },
+      "entry_type": "conversation",
+      "step": {
+        "init": {
+          "title": "xAI Conversation",
+          "data": {
+            "name": "Nume",
+            "assistant_name": "Nume Asistent",
+            "location_context": "Locație",
+            "chat_model": "Model",
+            "max_tokens": "Max tokeni",
+            "temperature": "Temperatură",
+            "top_p": "Top P",
+            "use_intelligent_pipeline": "Activează Pipeline Inteligent",
+            "prompt_tools": "Prompt personalizat (mod instrumente)",
+            "pipeline_prompt": "Instrucțiuni pipeline (adăugate la cele implicite)",
+            "allow_smart_home_control": "Permite control smart home",
+            "live_search": "Mod Căutare Live",
+            "store_messages": "Memorie server-side",
+            "send_user_name": "Include numele utilizatorului în mesaje",
+            "show_citations": "Arată citații în chat",
+            "reasoning_effort": "Nivel raționament",
+            "use_extended_tools": "Folosește Extended Tools (Configurare Globală)",
+            "zero_data_retention": "Zero Data Retention (ZDR)"
+          },
+          "data_description": {
+            "name": "Un nume descriptiv pentru acest agent conversațional.",
+            "assistant_name": "Numele cu care asistentul se va identifica (ex. 'Jarvis', 'Alexa', 'HAL'). Modificarea acestei valori va începe o nouă conversație și istoricul anterior nu va mai fi accesibil.",
+            "location_context": "Orașul sau locul unde locuiești (ex. 'Roma, IT'). Ajută Grok cu căutări locale precum vremea și știrile. Dacă e gol, folosește fusul orar din Home Assistant.",
+            "chat_model": "Selectează modelul Grok de utilizat.",
+            "max_tokens": "Numărul maxim de tokeni de generat.",
+            "temperature": "Controlează aleatoriul răspunsurilor (0.0 = deterministic, 2.0 = foarte creativ).",
+            "top_p": "Controlează diversitatea răspunsurilor prin nucleus sampling. Suportat de toate modelele.",
+            "use_intelligent_pipeline": "Activează un mod inteligent care rutează automat comenzile către Home Assistant sau oferă răspunsuri conversaționale. Dacă este dezactivat, se bazează pe API-ul standard LLM Home Assistant pentru utilizarea instrumentelor.",
+            "pipeline_prompt": "Text opțional adăugat la prompt-ul pipeline implicit. Folosește-l pentru intenții personalizate sau reguli locale.",
+            "allow_smart_home_control": "Dacă este activat, asistentul poate executa comenzi smart home. Dacă este dezactivat, răspunde doar conversațional. Modificarea acestei setări va începe o nouă conversație.",
+            "store_messages": "Folosește memoria server-side xAI pentru a reduce numărul de tokeni trimiși cu fiecare cerere. Parametrii de memorie (TTL, ștergere la distanță) sunt configurați la nivel de integrare.",
+            "send_user_name": "Adaugă numele utilizatorului Home Assistant sau numele dispozitivului Assist voice la chat-ul cu Grok.",
+            "show_citations": "Adaugă citații de căutare la răspunsurile din chat. Util pentru interfețe UI/chat dar poate fi zgomotos pentru asistenți vocali. Implicit: OPRIT (recomandat pentru voce).",
+            "live_search": "Activează capabilitățile de căutare web: 'off' (dezactivat), 'web search', 'x search', 'full' (web + x). Se aplică atât modului pipeline cât și instrumentelor.",
+            "prompt_tools": "Instrucțiuni personalizate pentru agent (doar mod instrumente).",
+            "reasoning_effort": "Nivelul de efort de raționament pentru modelele suportate (scăzut, ridicat). Disponibil în prezent doar pentru grok-3-mini.",
+            "use_extended_tools": "Permite utilizarea instrumentelor personalizate definite în opțiunile principale ale integrării (format Extended OpenAI). ATENȚIE: Activarea acestei opțiuni va dezactiva instrumentele native standard Home Assistant pentru acest agent, indiferent de mod.",
+            "zero_data_retention": "Activează modul Zero Data Retention. Istoricul nu este salvat pe serverele xAI, ci gestionat local printr-un blob criptat. Această opțiune dezactivează automat memoria server-side."
+          }
+        }
+      },
+      "abort": {
+        "reconfigure_successful": "Configurare actualizată cu succes!"
+      }
+    },
+    "sensors": {
+      "initiate_flow": {
+        "user": "Adaugă senzori token",
+        "reconfigure": "Reconfigurează senzori token"
+      },
+      "entry_type": "sensor",
+      "step": {
+        "init": {
+          "title": "Senzori Token xAI",
+          "data": {
+            "name": "Nume",
+            "tokens_per_million": "Tokeni per milion",
+            "xai_pricing_conversion_factor": "Factor conversie preț xAI",
+            "pricing_update_interval_hours": "Interval actualizare preț (ore)"
+          },
+          "data_description": {
+            "name": "Nume descriptiv pentru senzorii de tokeni.",
+            "tokens_per_million": "Factor de divizare pentru calculele prețului tokenilor. Implicit: 1.000.000.",
+            "xai_pricing_conversion_factor": "API-ul xAI returnează prețuri în unități care necesită conversie la USD per milion de tokeni. Implicit: 10.000.",
+            "pricing_update_interval_hours": "Cât de des se preiau prețuri actualizate de la API-ul xAI. Implicit: 48 ore."
+          }
+        }
+      },
+      "abort": {
+        "reconfigure_successful": "Configurare actualizată cu succes!"
+      }
+    },
+    "ai_task": {
+      "initiate_flow": {
+        "user": "Adaugă sarcină AI",
+        "reconfigure": "Reconfigurează sarcină AI"
+      },
+      "entry_type": "ai_task",
+      "step": {
+        "init": {
+          "title": "xAI Task",
+          "data": {
+            "name": "Nume",
+            "ai_task_prompt": "Prompt",
+            "vision_prompt": "Prompt Viziune",
+            "chat_model": "Model",
+            "image_model": "Model Imagine",
+            "vision_model": "Model Viziune",
+            "max_tokens": "Max tokeni",
+            "temperature": "Temperatură",
+            "top_p": "Top P",
+            "reasoning_effort": "Nivel raționament"
+          },
+          "data_description": {
+            "name": "Nume descriptiv pentru această sarcină AI.",
+            "ai_task_prompt": "Prompt-ul complet al sistemului pentru sarcina AI. Înlocuiește valoarea implicită. Editează cu atenție, deoarece definește comportamentul modelului (ex. formatul de ieșire JSON).",
+            "vision_prompt": "Prompt-ul sistemului pentru analiza foto. Definește cum ar trebui modelul de viziune să analizeze imaginile (ex. concis, detaliat, factual).",
+            "chat_model": "Selectează modelul Grok de utilizat.",
+            "image_model": "Model utilizat exclusiv pentru generarea imaginilor.",
+            "vision_model": "Model utilizat exclusiv pentru analiza fotografiilor (documente, diagrame, grafice, capturi de ecran, fotografii).",
+            "max_tokens": "Numărul maxim de tokeni de generat.",
+            "temperature": "Controlează aleatoriul răspunsurilor (0.0 = deterministic, 2.0 = foarte creativ).",
+            "top_p": "Controlează diversitatea răspunsurilor prin nucleus sampling. Suportat de toate modelele.",
+            "reasoning_effort": "Nivelul de efort de raționament pentru modelele suportate (scăzut, ridicat). Disponibil în prezent doar pentru grok-3-mini."
+          }
+        }
+      },
+      "abort": {
+        "reconfigure_successful": "Configurare actualizată cu succes!"
+      }
+    }
+  },
+  "services": {
+    "clear_memory": {
+      "name": "Șterge Memoria Conversației",
+      "description": "Șterge memoria conversației pentru utilizatorii sau sateliții vocali selectați. Serviciul gestionează automat atât datele locale, cât și cele de pe server, în funcție de configurație.",
+      "fields": {
+        "user_id": {
+          "name": "Utilizatori",
+          "description": "Selectează utilizatorii a căror istorie a conversațiilor trebuie ștearsă"
+        },
+        "satellite_id": {
+          "name": "Sateliți Vocali",
+          "description": "Selectează dispozitivele de asistență vocală a căror istorie a conversațiilor trebuie ștearsă"
+        },
+        "delete_all": {
+          "name": "Șterge Tot",
+          "description": "Șterge TOATĂ memoria conversațiilor (toți utilizatorii și dispozitivele). Folosește cu precauție."
+        },
+        "include_server": {
+          "name": "Include Date Server",
+          "description": "Șterge și conversațiile stocate pe serverele xAI (dacă există). Datele doar locale (mod ZDR) sunt întotdeauna șterse."
+        },
+        "only_inactive": {
+          "name": "Doar Conversații Inactive",
+          "description": "Șterge doar conversațiile inactive pentru mai mult timp decât perioada configurată (implicit 28 zile)."
+        }
+      }
+    },
+    "manage_sensors": {
+      "name": "Administrare Senzori",
+      "description": "Efectuează operațiuni de întreținere pe senzorii integrării xAI. Selectează una sau ambele acțiuni.",
+      "fields": {
+        "reload_pricing": {
+          "name": "Reîncarcă Prețurile",
+          "description": "Forțează actualizarea datelor de preț ale modelelor din API-ul xAI."
+        },
+        "reset_stats": {
+          "name": "Resetează Statistici Token",
+          "description": "Resetează toți contoarele de utilizare a tokenilor la zero."
+        }
+      }
+    }
+  }
+}

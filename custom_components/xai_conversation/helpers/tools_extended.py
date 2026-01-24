@@ -1,9 +1,8 @@
-"""Extended Tools system - Compatible with extended_openai_conversation format."""
+"""Extended Tools system - Configuration-driven tool definition."""
 
 from abc import ABC, abstractmethod
 from datetime import timedelta
 from typing import Any
-import asyncio
 import os
 import sqlite3
 import time
@@ -40,7 +39,6 @@ from homeassistant.exceptions import HomeAssistantError, ServiceNotFound
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.script import Script
 from homeassistant.helpers.template import Template
-from homeassistant.helpers.event import async_call_later
 import homeassistant.util.dt as dt_util
 
 from ..const import (
@@ -64,40 +62,11 @@ class ExtendedToolError(HomeAssistantError):
     """Base error for extended tools."""
 
 
-def get_function_executor(value: str):
+def _get_function_executor(value: str):
     function_executor = FUNCTION_EXECUTORS.get(value)
     if function_executor is None:
         raise FunctionNotFound(value)
     return function_executor
-
-
-def convert_to_template(
-    settings,
-    template_keys=["data", "event_data", "target", "service"],
-    hass: HomeAssistant | None = None,
-):
-    _convert_to_template(settings, template_keys, hass, [])
-
-
-def _convert_to_template(settings, template_keys, hass, parents: list[str]):
-    if isinstance(settings, dict):
-        for key, value in settings.items():
-            if isinstance(value, str) and (
-                key in template_keys or set(parents).intersection(template_keys)
-            ):
-                settings[key] = Template(value, hass)
-            if isinstance(value, dict):
-                parents.append(key)
-                _convert_to_template(value, template_keys, hass, parents)
-                parents.pop()
-            if isinstance(value, list):
-                parents.append(key)
-                for item in value:
-                    _convert_to_template(item, template_keys, hass, parents)
-                parents.pop()
-    if isinstance(settings, list):
-        for setting in settings:
-            _convert_to_template(setting, template_keys, hass, parents)
 
 
 def _get_rest_data(hass, rest_config, arguments):
@@ -158,6 +127,7 @@ class FunctionExecutor(ABC):
         arguments,
         context: Context,
         exposed_entities,
+        tool_name: str | None = None,
     ):
         """execute function"""
 
@@ -174,6 +144,7 @@ class NativeFunctionExecutor(FunctionExecutor):
         arguments,
         context: Context,
         exposed_entities,
+        tool_name: str | None = None,
     ):
         name = function["name"]
         if name in ("execute_service", "execute_services"):
@@ -214,6 +185,7 @@ class NativeFunctionExecutor(FunctionExecutor):
         service_argument,
         context: Context,
         exposed_entities,
+        tool_name: str | None = None,
     ):
         domain = service_argument["domain"]
         service = service_argument["service"]
@@ -242,7 +214,7 @@ class NativeFunctionExecutor(FunctionExecutor):
             )
             return {"success": True}
         except HomeAssistantError as e:
-            LOGGER.error(e)
+            LOGGER.error("[extended] service call failed: %s", e)
             return {"error": str(e)}
 
     async def execute_service(
@@ -252,6 +224,7 @@ class NativeFunctionExecutor(FunctionExecutor):
         arguments,
         context: Context,
         exposed_entities,
+        tool_name: str | None = None,
     ):
         result = []
         for service_argument in arguments.get("list", []):
@@ -269,6 +242,7 @@ class NativeFunctionExecutor(FunctionExecutor):
         arguments,
         context: Context,
         exposed_entities,
+        tool_name: str | None = None,
     ):
         automation_config = yaml.safe_load(arguments["automation_config"])
         config = {"id": str(round(time.time() * 1000))}
@@ -309,6 +283,7 @@ class NativeFunctionExecutor(FunctionExecutor):
         arguments,
         context: Context,
         exposed_entities,
+        tool_name: str | None = None,
     ):
         start_time = arguments.get("start_time")
         end_time = arguments.get("end_time")
@@ -349,6 +324,7 @@ class NativeFunctionExecutor(FunctionExecutor):
         arguments,
         context: Context,
         exposed_entities,
+        tool_name: str | None = None,
     ):
         energy_manager: energy.data.EnergyManager = await energy.async_get_manager(hass)
         return energy_manager.data
@@ -360,6 +336,7 @@ class NativeFunctionExecutor(FunctionExecutor):
         arguments,
         context: Context,
         exposed_entities,
+        tool_name: str | None = None,
     ):
         user = await hass.auth.async_get_user(context.user_id)
         return {"name": user.name if user and hasattr(user, "name") else "Unknown"}
@@ -371,6 +348,7 @@ class NativeFunctionExecutor(FunctionExecutor):
         arguments,
         context: Context,
         exposed_entities,
+        tool_name: str | None = None,
     ):
         statistic_ids = arguments.get("statistic_ids", [])
         start_time = dt_util.as_utc(dt_util.parse_datetime(arguments["start_time"]))
@@ -415,13 +393,14 @@ class ScriptFunctionExecutor(FunctionExecutor):
         arguments,
         context: Context,
         exposed_entities,
+        tool_name: str | None = None,
     ):
         script = Script(
             hass,
             function["sequence"],
-            "extended_openai_conversation",
+            f"{DOMAIN}: {tool_name or 'extended_tool'}",
             DOMAIN,
-            running_description="[extended_openai_conversation] function",
+            running_description=f"Running [{tool_name or 'extended_tool'}] sequence",
             logger=LOGGER,
         )
 
@@ -448,6 +427,7 @@ class TemplateFunctionExecutor(FunctionExecutor):
         arguments,
         context: Context,
         exposed_entities,
+        tool_name: str | None = None,
     ):
         return function["value_template"].async_render(
             arguments,
@@ -474,6 +454,7 @@ class RestFunctionExecutor(FunctionExecutor):
         arguments,
         context: Context,
         exposed_entities,
+        tool_name: str | None = None,
     ):
         config = function
         rest_data = _get_rest_data(hass, config, arguments)
@@ -509,6 +490,7 @@ class ScrapeFunctionExecutor(FunctionExecutor):
         arguments,
         context: Context,
         exposed_entities,
+        tool_name: str | None = None,
     ):
         config = function
         rest_data = _get_rest_data(hass, config, arguments)
@@ -573,12 +555,11 @@ class ScrapeFunctionExecutor(FunctionExecutor):
                 else:
                     value = tag.text
         except IndexError:
-            LOGGER.warning("Index '%s' not found", index)
+            LOGGER.warning("[extended] scrape: index '%s' not found", index)
             value = None
         except KeyError:
-            LOGGER.warning("Attribute '%s' not found", attr)
+            LOGGER.warning("[extended] scrape: attr '%s' not found", attr)
             value = None
-        LOGGER.debug("Parsed value: %s", value)
         return value
 
 
@@ -601,7 +582,7 @@ class CompositeFunctionExecutor(FunctionExecutor):
             raise vol.Invalid("expected dictionary")
 
         composite_schema = {vol.Optional("response_variable"): str}
-        function_executor = get_function_executor(value["type"])
+        function_executor = _get_function_executor(value["type"])
 
         return function_executor.data_schema.extend(composite_schema)(value)
 
@@ -612,14 +593,15 @@ class CompositeFunctionExecutor(FunctionExecutor):
         arguments,
         context: Context,
         exposed_entities,
+        tool_name: str | None = None,
     ):
         config = function
         sequence = config["sequence"]
 
         for executor_config in sequence:
-            function_executor = get_function_executor(executor_config["type"])
+            function_executor = _get_function_executor(executor_config["type"])
             result = await function_executor.execute(
-                hass, executor_config, arguments, context, exposed_entities
+                hass, executor_config, arguments, context, exposed_entities, tool_name
             )
 
             response_variable = executor_config.get("response_variable")
@@ -679,6 +661,7 @@ class SqliteFunctionExecutor(FunctionExecutor):
         arguments,
         context: Context,
         exposed_entities,
+        tool_name: str | None = None,
     ):
         db_url = self.set_url_read_only(
             function.get("db_url", self.get_default_db_url(hass))
@@ -696,7 +679,6 @@ class SqliteFunctionExecutor(FunctionExecutor):
         template_arguments.update(arguments)
 
         q = Template(query, hass).async_render(template_arguments)
-        LOGGER.info("Rendered query: %s", q)
 
         with sqlite3.connect(db_url, uri=True) as conn:
             cursor = conn.cursor().execute(q)
@@ -714,17 +696,13 @@ class SqliteFunctionExecutor(FunctionExecutor):
 
 
 class ExtendedToolsRegistry:
-    """Registry to manage and execute extended tools."""
+    """Registry to manage and execute extended tools defined in YAML."""
 
-    def __init__(
-        self, hass: HomeAssistant, yaml_config: str, xai_tool_constructor=None
-    ):
+    def __init__(self, hass: HomeAssistant, yaml_config: str):
         self._hass = hass
         self._tools: dict[str, dict] = {}  # name -> full_tool_config
-        self._specs_cache: list = []  # xAI tool objects
+        self._specs_cache: list[dict] = []  # tool specs (dicts)
         self._yaml_config = yaml_config
-        self._xai_tool_constructor = xai_tool_constructor
-        self._tool_descriptions_cache: str | None = None
         self._parse_config()
 
     def _parse_config(self) -> None:
@@ -735,11 +713,11 @@ class ExtendedToolsRegistry:
         try:
             tools = yaml.safe_load(self._yaml_config)
         except yaml.YAMLError as err:
-            LOGGER.error("Extended tools YAML error: %s", err)
+            LOGGER.error("[extended] YAML parse error: %s", err)
             return
 
         if not isinstance(tools, list):
-            LOGGER.error("Extended tools config must be a list")
+            LOGGER.error("[extended] config must be a list")
             return
 
         for tool in tools:
@@ -762,68 +740,34 @@ class ExtendedToolsRegistry:
                     validated_func = executor.data_schema(func)
                     func = validated_func
                 except vol.error.Error as err:
-                    LOGGER.error(
-                        "Extended tool %s: function validation failed: %s", name, err
-                    )
+                    LOGGER.error("[extended] %s: validation failed: %s", name, err)
                     continue
             else:
-                LOGGER.error(
-                    "Extended tool %s: unknown executor type '%s'", name, func_type
-                )
+                LOGGER.error("[extended] %s: unknown type '%s'", name, func_type)
                 continue
 
-            # Build xAI tool object if constructor available
-            if self._xai_tool_constructor:
-                try:
-                    xai_tool = self._xai_tool_constructor(
-                        name=name,
-                        description=spec.get("description", "Extended tool"),
-                        parameters=spec.get("parameters", {}),
-                    )
-                    self._specs_cache.append(xai_tool)
-                except Exception as err:
-                    LOGGER.error("Failed to create xAI tool for %s: %s", name, err)
-                    continue
-            else:
-                # Fallback: store as dict (for validation without xai_tool_constructor)
-                self._specs_cache.append(spec)
+            # Store spec as dict (neutral format)
+            self._specs_cache.append(spec)
 
             # Store tool with validated function config
             self._tools[name] = {"spec": spec, "function": func}
-
-        # Cache compact descriptions for prompt injection
-        descriptions = []
-        for name, tool_data in self._tools.items():
-            desc = tool_data["spec"].get("description", "No description")
-            descriptions.append(f"- **{name}**: {desc}")
-        self._tool_descriptions_cache = "\n".join(descriptions)
 
     @property
     def is_empty(self) -> bool:
         """Check if registry has no tools."""
         return len(self._tools) == 0
 
-    def get_tool_descriptions(self) -> str:
-        """Get textual descriptions of all tools for prompt.
-
-        Returns:
-            Bulleted list string containing name and description.
-        """
-        return self._tool_descriptions_cache or ""
-
     def get_specs_for_llm(self) -> list:
         """Return xAI tool objects for LLM."""
         return self._specs_cache
-
-    def has_function(self, name: str) -> bool:
-        """Check if function exists."""
-        return name in self._tools
 
     def get_tool_config(self, name: str) -> dict | None:
         """Get the full tool configuration (spec + function)."""
         return self._tools.get(name)
 
-    def get_delayed_function_config(self, function_config: dict, delay_args: Any) -> dict:
+    def get_delayed_function_config(
+        self, function_config: dict, delay_args: Any
+    ) -> dict:
         """Wrap a function config in a composite sequence with a script delay."""
         return {
             "type": "composite",
@@ -851,10 +795,15 @@ class ExtendedToolsRegistry:
 
         try:
             return await executor.execute(
-                self._hass, func_config, arguments, context, exposed_entities or []
+                self._hass,
+                func_config,
+                arguments,
+                context,
+                exposed_entities or [],
+                tool_name="raw_config",
             )
         except Exception as err:
-            LOGGER.exception("Error executing extended tool config")
+            LOGGER.exception("[extended] raw config execution failed")
             raise ExtendedToolError(f"Execution failed: {err}")
 
     async def execute(
@@ -878,10 +827,15 @@ class ExtendedToolsRegistry:
 
         try:
             return await executor.execute(
-                self._hass, func_config, arguments, context, exposed_entities or []
+                self._hass,
+                func_config,
+                arguments,
+                context,
+                exposed_entities or [],
+                tool_name=name,
             )
         except Exception as err:
-            LOGGER.exception("Error executing extended tool %s", name)
+            LOGGER.exception("[extended] exec '%s' failed", name)
             raise ExtendedToolError(f"Execution failed: {err}")
 
     @staticmethod

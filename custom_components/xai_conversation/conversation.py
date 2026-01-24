@@ -7,7 +7,6 @@ from typing import Literal
 
 # Home Assistant imports
 from homeassistant.const import MATCH_ALL
-from homeassistant.helpers import device_registry as ha_device_registry
 from homeassistant.core import HomeAssistant as HA_HomeAssistant
 from homeassistant.config_entries import ConfigSubentry as HA_ConfigSubentry
 from homeassistant.helpers.entity_platform import (
@@ -18,12 +17,7 @@ from homeassistant.components import conversation as ha_conversation
 # Local application imports
 from .const import (
     CONF_ALLOW_SMART_HOME_CONTROL,
-    CONF_CHAT_MODEL,
-    DEFAULT_MANUFACTURER,
-    DOMAIN,
     LOGGER,
-    RECOMMENDED_CHAT_MODEL,
-    SUBENTRY_TYPE_CONVERSATION,
 )
 from .entity import XAIBaseLLMEntity
 
@@ -35,7 +29,7 @@ async def async_setup_entry(
 ) -> None:
     """Set up xAI conversation entities."""
     for subentry in config_entry.subentries.values():
-        if subentry.subentry_type != SUBENTRY_TYPE_CONVERSATION:
+        if subentry.subentry_type != "conversation":
             continue
 
         async_add_entities(
@@ -58,31 +52,12 @@ class XAIConversationEntity(
     def __init__(self, config_entry, subentry: HA_ConfigSubentry) -> None:
         """Initialize the xAI conversation entity."""
         super().__init__(config_entry, subentry)
-        self.config_entry = config_entry
-        self.subentry = subentry
 
-        # Get model from subentry data
-        self._model = subentry.data.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL)
-
-        # Entity configuration
-        self._attr_unique_id = subentry.subentry_id
-
-        # Set supported features based on unified allow_control setting
-        allow_control = self.subentry.data.get(CONF_ALLOW_SMART_HOME_CONTROL, True)
-
-        if allow_control:
+        # Set supported features based on allow_control setting
+        if subentry.data.get(CONF_ALLOW_SMART_HOME_CONTROL):
             self._attr_supported_features = (
                 ha_conversation.ConversationEntityFeature.CONTROL
             )
-
-        # Device info following OpenAI pattern
-        self._attr_device_info = ha_device_registry.DeviceInfo(
-            identifiers={(DOMAIN, subentry.subentry_id)},
-            name=subentry.title,
-            manufacturer=DEFAULT_MANUFACTURER,
-            model=self._model,
-            entry_type=ha_device_registry.DeviceEntryType.SERVICE,
-        )
 
     @property
     def supported_languages(self) -> list[str] | Literal["*"]:
@@ -92,7 +67,7 @@ class XAIConversationEntity(
     async def async_added_to_hass(self) -> None:
         """When entity is added to Home Assistant."""
         await super().async_added_to_hass()
-        ha_conversation.async_set_agent(self.hass, self.config_entry, self)
+        ha_conversation.async_set_agent(self.hass, self.entry, self)
         LOGGER.debug("XAI Conversation agent registered: %s", self.entity_id)
 
     async def async_will_remove_from_hass(self) -> None:
@@ -102,7 +77,7 @@ class XAIConversationEntity(
         We only unregister the agent here. Memory cleanup is handled in __init__.async_remove_entry()
         which is called only when the integration is actually removed by the user.
         """
-        ha_conversation.async_unset_agent(self.hass, self.config_entry)
+        ha_conversation.async_unset_agent(self.hass, self.entry)
         await super().async_will_remove_from_hass()
 
     async def _async_handle_message(
@@ -119,8 +94,8 @@ class XAIConversationEntity(
         # Delegate to the appropriate processor
         # Each processor handles its own prompt construction and memory management independently
         await self._async_handle_chat_log(
-            user_input,
             chat_log,
+            user_input=user_input,
         )
 
         return ha_conversation.async_get_result_from_chat_log(user_input, chat_log)

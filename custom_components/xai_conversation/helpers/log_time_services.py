@@ -1,20 +1,15 @@
 """LogTimeServices - A centralized context manager for timing and logging service calls.
 
-This module provides the LogTimeServices class, which is designed to be used
-as an asynchronous context manager (`async with`). It automatically handles
-the start and end logging for any service call, and provides mechanisms to
-record the time spent in API calls vs. local processing.
+Provide automatic start/end logging and time tracking (API vs Local) for
+consistency across services.
 """
 
 from __future__ import annotations
 
 import time
 import logging
-from typing import TYPE_CHECKING, AsyncGenerator, Any
+from typing import AsyncGenerator, Any
 import contextlib
-
-if TYPE_CHECKING:
-    pass
 
 
 class LogTimeServices:
@@ -41,6 +36,10 @@ class LogTimeServices:
         self.api_time: float = 0.0
         self.total_time: float = 0.0
         self.local_process_time: float = 0.0
+        self.latency: float = 0.0  # Time to First Token (TTFT) or First Response
+        self.ttfb: float = 0.0  # Time to First Byte (Metadata)
+        self._first_chunk_received: bool = False
+        self._response_started: bool = False
 
     async def __aenter__(self) -> LogTimeServices:
         """Enter the context, log the start time and initial context."""
@@ -59,6 +58,13 @@ class LogTimeServices:
         self.total_time = time.time() - self.start_time
         self.local_process_time = self.total_time - self.api_time
 
+        # Calculate non-overlapping components for "human math"
+        # wait (TTFB) + think (TTFT-TTFB) + gen (TotalAPI-TTFT) + local (Total-TotalAPI) = Total
+        wait = self.ttfb
+        think = max(0.0, self.latency - self.ttfb)
+        gen = max(0.0, self.api_time - self.latency)
+        local = self.local_process_time
+
         # Prepare context for the final log, excluding any sensitive or overly verbose data
         log_context = self.context_info.copy()
 
@@ -66,9 +72,11 @@ class LogTimeServices:
             f"{k}={v}"
             for k, v in {
                 **log_context,
-                "duration": f"{self.total_time:.2f}s",
-                "api_time": f"{self.api_time:.2f}s",
-                "local_process_time": f"{self.local_process_time:.2f}s",
+                "total_time": f"{self.total_time:.2f}s",
+                "generation_time": f"{gen:.2f}s",
+                "think_time": f"{think:.2f}s",
+                "wait_time": f"{wait:.2f}s",
+                "local_time": f"{local:.2f}s",
             }.items()
         )
 
@@ -81,6 +89,13 @@ class LogTimeServices:
 
     def record_api_time(self, duration: float):
         """Add a specific duration to the total API time."""
+        if not self._response_started and duration > 0:
+            # TTFB is the wait for the very first response from API
+            self.ttfb = self.api_time + duration
+            self._response_started = True
+            # For non-streaming calls, latency (response time) is default if not set by content logic
+            if not self._first_chunk_received:
+                self.latency = self.ttfb
         self.api_time += duration
 
     @contextlib.asynccontextmanager
@@ -91,7 +106,13 @@ class LogTimeServices:
             yield
         finally:
             end = time.time()
-            self.api_time += end - start
+            duration = end - start
+            if not self._response_started and duration > 0:
+                self.ttfb = self.api_time + duration
+                self._response_started = True
+                if not self._first_chunk_received:
+                    self.latency = self.ttfb
+            self.api_time += duration
 
 
 async def timed_stream_generator(
@@ -122,5 +143,22 @@ async def timed_stream_generator(
             raise
 
         # Record time spent waiting for this chunk
-        timer.record_api_time(time.time() - start_wait)
+        chunk_wait = time.time() - start_wait
+        timer.record_api_time(chunk_wait)
+
+        # First contentful chunk marks the latency (TTFT)
+        if not timer._first_chunk_received:
+            # We check if the chunk actually contains content to be precise about 'Time to First TOKEN'
+            # (ignoring purely metadata chunks if they arrive earlier)
+            has_content = False
+            if hasattr(chunk, "content") and chunk.content:
+                has_content = True
+            elif isinstance(chunk, dict) and chunk.get("content"):
+                has_content = True
+
+            if has_content:
+                # Latency is the total api_time accumulated until the first contentful chunk
+                timer.latency = timer.api_time
+                timer._first_chunk_received = True
+
         yield chunk

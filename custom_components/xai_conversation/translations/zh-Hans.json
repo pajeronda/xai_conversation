@@ -2,32 +2,44 @@
   "config": {
     "step": {
       "user": {
-        "title": "xAI Grok 配置",
-        "description": "为 Home Assistant 配置 xAI Grok 集成。API 端点为所有代理全局配置。工具和智能管道设置可根据需要按代理进行调整。",
+        "title": "xAI Conversation 配置",
+        "description": "为 Home Assistant 配置 xAI Conversation 集成。API 端点为所有代理全局配置。工具和智能管道设置可根据需要按代理进行调整。",
         "data": {
           "api_key": "API 密钥",
           "api_host": "API 端点",
           "assistant_name": "助手名称",
-          "live_search": "实时搜索模式"
+          "live_search": "实时搜索模式",
+          "send_user_name": "在消息中包含用户名"
         },
         "data_description": {
           "api_key": "您的 xAI API 密钥（以 'xai-' 开头）。",
           "api_host": "API 端点主机名。使用 'api.x.ai' 进行全局路由并自动重定向到区域主机，或直接指定区域主机。",
           "assistant_name": "助手用于标识自己的名称（例如 'Jarvis'、'Alexa'、'HAL'）。",
-          "live_search": "启用网络搜索功能：'off'（禁用）、'auto'（模型决定）、'on'（始终启用）"
+          "live_search": "启用网络搜索功能：'off'（禁用）、'web search'、'x search'、'full'（web + x）",
+          "send_user_name": "在发送给 Grok 的消息中包含 Home Assistant 用户名。"
         }
+      },
+      "confirm": {
+        "title": "确认 API 密钥信息",
+        "description": "API 密钥验证成功。请查看以下详细信息：\n\n**名称：** {name}\n**团队 ID：** {team_id}\n**状态：** ✅ 正常"
       }
     },
     "error": {
       "invalid_api_key": "无效的 API 密钥。必须以 'xai-' 开头。",
+      "api_key_disabled": "API 密钥已在 xAI 控制面板中禁用。",
+      "api_key_blocked": "API 密钥已被 xAI 封锁。",
+      "team_blocked": "关联的团队帐户已被封锁。",
       "missing_dependency": "未安装所需依赖项 'xai_sdk'。",
       "unknown": "发生意外错误。请重试。"
     },
     "create_entry": {
-      "default": "xAI Grok 集成配置成功！"
+      "default": "xAI Conversation 集成配置成功！"
     }
   },
   "options": {
+    "error": {
+      "invalid_yaml": "无效的 YAML 配置。请检查语法和必需字段。"
+    },
     "step": {
       "init": {
         "title": "xAI 配置",
@@ -37,20 +49,18 @@
           "use_extended_tools": "启用 Extended Tools 配置",
           "extended_tools_yaml": "Extended Tools YAML 配置",
           "memory_user_ttl_hours": "用户内存持续时间（小时）",
-          "memory_user_max_turns": "用户内存最大轮次",
           "memory_device_ttl_hours": "设备内存持续时间（小时）",
-          "memory_device_max_turns": "设备内存最大轮次",
-          "memory_cleanup_interval_hours": "内存清理间隔（小时）"
+          "memory_cleanup_interval_hours": "内存清理间隔（小时）",
+          "memory_remote_delete": "清理时从 xAI 服务器删除"
         },
         "data_description": {
           "api_host": "API 端点主机名。使用 'api.x.ai' 进行全局路由并自动重定向到区域主机，或直接指定区域主机：'us-east-1.api.x.ai' 或 'eu-west-1.api.x.ai'。",
           "use_extended_tools": "启用以配置 Extended OpenAI Conversation 格式的自定义工具。",
           "extended_tools_yaml": "在此处定义您的自定义工具。格式与 Extended OpenAI Conversation 完全兼容。您可以直接复制粘贴现有配置。",
-          "memory_user_ttl_hours": "用户对话的持续时间（智能手机、PC、平板电脑）。默认：720 小时（30 天）",
-          "memory_user_max_turns": "为用户存储的最大对话轮次。默认：1000 轮",
-          "memory_device_ttl_hours": "设备对话的持续时间（语音助手卫星）。默认：168 小时（7 天）",
-          "memory_device_max_turns": "为设备存储的最大对话轮次。默认：100 轮",
-          "memory_cleanup_interval_hours": "清理过期内存条目的频率。默认：24 小时"
+          "memory_user_ttl_hours": "用户对话的持续时间（智能手机、PC、平板电脑）。默认：672 小时（30 天）",
+          "memory_device_ttl_hours": "设备对话的持续时间（语音助手卫星）。默认：672 小时（7 天）",
+          "memory_cleanup_interval_hours": "清理过期内存条目的频率。默认：24 小时",
+          "memory_remote_delete": "如果启用，每当清理本地消息（定期或手动）时，它们也将从 xAI 的远程服务器中永久删除。"
         }
       }
     }
@@ -68,39 +78,42 @@
           "data": {
             "name": "名称",
             "assistant_name": "助手名称",
-            "api_host": "API 主机（'api.x.ai'、'us-east-1.api.x.ai' 或 'eu-west-1.api.x.ai'）",
+            "location_context": "居住地",
             "chat_model": "模型",
             "max_tokens": "最大令牌数",
             "temperature": "温度",
             "top_p": "Top P",
             "use_intelligent_pipeline": "启用智能管道",
-            "prompt": "提示词",
+            "prompt_tools": "自定义提示词（工具模式）",
             "pipeline_prompt": "管道指令（添加到默认指令）",
             "allow_smart_home_control": "允许智能家居控制",
             "live_search": "实时搜索模式",
-            "store_messages": "存储消息",
+            "store_messages": "服务器端内存",
             "send_user_name": "在消息中包含用户名",
             "show_citations": "在聊天中显示引用",
             "reasoning_effort": "推理级别",
-            "use_extended_tools": "使用 Extended Tools（全局配置）"
+            "use_extended_tools": "使用 Extended Tools（全局配置）",
+            "zero_data_retention": "Zero Data Retention (ZDR)"
           },
           "data_description": {
+            "name": "该对话代理的描述性名称。",
             "assistant_name": "助手用于标识自己的名称（例如 'Jarvis'、'Alexa'、'HAL'）。更改此值将开始新对话，之前的历史记录将无法访问。",
-            "api_host": "API 端点主机名。使用 'api.x.ai' 进行全局路由并自动重定向到区域主机，或直接指定区域主机。",
+            "location_context": "您居住的城市或地点（例如 'Rome, IT'）。帮助 Grok 进行本地搜索，如天气和新闻。如果为空，则使用 Home Assistant 时区。",
             "chat_model": "选择要使用的 Grok 模型。",
             "max_tokens": "要生成的最大令牌数。",
             "temperature": "控制响应的随机性（0.0 = 确定性，2.0 = 非常有创意）。",
-            "top_p": "通过核采样控制响应的多样性（grok-4 不支持）。",
+            "top_p": "通过核采样控制响应的多样性。所有模型均支持。",
             "use_intelligent_pipeline": "启用智能模式，自动将命令路由到 Home Assistant 或提供对话响应。如果禁用，则使用 Home Assistant 的标准 LLM API 进行工具调用。",
             "pipeline_prompt": "添加到默认管道提示词的可选文本。对自定义规则或本地意图有用。",
             "allow_smart_home_control": "如果启用，助手可以执行智能家居命令。如果禁用，仅以对话方式响应。更改此设置将开始新对话。",
-            "store_messages": "使用 xAI 的服务器端内存，以减少每个请求需要发送的令牌。内存参数（持续时间、轮次数）在集成级别配置。",
+            "store_messages": "使用 xAI 的服务器端内存，以减少每个请求需要发送的令牌。内存参数（持续时间、远程删除）在集成级别配置。",
             "send_user_name": "将 Home Assistant 用户名或 Assist 语音设备名称添加到与 Grok 的聊天中。",
             "show_citations": "将搜索引用添加到聊天响应。对 UI/聊天界面有用，但对语音助手可能会很嘈杂。默认：关闭（建议用于语音）。",
-            "live_search": "启用网络搜索功能：'off'（禁用）、'auto'（模型决定）、'on'（始终启用）。适用于管道和工具模式。",
-            "prompt": "代理的自定义指令（仅工具模式）。",
-            "reasoning_effort": "支持此功能的模型的推理级别（低、中、高、最大）。仅适用于 grok-4 和 grok-4-fast 模型。",
-            "use_extended_tools": "启用在主集成选项中定义的自定义工具（Extended OpenAI 格式）。警告：启用此选项将禁用此代理的标准 Home Assistant 原生工具，无论使用何种模式。"
+            "live_search": "启用网络搜索功能：'off'（禁用）、'web search'、'x search'、'full'（web + x）。适用于管道和工具模式。",
+            "prompt_tools": "代理的自定义指令（仅工具模式）。",
+            "reasoning_effort": "支持此功能的模型的推理级别（低、高）。目前仅适用于 grok-3-mini 模型。",
+            "use_extended_tools": "启用在主集成选项中定义的自定义工具（Extended OpenAI 格式）。警告：启用此选项将禁用此代理的标准 Home Assistant 原生工具，无论使用何种模式。",
+            "zero_data_retention": "启用零数据保留 (ZDR) 模式。历史记录不保存在 xAI 服务器上，而是通过加密 blob 在本地管理。此选项自动禁用服务器端内存。"
           }
         }
       },
@@ -121,15 +134,13 @@
             "name": "名称",
             "tokens_per_million": "每百万令牌",
             "xai_pricing_conversion_factor": "xAI 价格转换系数",
-            "pricing_update_interval_hours": "价格更新间隔（小时）",
-            "cost_per_tool_call": "工具调用成本 (USD)"
+            "pricing_update_interval_hours": "价格更新间隔（小时）"
           },
           "data_description": {
             "name": "令牌传感器的描述性名称。",
             "tokens_per_million": "令牌价格计算的除数。默认：1,000,000。",
             "xai_pricing_conversion_factor": "xAI API 返回需要转换为每百万令牌 USD 的价格单位。默认：10,000。",
-            "pricing_update_interval_hours": "从 xAI API 获取更新价格的频率。默认：48 小时。",
-            "cost_per_tool_call": "服务器端工具调用的默认成本（如果工具不在价格表中则用作后备）。大多数工具成本为 $5.00/1k 次调用 = 0.005，Collections Search 成本为 $2.50/1k = 0.0025。默认：0.005。"
+            "pricing_update_interval_hours": "从 xAI API 获取更新价格的频率。默认：48 小时。"
           }
         }
       },
@@ -148,73 +159,74 @@
           "title": "xAI Task",
           "data": {
             "name": "名称",
-            "prompt": "提示词",
+            "ai_task_prompt": "提示词",
             "vision_prompt": "视觉提示词",
-            "api_host": "API 主机（'api.x.ai'、'us-east-1.api.x.ai' 或 'eu-west-1.api.x.ai'）",
             "chat_model": "模型",
             "image_model": "图像模型",
             "vision_model": "照片分析模型",
             "max_tokens": "最大令牌数",
             "temperature": "温度",
-            "top_p": "Top P"
+            "top_p": "Top P",
+            "reasoning_effort": "推理级别"
           },
           "data_description": {
             "name": "此 AI 任务的描述性名称。",
-            "prompt": "AI 任务的完整系统提示词。替换默认值。请谨慎编辑，因为它定义了模型的行为（例如 JSON 输出格式）。",
+            "ai_task_prompt": "AI 任务的完整系统提示词。替换默认值。请谨慎编辑，因为它定义了模型的行为（例如 JSON 输出格式）。",
             "vision_prompt": "照片分析的系统提示词。定义视觉模型应如何分析图像（例如简洁、详细、事实）。",
-            "api_host": "API 端点主机名。使用 'api.x.ai' 进行全局路由并自动重定向到区域主机，或直接指定区域主机。",
             "chat_model": "选择要使用的 Grok 模型。",
             "image_model": "专门用于图像生成的模型。",
             "vision_model": "专门用于照片分析的模型（文档、图表、图形、截图、照片）。",
             "max_tokens": "要生成的最大令牌数。",
             "temperature": "控制响应的随机性（0.0 = 确定性，2.0 = 非常有创意）。",
-            "top_p": "通过核采样控制响应的多样性（grok-4 不支持）。"
+            "top_p": "通过核采样控制响应的多样性。所有模型均支持。",
+            "reasoning_effort": "支持此功能的模型的推理级别（低、高）。目前仅适用于 grok-3-mini 模型。"
           }
         }
       },
       "abort": {
         "reconfigure_successful": "配置更新成功！"
       }
-    },
-    "code_fast": {
-      "initiate_flow": {
-        "user": "添加 Grok Code Fast",
-        "reconfigure": "重新配置 Grok Code Fast"
-      },
-      "entry_type": "code_fast",
-      "step": {
-        "init": {
-          "title": "Grok Code Fast",
-          "data": {
-            "name": "名称",
-            "prompt_code": "提示词",
-            "api_host": "API 主机（'api.x.ai'、'us-east-1.api.x.ai' 或 'eu-west-1.api.x.ai'）",
-            "chat_model": "模型",
-            "max_tokens": "最大令牌数",
-            "temperature": "温度",
-            "top_p": "Top P",
-            "live_search": "实时搜索模式",
-            "store_messages": "存储消息",
-            "assistant_name": "助手名称",
-            "reasoning_effort": "推理级别"
-          },
-          "data_description": {
-            "name": "此 Grok Code Fast 任务的描述性名称。",
-            "prompt_code": "附加到默认提示的可选自定义指令。用于项目特定规则或编码约定。留空以仅使用默认提示。",
-            "api_host": "API 端点主机名。使用 'api.x.ai' 进行全局路由并自动重定向到区域主机，或直接指定区域主机。",
-            "chat_model": "选择要使用的 Grok 模型。",
-            "max_tokens": "要生成的最大令牌数。",
-            "temperature": "控制响应的随机性（0.0 = 确定性，2.0 = 非常有创意）。",
-            "top_p": "通过核采样控制响应的多样性（grok-4 不支持）。",
-            "live_search": "启用网络搜索功能：'off'（禁用）、'auto'（模型决定）、'on'（始终启用）",
-            "store_messages": "使用 xAI 的服务器端内存来维护对话上下文。内存参数（持续时间、轮次数）在集成级别配置，并自动检测来自用户或设备的请求。",
-            "reasoning_effort": "支持此功能的模型的推理级别（低、中、高）",
-            "assistant_name": "助手用来标识自己的名称（例如 'Grok Code Fast'、'CodeBot'、'DevAssistant'）。更改此值将开始新的对话，以前的历史记录将无法访问。"
-          }
+    }
+  },
+  "services": {
+    "clear_memory": {
+      "name": "清除对话记忆",
+      "description": "清除所选用户或语音卫星的对话记忆。服务会根据您的配置自动处理本地和服务器端数据。",
+      "fields": {
+        "user_id": {
+          "name": "用户",
+          "description": "选择需要清除对话历史的用户"
+        },
+        "satellite_id": {
+          "name": "语音卫星",
+          "description": "选择需要清除对话历史的语音助手设备"
+        },
+        "delete_all": {
+          "name": "全部删除",
+          "description": "清除所有对话记忆（所有用户和设备）。请谨慎使用。"
+        },
+        "include_server": {
+          "name": "包含服务器数据",
+          "description": "同时删除存储在 xAI 服务器上的对话（如有）。纯本地数据（ZDR 模式）始终会被清除。"
+        },
+        "only_inactive": {
+          "name": "仅非活动对话",
+          "description": "仅清除非活动时间超过配置期限（默认 28 天）的对话。"
         }
-      },
-      "abort": {
-        "reconfigure_successful": "配置更新成功！"
+      }
+    },
+    "manage_sensors": {
+      "name": "管理传感器",
+      "description": "对 xAI 集成传感器执行维护操作。选择一个或两个操作执行。",
+      "fields": {
+        "reload_pricing": {
+          "name": "重新加载定价数据",
+          "description": "强制从 xAI API 刷新模型定价数据。"
+        },
+        "reset_stats": {
+          "name": "重置令牌统计",
+          "description": "将所有令牌使用计数器重置为零。"
+        }
       }
     }
   }

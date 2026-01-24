@@ -6,33 +6,69 @@ Sensors are pure presentation layer - no business logic, no calculations.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
-from typing import TYPE_CHECKING
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
     SensorStateClass,
 )
-from homeassistant.helpers.entity import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
-from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util import dt as dt_util
 
 from .const import (
-    CONF_COST_PER_TOOL_CALL,
     DEFAULT_MANUFACTURER,
     DEFAULT_SENSORS_NAME,
     DOMAIN,
     LOGGER,
-    RECOMMENDED_COST_PER_TOOL_CALL,
-    TOOL_PRICING,
+    DEFAULT_TOOL_PRICE_RAW,
+    CLEARER_VISION_LABEL,
+    CLEARER_SEARCH_LABEL,
+    CLEARER_CACHED_LABEL,
+    XAIConfigEntry,
+)
+from .helpers import (
+    get_pricing_conversion_factor,
+    get_tokens_per_million,
 )
 
-if TYPE_CHECKING:
-    from . import XAIConfigEntry
+
+def _raw_to_display_usd(
+    raw_value: float,
+    conversion_factor: float,
+    tokens_per_million: int,
+    is_unit_price: bool = False,
+) -> float:
+    """Convert raw API value to display USD.
+
+    Args:
+        raw_value: Raw value from API (price * tokens or price * units)
+        conversion_factor: Pricing conversion factor from config
+        tokens_per_million: Tokens per million divisor
+        is_unit_price: True for per-image or per-call prices
+
+    Returns:
+        USD value for display (not rounded - caller decides precision)
+    """
+    usd = raw_value / conversion_factor
+    divisor = max(tokens_per_million, 1.0) if is_unit_price else tokens_per_million
+    return usd / divisor
+
+
+def _format_model_name(model_name: str) -> str:
+    """Format model name for display.
+
+    Converts patterns like 'grok-4-1-fast' to 'Grok 4.1 Fast'.
+    Handles version numbers separated by hyphens (e.g., -4-1- becomes 4.1).
+    """
+    # Convert version patterns: -X-Y- to -X.Y- (e.g., -4-1- to -4.1-)
+    formatted = re.sub(r"-(\d+)-(\d+)(-|$)", r"-\1.\2\3", model_name)
+    # Replace remaining hyphens with spaces and title case
+    return formatted.replace("-", " ").title()
 
 
 async def async_setup_entry(
@@ -55,12 +91,35 @@ async def async_setup_entry(
             Platform.SENSOR, DOMAIN, old_sensor_unique_id
         )
         if old_entity_id:
-            LOGGER.info("Removing deprecated sensor entity: %s", old_entity_id)
+            LOGGER.debug("Removing deprecated sensor entity: %s", old_entity_id)
             ent_reg.async_remove(old_entity_id)
+
+        # Migration: Attempt to migrate old cost sensor unique ID to new format
+        # Old: {subentry_id}_cost (e.g. xai_conversation:sensors_cost)
+        # New: {entry_id}_cost
+        # Only migrate if we are processing the sensors subentry
+        if subentry.subentry_type == "sensors":
+            old_cost_uid = f"{subentry.subentry_id}_cost"
+            new_cost_uid = f"{entry.entry_id}_cost"
+
+            old_ent_id = ent_reg.async_get_entity_id(
+                Platform.SENSOR, DOMAIN, old_cost_uid
+            )
+            new_ent_id = ent_reg.async_get_entity_id(
+                Platform.SENSOR, DOMAIN, new_cost_uid
+            )
+
+            if old_ent_id and not new_ent_id:
+                LOGGER.debug(
+                    "Migrating cost sensor unique_id from %s to %s",
+                    old_cost_uid,
+                    new_cost_uid,
+                )
+                ent_reg.async_update_entity(old_ent_id, new_unique_id=new_cost_uid)
 
         active_service_types = set()
         for se in entry.subentries.values():
-            if se.subentry_type in ("conversation", "ai_task", "code_fast"):
+            if se.subentry_type in ("conversation", "ai_task"):
                 active_service_types.add(se.subentry_type)
 
         LOGGER.debug(
@@ -93,22 +152,34 @@ async def async_setup_entry(
         for model_name, model_data in xai_models_data.items():
             # Only create sensors for primary model names, not aliases
             if model_data.get("name") == model_name:
-                if model_data.get("input_price_per_million", 0.0) > 0:
+                if model_data.get("input_price", 0.0) > 0:
                     sensors.append(
                         XAIPricingSensor(
                             hass, entry, subentry, model_name, "input_price"
                         )
                     )
-                if model_data.get("output_price_per_million", 0.0) > 0:
+                if model_data.get("output_price", 0.0) > 0:
                     sensors.append(
                         XAIPricingSensor(
                             hass, entry, subentry, model_name, "output_price"
                         )
                     )
-                if model_data.get("cached_input_price_per_million", 0.0) > 0:
+                if model_data.get("cached_input_price", 0.0) > 0:
                     sensors.append(
                         XAIPricingSensor(
                             hass, entry, subentry, model_name, "cached_input_price"
+                        )
+                    )
+                if model_data.get("input_image_price", 0.0) > 0:
+                    sensors.append(
+                        XAIPricingSensor(
+                            hass, entry, subentry, model_name, "input_image_price"
+                        )
+                    )
+                if model_data.get("search_price", 0.0) > 0:
+                    sensors.append(
+                        XAIPricingSensor(
+                            hass, entry, subentry, model_name, "search_price"
                         )
                     )
 
@@ -192,20 +263,9 @@ class XAIServerToolUsageSensor(XAITokenSensorBase):
         self._attr_native_unit_of_measurement = "invocations"
         self._attr_icon = "mdi:tools"
         self._attr_state_class = SensorStateClass.TOTAL_INCREASING
-        self._cost_per_source = 0.0
 
     async def _fetch_data(self, storage) -> dict:
         # Override to fetch server tool stats
-        # Get default cost per call from config (used as fallback)
-        for subentry in self._entry.subentries.values():
-            if subentry.subentry_type == "sensors":
-                self._cost_per_source = float(
-                    subentry.data.get(
-                        CONF_COST_PER_TOOL_CALL, RECOMMENDED_COST_PER_TOOL_CALL
-                    )
-                )
-                break
-
         return await storage.get_server_tool_stats()
 
     @property
@@ -217,38 +277,19 @@ class XAIServerToolUsageSensor(XAITokenSensorBase):
 
     @property
     def extra_state_attributes(self) -> dict:
-        """Return detailed breakdown of tool usage and costs."""
+        """Return detailed breakdown of tool usage."""
         if not self._stats:
             return {
                 "by_tool": {},
                 "by_service": {},
-                "tool_cost_usd": 0.0,
-                "tool_pricing": TOOL_PRICING,
-            }
-
-        by_tool = self._stats.get("by_tool", {})
-
-        # Calculate cost for each tool using official pricing
-        tool_cost = 0.0
-        tool_cost_details = {}
-
-        for tool_name, invocations in by_tool.items():
-            price = TOOL_PRICING.get(tool_name, self._cost_per_source)
-            cost = invocations * price
-            tool_cost += cost
-            tool_cost_details[tool_name] = {
-                "invocations": invocations,
-                "cost_per_call": price,
-                "total_cost": round(cost, 4),
+                "total_sources": 0,
             }
 
         return {
-            "by_tool": by_tool,
+            "by_tool": self._stats.get("by_tool", {}),
             "by_service": self._stats.get("by_service", {}),
             "total_sources": self._stats.get("total_sources", 0),
-            "tool_cost_usd": round(tool_cost, 4),
-            "tool_cost_details": tool_cost_details,
-            "tool_pricing": TOOL_PRICING,
+            "default_pricing_fallback_raw": DEFAULT_TOOL_PRICE_RAW,
         }
 
 
@@ -474,18 +515,76 @@ class XAICostSensor(XAITokenSensorBase):
 
     @property
     def native_value(self) -> float:
-        """Return total cost."""
-        return self._cost_data.get("total_cost", 0.0)
+        """Return total cost in USD (calculated from raw data)."""
+        if not self._cost_data:
+            return 0.0
+
+        factor = get_pricing_conversion_factor(self._entry)
+        tpm = get_tokens_per_million(self._entry)
+
+        # Model costs (token-based)
+        raw_total = self._cost_data.get("total_raw", 0.0)
+        tool_raw = self._cost_data.get("tool_raw", 0.0)
+        model_raw = raw_total - tool_raw
+        usd_model = _raw_to_display_usd(model_raw, factor, tpm)
+
+        # Tool costs (unit-based: per call)
+        usd_tools = 0.0
+        for data in self._cost_data.get("tool_cost_breakdown", {}).values():
+            tool_cost_raw = data.get("invocations", 0) * data.get("price_raw", 0.0)
+            usd_tools += _raw_to_display_usd(
+                tool_cost_raw, factor, tpm, is_unit_price=True
+            )
+
+        return round(usd_model + usd_tools, 4)
 
     @property
     def extra_state_attributes(self) -> dict:
-        """Return cost breakdown attributes."""
+        """Return cost breakdown attributes in USD."""
+        if not self._cost_data:
+            return {}
+
+        factor = get_pricing_conversion_factor(self._entry)
+        tpm = get_tokens_per_million(self._entry)
+
+        # Build USD breakdown per model
+        usd_by_model = {}
+        for model, data in self._cost_data.get("cost_by_model", {}).items():
+            usd_by_model[model] = {
+                "total_cost": round(
+                    _raw_to_display_usd(data.get("total_raw", 0.0), factor, tpm), 4
+                ),
+                "prompt_cost": round(
+                    _raw_to_display_usd(data.get("prompt_raw", 0.0), factor, tpm), 4
+                ),
+                "cached_cost": round(
+                    _raw_to_display_usd(data.get("cached_raw", 0.0), factor, tpm), 4
+                ),
+                "completion_cost": round(
+                    _raw_to_display_usd(data.get("completion_raw", 0.0), factor, tpm), 4
+                ),
+                "tokens": data.get("tokens", {}),
+            }
+
+        # Build USD breakdown per tool
+        usd_tool_breakdown = {}
+        total_tool_usd = 0.0
+        for tool_name, data in self._cost_data.get("tool_cost_breakdown", {}).items():
+            tool_cost_raw = data.get("invocations", 0) * data.get("price_raw", 0.0)
+            cost = _raw_to_display_usd(tool_cost_raw, factor, tpm, is_unit_price=True)
+            total_tool_usd += cost
+            usd_tool_breakdown[tool_name] = {
+                "invocations": data.get("invocations", 0),
+                "total_cost": round(cost, 4),
+            }
+
         return {
-            "total_cost": self._cost_data.get("total_cost", 0.0),
-            "tool_cost": self._cost_data.get("tool_cost", 0.0),
-            "tool_cost_breakdown": self._cost_data.get("tool_cost_breakdown", {}),
-            "cost_by_model": self._cost_data.get("cost_by_model", {}),
+            "total_cost": self.native_value,
+            "tool_cost": round(total_tool_usd, 4),
+            "tool_cost_breakdown": usd_tool_breakdown,
+            "cost_by_model": usd_by_model,
             "tokens_by_model": self._cost_data.get("tokens_by_model", {}),
+            "conversion_factor": factor,
         }
 
 
@@ -570,19 +669,30 @@ class XAIPricingSensor(SensorEntity):
         # Determine model type to format label and value correctly
         xai_models_data = hass.data[DOMAIN].get("xai_models_data", {})
         model_data = xai_models_data.get(model_name, {})
+        m_lower = model_name.lower()
         self._is_image_model = (
-            model_data.get("type") == "image" or "image" in model_name
+            model_data.get("type") == "image"
+            or "image" in m_lower
+            or "aurora" in m_lower
         )
 
-        label = price_type.replace("_", " ").replace("price", "").strip()
-        if self._is_image_model:
-            self._attr_name = (
-                f"{model_name.replace('-', ' ').title()} {label} (per image)"
-            )
+        # Custom labeling mapping
+        label_map = {
+            "input_price": "Input",
+            "output_price": "Output",
+            "cached_input_price": CLEARER_CACHED_LABEL,
+            "input_image_price": CLEARER_VISION_LABEL,
+            "search_price": CLEARER_SEARCH_LABEL,
+        }
+        label = label_map.get(price_type, price_type.replace("_", " ").strip())
+
+        display_name = _format_model_name(model_name)
+        if self._is_image_model and self._price_type == "output_price":
+            self._attr_name = f"{display_name} {label} (per image)"
+        elif price_type == "search_price":
+            self._attr_name = f"{display_name} {label} (per call)"
         else:
-            self._attr_name = (
-                f"{model_name.replace('-', ' ').title()} {label} (per 1M tokens)"
-            )
+            self._attr_name = f"{display_name} {label} (per 1M tokens)"
 
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, subentry.subentry_id)},
@@ -593,22 +703,31 @@ class XAIPricingSensor(SensorEntity):
         )
         self._unsubscribe = None
 
-        # Initialize with price from xai_models_data if available
-        price_key = f"{price_type}_per_million"
-        initial_price = model_data.get(price_key, 0.0)
+        # Initial value from model_data
+        initial_price = model_data.get(price_type, 0.0)
+        self._attr_native_value = self._convert_price(initial_price)
 
-        if initial_price > 0:
-            if self._is_image_model:
-                # stored price is per 1M units, convert to per 1 unit
-                self._attr_native_value = initial_price / 1_000_000.0
-            else:
-                self._attr_native_value = initial_price
-        else:
-            self._attr_native_value = 0.0
+    def _is_unit_price(self) -> bool:
+        """Check if this is a unit price (per image/call) vs token price."""
+        return (
+            self._is_image_model and self._price_type == "output_price"
+        ) or self._price_type == "search_price"
+
+    def _convert_price(self, raw_price: float) -> float:
+        """Convert raw API price to display USD."""
+        if raw_price <= 0:
+            return 0.0
+
+        factor = get_pricing_conversion_factor(self._entry)
+        tpm = get_tokens_per_million(self._entry)
+        usd = raw_price / factor
+
+        if self._is_unit_price():
+            return usd / max(tpm, 1.0)
+        return usd
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
-        # V2: Use new TokenStats class
         storage = self.hass.data[DOMAIN].get("token_stats")
         if storage:
             self._unsubscribe = storage.register_listener(self._update_from_storage)
@@ -620,28 +739,22 @@ class XAIPricingSensor(SensorEntity):
         await super().async_will_remove_from_hass()
 
     async def _update_from_storage(self) -> None:
-        # V2: Use new TokenStats class
         storage = self.hass.data[DOMAIN].get("token_stats")
-        if storage:
-            price = await storage.get_pricing(self._model_name, self._price_type)
-            if price is not None:
-                if self._is_image_model:
-                    self._attr_native_value = price / 1_000_000.0
-                else:
-                    self._attr_native_value = price
+        if not storage:
+            return
+
+        price_raw = await storage.get_pricing(self._model_name, self._price_type)
+        if price_raw is not None:
+            self._attr_native_value = self._convert_price(price_raw)
+            self.async_write_ha_state()
+        elif self._attr_native_value == 0.0:
+            # Fallback: try to get from xai_models_data if storage is empty
+            xai_models_data = self.hass.data[DOMAIN].get("xai_models_data", {})
+            model_data = xai_models_data.get(self._model_name, {})
+            fallback_price_raw = model_data.get(self._price_type, 0.0)
+            if fallback_price_raw > 0:
+                self._attr_native_value = self._convert_price(fallback_price_raw)
                 self.async_write_ha_state()
-            elif self._attr_native_value == 0.0:
-                # Fallback: try to get from xai_models_data if storage is empty
-                xai_models_data = self.hass.data[DOMAIN].get("xai_models_data", {})
-                model_data = xai_models_data.get(self._model_name, {})
-                price_key = f"{self._price_type}_per_million"
-                fallback_price = model_data.get(price_key, 0.0)
-                if fallback_price > 0:
-                    if self._is_image_model:
-                        self._attr_native_value = fallback_price / 1_000_000.0
-                    else:
-                        self._attr_native_value = fallback_price
-                    self.async_write_ha_state()
 
 
 class XAIAvailableModelsSensor(SensorEntity):

@@ -10,7 +10,7 @@ from homeassistant.helpers.typing import ConfigType
 
 import shutil
 from pathlib import Path
-from .const import DOMAIN, DEFAULT_CONVERSATION_NAME, LOGGER
+from .const import DOMAIN, DEFAULT_CONVERSATION_NAME, LOGGER, XAIConfigEntry
 
 from .init_manager import XaiInitManager
 from .services import register_services
@@ -23,12 +23,53 @@ PLATFORMS = (
 )
 
 
-type XAIConfigEntry = ConfigEntry
-
-
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up the xAI Conversation integration."""
     hass.data.setdefault(DOMAIN, {})
+    return True
+
+
+async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
+    """Migrate old entry to new schema."""
+    LOGGER.info(
+        "Migration: from version %s.%s to 2.1",
+        config_entry.version,
+        config_entry.minor_version,
+    )
+
+    # Prevent downgrade
+    if config_entry.version > 2:
+        LOGGER.error(
+            "Migration: cannot downgrade from version %s to version 2",
+            config_entry.version,
+        )
+        return False
+
+    # Create coordinator for migration helpers
+    coordinator = XaiInitManager(hass, config_entry)
+
+    # Migrate V1 → V2
+    if config_entry.version == 1:
+        # Clean up deprecated subentries and migrate types
+        await coordinator.clean_deprecated_subentries()
+
+        # Clean up deprecated entities from registry
+        await coordinator.clean_deprecated_entities()
+
+        # Clean up deprecated storage files
+        await coordinator.clean_deprecated_storage()
+
+        # Ensure valid config keys in entry.data and subentries
+        await coordinator.ensure_valid_config_keys()
+
+    # Update version
+    hass.config_entries.async_update_entry(
+        config_entry,
+        version=2,
+        minor_version=1,
+    )
+
+    LOGGER.info("Migration: completed successfully")
     return True
 
 
@@ -40,7 +81,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: XAIConfigEntry) -> bool:
     hass.data[DOMAIN][entry.entry_id] = coordinator
 
     # Set up platforms
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    # Refresh entry to ensure any subentry modifications during setup are reflected
+    updated_entry = hass.config_entries.async_get_entry(entry.entry_id) or entry
+    await hass.config_entries.async_forward_entry_setups(updated_entry, PLATFORMS)
 
     # Register services
     register_services(hass, entry)
@@ -80,12 +123,9 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     if memory_folder.exists() and memory_folder.is_dir():
         try:
             await hass.async_add_executor_job(shutil.rmtree, memory_folder)
-            LOGGER.info(
-                "Final cleanup: Removed memory storage folder: %s", memory_folder
-            )
         except Exception as err:
             LOGGER.warning(
-                "Final cleanup: Failed to remove memory folder %s: %s",
+                "Removal: fallback cleanup failed for folder %s - %s",
                 memory_folder,
                 err,
             )
