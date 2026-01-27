@@ -276,6 +276,14 @@ async def prepare_history_payload(
 
         content_list = system_messages + non_system_messages
 
+    # 1b. Pipeline fallback: strip assistant messages after the last user message
+    # to prevent context pollution from the pipeline's streaming response
+    if getattr(params, "forced_last_message", None):
+        for i in range(len(content_list) - 1, -1, -1):
+            if isinstance(content_list[i], ha_conversation.UserContent):
+                content_list = content_list[: i + 1]
+                break
+
     # 2. Transformation Strategy (Neutral Format)
     actual_last_user_idx = -1
     for i in range(len(content_list) - 1, -1, -1):

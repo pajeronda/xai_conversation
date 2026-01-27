@@ -149,63 +149,64 @@ class IntelligentPipeline(BaseConversationProcessor):
                         yield result
             return
 
-        # Parallel execution with staggered start (inline)
-        async def _exec_with_stagger(cmd, idx):
-            """Execute command with staggered delay."""
+        # Parallel execution: two-phase to avoid concurrent chat_log writes
+        # Phase 1: Try conversation.process for all commands in parallel
+        valid_commands = [
+            (idx, cmd) for idx, cmd in enumerate(commands, 1) if cmd.get("text")
+        ]
+
+        async def _try_with_stagger(cmd, idx):
+            """Try conversation.process with staggered delay."""
             if idx > 1:
                 await asyncio.sleep((idx - 1) * 0.1)
             command_text = str(cmd.get("text", "")).strip()
-            if command_text:
-                return await self._execute_single_command_streaming(
-                    command_text, chat_log, timer, idx, total
-                )
+            return await self._try_conversation_process(
+                command_text, chat_log, timer, idx, total
+            )
 
-        tasks = [
-            _exec_with_stagger(cmd, idx)
-            for idx, cmd in enumerate(commands, 1)
-            if cmd.get("text")
-        ]
+        results = await asyncio.gather(
+            *[_try_with_stagger(cmd, idx) for idx, cmd in valid_commands],
+            return_exceptions=True,
+        )
 
-        for coro in asyncio.as_completed(tasks):
-            try:
-                if result := await coro:
-                    yield result
-            except Exception as err:
-                LOGGER.warning("[pipeline] parallel command failed: %s", err)
+        # Phase 2: Yield successes, execute fallbacks sequentially
+        for (idx, cmd), result in zip(valid_commands, results):
+            if isinstance(result, Exception):
+                LOGGER.warning("[pipeline] parallel command failed: %s", result)
+                continue
 
-    async def _execute_single_command_streaming(
+            speech, needs_fallback = result
+            if not needs_fallback and speech:
+                yield speech
+            elif needs_fallback:
+                command_text = str(cmd.get("text", "")).strip()
+                await self._execute_tools_fallback(command_text, chat_log, timer)
+
+    async def _try_conversation_process(
         self,
         command_text: str,
         chat_log,
         timer: LogTimeServices,
         command_index: int | None = None,
         total_commands: int | None = None,
-    ) -> str | None:
-        """
-        Execute a single command via conversation.process or fallback to tools.
-        Returns a result string for non-fallback cases.
-        In fallback cases, streams directly to the chat_log and returns None.
+    ) -> tuple[str | None, bool]:
+        """Try executing a command via conversation.process.
+
+        Returns (speech_result, needs_fallback):
+        - (speech, False): command succeeded
+        - (None, True): command failed, needs fallback to tools
         """
         exec_start = time.time()
         idx_info = f" {command_index}/{total_commands}" if command_index else ""
 
-        # Try conversation.process first
-        trigger_tools_fallback = False
-        error_code = None
         try:
             language = self.hass.config.language or "en"
-            conv_id = self.user_input.conversation_id
-            svc_context = getattr(chat_log, "context", None) or Context()
+            svc_context = Context()
             data = {
                 "text": command_text,
                 "language": language,
                 "agent_id": "conversation.home_assistant",
             }
-            if conv_id:
-                # We intentionally DO NOT pass the conversation_id to the internal process
-                # to avoid polluting the outer conversation's ChatLog with inner commands.
-                # data["conversation_id"] = conv_id
-                pass
 
             result = await self.hass.services.async_call(
                 "conversation",
@@ -216,11 +217,10 @@ class IntelligentPipeline(BaseConversationProcessor):
                 context=svc_context,
             )
 
-            # Check if result is an error
             response_type = (result or {}).get("response", {}).get("response_type")
             error_code = (result or {}).get("response", {}).get("data", {}).get("code")
-
             exec_time = time.time() - exec_start
+
             if response_type == "error":
                 LOGGER.debug(
                     "[pipeline] exec: '%s'%s failed (%.0fms) - %s",
@@ -229,25 +229,22 @@ class IntelligentPipeline(BaseConversationProcessor):
                     exec_time * 1000,
                     error_code or "unknown",
                 )
-                trigger_tools_fallback = True
-            else:
-                LOGGER.debug(
-                    "[pipeline] exec: '%s'%s ok (%.0fms)",
-                    command_text[:40],
-                    idx_info,
-                    exec_time * 1000,
-                )
+                return None, True
 
-            # Return response if NOT triggering fallback
-            if not trigger_tools_fallback:
-                speech = (
-                    (result or {})
-                    .get("response", {})
-                    .get("speech", {})
-                    .get("plain", {})
-                    .get("speech")
-                )
-                return speech or "Done."
+            LOGGER.debug(
+                "[pipeline] exec: '%s'%s ok (%.0fms)",
+                command_text[:40],
+                idx_info,
+                exec_time * 1000,
+            )
+            speech = (
+                (result or {})
+                .get("response", {})
+                .get("speech", {})
+                .get("plain", {})
+                .get("speech")
+            )
+            return speech or "Done.", False
 
         except Exception as err:
             exec_time = time.time() - exec_start
@@ -258,45 +255,62 @@ class IntelligentPipeline(BaseConversationProcessor):
                 exec_time,
                 type(err).__name__,
             )
-            trigger_tools_fallback = True
+            return None, True
 
-        # Fallback to tools mode
-        if trigger_tools_fallback:
-            LOGGER.debug("[pipeline] fallback→tools: '%s'", command_text[:50])
+    async def _execute_tools_fallback(
+        self,
+        command_text: str,
+        chat_log,
+        timer: LogTimeServices,
+    ) -> None:
+        """Execute fallback to tools mode for a single command."""
+        LOGGER.debug("[pipeline] fallback→tools: '%s'", command_text[:50])
 
-            # Create fallback input (preserving original user context)
-            fallback_input = ConversationInput(
-                text=command_text,
-                context=self.user_input.context,
-                conversation_id=self.user_input.conversation_id,
-                device_id=extract_device_id(self.user_input),
-                language=self.user_input.language,
-                agent_id=self.user_input.agent_id,
-                satellite_id=self.user_input.satellite_id,
-            )
+        fallback_input = ConversationInput(
+            text=command_text,
+            context=self.user_input.context,
+            conversation_id=self.user_input.conversation_id,
+            device_id=extract_device_id(self.user_input),
+            language=self.user_input.language,
+            agent_id=self.user_input.agent_id,
+            satellite_id=self.user_input.satellite_id,
+        )
 
-            # Execute tools processor directly on the main chat_log.
-            # This will stream the response directly to the user interface.
-            # We pass is_fallback=True to clean history and forced_last_message to inject intent.
-            # Create fallback options (cleaning history and forcing tools mode)
-            # We use replace() to ensure we inherit user_input, timer, and other context
-            fallback_options = replace(
-                self._active_options,
-                is_fallback=True,
-                forced_last_message=command_text,
-                mode_override=CHAT_MODE_TOOLS,
-                is_resolved=False,  # Force re-resolution to use mode_override
-            )
-            await self._entity._tools_processor.async_process_with_loop(
-                fallback_input,
-                chat_log,
-                timer,
-                options=fallback_options,
-                force_tools=True,
-            )
+        fallback_options = replace(
+            self._active_options,
+            is_fallback=True,
+            forced_last_message=command_text,
+            mode_override=CHAT_MODE_TOOLS,
+            is_resolved=False,
+        )
+        await self._entity._tools_processor.async_process_with_loop(
+            fallback_input,
+            chat_log,
+            timer,
+            options=fallback_options,
+            force_tools=True,
+        )
 
-            # Return None because the response has already been streamed.
+    async def _execute_single_command_streaming(
+        self,
+        command_text: str,
+        chat_log,
+        timer: LogTimeServices,
+        command_index: int | None = None,
+        total_commands: int | None = None,
+    ) -> str | None:
+        """Execute a single command via conversation.process or fallback to tools.
+
+        Returns a result string for non-fallback cases.
+        In fallback cases, streams directly to the chat_log and returns None.
+        """
+        speech, needs_fallback = await self._try_conversation_process(
+            command_text, chat_log, timer, command_index, total_commands
+        )
+        if needs_fallback:
+            await self._execute_tools_fallback(command_text, chat_log, timer)
             return None
+        return speech
 
     # ==========================================================================
     # FALLBACK & SECONDARY LOGIC

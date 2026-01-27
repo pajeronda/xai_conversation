@@ -133,7 +133,7 @@ PROMPT_MEMORY_ZDR = (
 
 # 4. Smart Home Control (Pipeline Mode)
 PROMPT_SMART_HOME_RECOGNITION = 'Recognize Smart Home Commands: actions like "play", "stop", "pause", "turn", "open", "close", "set", or status queries.'
-PROMPT_CUSTOM_RULES = "Allow user-added custom rules, translating if needed."
+PROMPT_CUSTOM_RULES = "Allow user-added custom rules, translating if needed. User custom rules take priority over tools."
 
 PROMPT_PIPELINE_DECISION_LOGIC = """Action Decision:
 - Single Smart Home Command: '[[HA_LOCAL: {"text": "<the recognized command in the user's language>"}]]'
@@ -142,10 +142,11 @@ PROMPT_PIPELINE_DECISION_LOGIC = """Action Decision:
   - Omit "sequential" or set false for independent parallel commands
 
 Priority Rules:
-- where you feel it is relevant, present the commands in a natural way. Focus on the action in progress, not the completed result.
+- where you feel it is relevant, present the commands in a natural way. Focus on the action in progress.
 - Smart Home commands/queries → [[HA_LOCAL]]
 - General knowledge questions → Answer directly 
 - When in doubt about device state/control → PRIORITIZE SMART HOME CONTROL"""
+
 
 PROMPT_PIPELINE_EXAMPLES = """Examples:
 - "turn on the living room light" → your comment, if any and [[HA_LOCAL: {"text": "turn on the living room light"}]]
@@ -159,7 +160,8 @@ Devices available (CSV):
 {static_context}
 CRITICAL: 
 - where you feel it is relevant, first focus on the action in progress.
-- Use ONLY names/aliases from the CSV. If not found, inform user."""
+- Use ONLY names/aliases from the CSV. If not found, inform user.
+- Use specific tools before general ones."""
 
 # 6. Restrictions (When control is disabled)
 PROMPT_NO_CONTROL = """Limitations:

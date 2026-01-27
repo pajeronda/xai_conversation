@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 # Standard library imports
+import asyncio
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -170,7 +171,12 @@ class XAIToolsProcessor(BaseConversationProcessor):
     async def _execute_tool_calls_batch(
         self, tool_calls: list, user_input
     ) -> list[ToolOutput]:
-        """Execute a batch of tool calls, supporting parallel execution when possible."""
+        """Execute a batch of tool calls with parallel execution.
+
+        Uses staggered start (0.1s delay between tools) to avoid race conditions
+        while still benefiting from parallel I/O. Uses asyncio.gather to preserve
+        original order (important for SDK tool matching).
+        """
         if not tool_calls:
             return []
 
@@ -195,11 +201,6 @@ class XAIToolsProcessor(BaseConversationProcessor):
         if not client_tool_calls:
             return []
 
-        # For now, we use sequential execution to avoid potential race conditions in HA state,
-        # but we use a structure similar to pipeline to allow easy parallelization if needed.
-        # Note: Tool execution in Home Assistant is often safer sequentially.
-        tool_results = []
-
         # Build config once for the batch
         session_config = resolve_tool_session_config(
             config=self._entity.get_config_dict(),
@@ -207,9 +208,50 @@ class XAIToolsProcessor(BaseConversationProcessor):
             registry=self._entity._extended_tools_registry,
         )
 
-        for tc in client_tool_calls:
-            result = await self._execute_single_tool(tc, user_input, session_config)
-            tool_results.append(result)
+        # Single tool: fast path (no parallelization overhead)
+        if len(client_tool_calls) == 1:
+            result = await self._execute_single_tool(
+                client_tool_calls[0], user_input, session_config
+            )
+            return [result]
+
+        # Multiple tools: parallel execution with staggered start
+        # Uses asyncio.gather to preserve original order (important for SDK tool matching)
+        LOGGER.debug("[tools] parallel exec: %d tools", len(client_tool_calls))
+
+        async def _exec_with_stagger(tc, idx: int) -> ToolOutput:
+            """Execute tool with staggered delay to avoid race conditions."""
+            if idx > 0:
+                await asyncio.sleep(idx * 0.1)
+            return await self._execute_single_tool(tc, user_input, session_config)
+
+        tasks = [
+            _exec_with_stagger(tc, idx)
+            for idx, tc in enumerate(client_tool_calls)
+        ]
+
+        # Gather preserves order (unlike as_completed) - important for SDK tool matching
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        tool_results = []
+        for idx, result in enumerate(results):
+            if isinstance(result, Exception):
+                LOGGER.warning(
+                    "[tools] parallel exec failed for tool %d: %s",
+                    idx,
+                    result,
+                )
+                # Create error result to maintain tool count consistency
+                tool_results.append(
+                    ToolOutput(
+                        tool_name=client_tool_calls[idx].function.name,
+                        tool_result=f"Execution error: {result}",
+                        tool_call_id=getattr(client_tool_calls[idx], "id", ""),
+                        is_error=True,
+                    )
+                )
+            else:
+                tool_results.append(result)
 
         return tool_results
 

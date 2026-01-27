@@ -289,10 +289,15 @@ class XAIGateway:
         model, mode = params.model, params.mode
 
         # 1. Prompt and Memory Context resolution
-        prompt_hash = ""
         system_prompt = None
-        if entity and hasattr(entity, "_prompt_manager") and entity._prompt_manager:
-            prompt_hash = entity._prompt_manager.get_prompt_hash(mode)
+
+        # Retrieve orchestrator first (needed for prompt hash calculation)
+        orchestrator = None
+        if entity and hasattr(entity, "_tools_processor"):
+            orchestrator = getattr(entity._tools_processor, "_orchestrator", None)
+
+        # Calculate prompt hash using gateway's prompt_manager with full context
+        prompt_hash = self.prompt_manager.get_prompt_hash(mode, params.config, orchestrator)
 
         conv_key, prev_id, stored_hash = await resolve_memory_context(
             self.hass, mode, params, prompt_hash
@@ -305,10 +310,6 @@ class XAIGateway:
             LOGGER.debug(
                 "[gateway] prompt: INJECTING SYSTEM PROMPT (reason: %s)", reason
             )
-            orchestrator = None
-            if entity and hasattr(entity, "_tools_processor"):
-                orchestrator = getattr(entity._tools_processor, "_orchestrator", None)
-
             system_prompt = params.system_prompt or self.prompt_manager.get_prompt(
                 mode, params.config, orchestrator=orchestrator
             )
@@ -449,6 +450,16 @@ class XAIGateway:
                 # Save metadata and track usage
                 res_holder = {"model": model}
                 extract_response_metadata(response, res_holder, entity)
+
+                # Extract reasoning_tokens for timer logging (reasoning models)
+                if usage := res_holder.get("usage"):
+                    reasoning = getattr(usage, "reasoning_tokens", 0) or 0
+                    if reasoning == 0:
+                        details = getattr(usage, "completion_tokens_details", None)
+                        if details:
+                            reasoning = getattr(details, "reasoning_tokens", 0) or 0
+                    if reasoning > 0:
+                        timer.reasoning_tokens = reasoning
 
                 # Append citations if enabled
                 citations = res_holder.get("citations")

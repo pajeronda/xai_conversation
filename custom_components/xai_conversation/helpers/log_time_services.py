@@ -40,6 +40,8 @@ class LogTimeServices:
         self.ttfb: float = 0.0  # Time to First Byte (Metadata)
         self._first_chunk_received: bool = False
         self._response_started: bool = False
+        # Reasoning model tokens (set from response usage after stream completes)
+        self.reasoning_tokens: int = 0
 
     async def __aenter__(self) -> LogTimeServices:
         """Enter the context, log the start time and initial context."""
@@ -59,26 +61,28 @@ class LogTimeServices:
         self.local_process_time = self.total_time - self.api_time
 
         # Calculate non-overlapping components for "human math"
-        # wait (TTFB) + think (TTFT-TTFB) + gen (TotalAPI-TTFT) + local (Total-TotalAPI) = Total
+        # wait (TTFB) + stream (TotalAPI-TTFB) + local (Total-TotalAPI) = Total
         wait = self.ttfb
-        think = max(0.0, self.latency - self.ttfb)
-        gen = max(0.0, self.api_time - self.latency)
+        stream = max(0.0, self.api_time - self.ttfb)
         local = self.local_process_time
 
         # Prepare context for the final log, excluding any sensitive or overly verbose data
         log_context = self.context_info.copy()
 
-        log_context_str = " ".join(
-            f"{k}={v}"
-            for k, v in {
-                **log_context,
-                "total_time": f"{self.total_time:.2f}s",
-                "generation_time": f"{gen:.2f}s",
-                "think_time": f"{think:.2f}s",
-                "wait_time": f"{wait:.2f}s",
-                "local_time": f"{local:.2f}s",
-            }.items()
-        )
+        # Build timing dict
+        timing_dict = {
+            **log_context,
+            "total_time": f"{self.total_time:.2f}s",
+            "stream_time": f"{stream:.2f}s",
+            "wait_time": f"{wait:.2f}s",
+            "local_time": f"{local:.2f}s",
+        }
+
+        # Add reasoning_tokens if present (for reasoning models)
+        if self.reasoning_tokens > 0:
+            timing_dict["reasoning_tokens"] = self.reasoning_tokens
+
+        log_context_str = " ".join(f"{k}={v}" for k, v in timing_dict.items())
 
         if exc_type:
             self.logger.error(

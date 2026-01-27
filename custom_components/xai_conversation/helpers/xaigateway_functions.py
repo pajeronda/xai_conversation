@@ -611,7 +611,7 @@ def get_tool_call_type(tool_call: Any) -> str | None:
     # Broadened to catch variants like x_news, x_image, x_trends, etc.
     tool_name = getattr(getattr(tool_call, "function", None), "name", "").lower()
     if tool_name and (
-        tool_name.startswith(("x_", "web_"))
+        tool_name.startswith(("x_", "web_", "browse"))
         or any(kw in tool_name for kw in ("search", "keyword", "semantic", "trends"))
     ):
         return "server_side_tool"

@@ -229,6 +229,16 @@ async def unified_delta_generator(
             if is_zdr:
                 restore_zdr_content(last_response, response_holder)
 
+            # Extract reasoning_tokens for timer logging (reasoning models)
+            if usage := response_holder.get("usage"):
+                reasoning = getattr(usage, "reasoning_tokens", 0) or 0
+                if reasoning == 0:
+                    details = getattr(usage, "completion_tokens_details", None)
+                    if details:
+                        reasoning = getattr(details, "reasoning_tokens", 0) or 0
+                if reasoning > 0:
+                    timer.reasoning_tokens = reasoning
+
             # Citations
             if should_show_citations(config):
                 citations = response_holder.get("citations")
