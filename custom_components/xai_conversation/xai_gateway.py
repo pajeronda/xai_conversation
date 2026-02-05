@@ -297,7 +297,9 @@ class XAIGateway:
             orchestrator = getattr(entity._tools_processor, "_orchestrator", None)
 
         # Calculate prompt hash using gateway's prompt_manager with full context
-        prompt_hash = self.prompt_manager.get_prompt_hash(mode, params.config, orchestrator)
+        prompt_hash = self.prompt_manager.get_prompt_hash(
+            mode, params.config, orchestrator
+        )
 
         conv_key, prev_id, stored_hash = await resolve_memory_context(
             self.hass, mode, params, prompt_hash
@@ -357,6 +359,7 @@ class XAIGateway:
         self,
         prompt: str,
         model: str,
+        image_url: str | None = None,
         options: ChatOptions | None = None,
         entity: Any | None = None,
     ) -> Any:
@@ -364,6 +367,13 @@ class XAIGateway:
 
         This method ensures image generation follows the same telemetry
         and logging patterns as chat completions.
+
+        Args:
+            prompt: Text prompt for generation or editing instructions.
+            model: Model identifier (e.g. grok-imagine-image).
+            image_url: Optional base64 data URI or URL of input image for editing.
+            options: Chat options for telemetry.
+            entity: Calling entity for logging.
         """
         client = self.create_client()
         opts = options or ChatOptions()
@@ -379,12 +389,28 @@ class XAIGateway:
             )
 
         async with timer_cm as timer:
+            sample_kwargs: dict[str, Any] = {
+                "model": model,
+                "prompt": prompt,
+                "image_format": "base64",
+            }
+            if image_url:
+                sample_kwargs["image_url"] = image_url
+
             async with timer.record_api_call():
-                response = await client.image.sample(
-                    model=model,
-                    prompt=prompt,
-                    image_format="base64",
-                )
+                try:
+                    response = await client.image.sample(**sample_kwargs)
+                except TypeError:
+                    # SDK version doesn't support image_url, retry without it
+                    if "image_url" in sample_kwargs:
+                        LOGGER.warning(
+                            "xAI SDK does not support image_url parameter. "
+                            "Update the SDK to enable image editing. Retrying without it."
+                        )
+                        sample_kwargs.pop("image_url")
+                        response = await client.image.sample(**sample_kwargs)
+                    else:
+                        raise
 
             # Log completion for billing/usage
             await async_log_completion(

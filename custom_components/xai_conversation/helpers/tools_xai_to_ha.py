@@ -81,42 +81,13 @@ def _sanitize_argument_value(key: str, value: Any) -> Any:
         return str_value.lower() == "true"
 
     # Handle numeric strings for specific keys
-    if key in ("brightness_pct", "color_temp", "temperature"):
+    if key in ("brightness", "brightness_pct", "color_temp", "color_temp_kelvin", "temperature"):
         try:
             return float(str_value) if "." in str_value else int(str_value)
         except ValueError:
             pass  # Fall through to return the original string if conversion fails
 
     return str_value
-
-
-def _validate_brightness(args: dict, tool_name: str) -> dict:
-    """Validate and clamp brightness values for light tools, handling both 0-255 and 0-100 scales."""
-    # Handle brightness_pct (0-100 scale)
-    if "brightness_pct" in args:
-        try:
-            brightness = int(float(args["brightness_pct"]))
-            args["brightness_pct"] = max(0, min(100, brightness))
-        except (ValueError, TypeError):
-            LOGGER.warning(
-                "[tool-conv] %s invalid brightness_pct: %s",
-                tool_name,
-                args["brightness_pct"],
-            )
-            args.pop("brightness_pct")
-
-    # Handle brightness (0-255 scale)
-    if "brightness" in args:
-        try:
-            brightness = int(float(args["brightness"]))
-            args["brightness"] = max(0, min(255, brightness))
-        except (ValueError, TypeError):
-            LOGGER.warning(
-                "[tool-conv] %s invalid brightness: %s", tool_name, args["brightness"]
-            )
-            args.pop("brightness")
-
-    return args
 
 
 def _validate_position(args: dict, tool_name: str) -> dict:
@@ -198,8 +169,6 @@ def _validate_todo_status(args: dict, tool_name: str) -> dict:
 
 # Map of tool names to their specific validation functions
 _TOOL_VALIDATORS = {
-    # Light controls
-    "HassLightSet": _validate_brightness,
     # Cover/valve controls
     "HassSetPosition": _validate_position,
     # Climate controls
@@ -209,9 +178,9 @@ _TOOL_VALIDATORS = {
     "HassIncreaseTimer": _validate_timer_duration,
     "HassDecreaseTimer": _validate_timer_duration,
     # Calendar tools
-    "CalendarGetEvents": _validate_calendar_dates,
+    "calendar_get_events": _validate_calendar_dates,
     # Todo tools
-    "TodoGetItems": _validate_todo_status,
+    "todo_get_items": _validate_todo_status,
 }
 
 

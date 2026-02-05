@@ -69,27 +69,33 @@ class MemoryManager:
         self._memory: dict[str, MemoryEntry] = {}
         self._loaded = False
         self._dirty = False
+        self._deleted_keys: set[str] = set()
 
     @staticmethod
     def generate_key(
         scope: str,
         identifier: str,
         mode: str,
+        subentry_id: str,
     ) -> str:
         """Generate a consistent memory key.
 
-        Format: {scope}:{identifier}:mode:{mode}
+        Format: {scope}:{identifier}:sub:{subentry_id}:mode:{mode}
 
         Args:
             scope: "user" or "device".
             identifier: User ID or Device ID.
             mode: "ai_task", "pipeline", "tools", "vision", "chatonly".
+            subentry_id: Subentry ID for conversation isolation.
         """
-        return f"{scope}:{identifier}:mode:{mode}"
+        return f"{scope}:{identifier}:sub:{subentry_id}:mode:{mode}"
 
     async def async_get_last_response_id(self, key: str) -> str | None:
         """Retrieve the last response ID for a given key."""
         await self._ensure_loaded()
+
+        # New conversation turn: clear deletion guard so new saves are accepted
+        self._deleted_keys.discard(key)
 
         entry = self._memory.get(key)
         if not entry or not entry["responses"]:
@@ -116,6 +122,9 @@ class MemoryManager:
     ) -> None:
         """Save a response ID to memory with automatic root_id (session) inheritance."""
         await self._ensure_loaded()
+
+        if key in self._deleted_keys:
+            return
 
         if key not in self._memory:
             self._memory[key] = {"responses": []}
@@ -150,6 +159,9 @@ class MemoryManager:
     async def async_save_encrypted_blob(self, key: str, blob: str) -> None:
         """Save an encrypted blob for ZDR mode (overwrites previous)."""
         await self._ensure_loaded()
+
+        if key in self._deleted_keys:
+            return
 
         if key not in self._memory:
             self._memory[key] = {"responses": []}
@@ -207,6 +219,7 @@ class MemoryManager:
             all_ids = self._get_ids(entries)
             server_ids = self._get_ids(entries, server_stored_only=True)
             try:
+                self._deleted_keys.update(self._memory.keys())
                 await self._store.async_remove()
                 self._memory.clear()
                 self._loaded = False
@@ -280,6 +293,7 @@ class MemoryManager:
 
         for key in keys:
             self._memory.pop(key, None)
+            self._deleted_keys.add(key)
 
         self._dirty = True
         if flush:

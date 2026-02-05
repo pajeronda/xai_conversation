@@ -180,6 +180,16 @@ photo_analysis:
       selector:
         text:
           multiline: true
+    attachments:
+      name: Attachments
+      description: >
+        Select images from your media library or cameras. This provides a file browser interface.
+      required: false
+      selector:
+        media:
+          accept:
+            - "image/*"
+          multiple: true
     images:
       name: Images
       description: >
@@ -188,7 +198,8 @@ photo_analysis:
       required: false
       example: ["/config/www/camera_snapshot.jpg"]
       selector:
-        object:
+        text:
+          multiline: true
     temperature:
       name: Temperature
       description: Creativity (0.0 = precise, 1.0 = creative).

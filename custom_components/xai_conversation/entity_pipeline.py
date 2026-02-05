@@ -59,6 +59,7 @@ class IntelligentPipeline(BaseConversationProcessor):
         parser = StreamParser()
 
         # Execute chat loop via base processor
+        # Note: subentry_id is set by entity._async_handle_chat_log via resolve_chat_parameters
         resolved_options = options or ChatOptions(user_input=self.user_input)
         self._active_options = resolved_options
 
@@ -276,10 +277,29 @@ class IntelligentPipeline(BaseConversationProcessor):
             satellite_id=self.user_input.satellite_id,
         )
 
+        # Extract pipeline pre-text to inject as context, preventing
+        # the tools LLM from regenerating text already shown to the user
+        pre_text = ""
+        for item in reversed(list(chat_log.content)):
+            if (
+                isinstance(item, ha_conversation.AssistantContent)
+                and item.agent_id == self._entity.entity_id
+            ):
+                pre_text = (item.content or "").strip()
+                break
+
+        fallback_suffix = (
+            f'\n[You already responded to the user with: "{pre_text[:200]}". '
+            "Execute the command using tools without repeating yourself.]"
+            if pre_text
+            else None
+        )
+
         fallback_options = replace(
             self._active_options,
             is_fallback=True,
             forced_last_message=command_text,
+            prompt_suffix=fallback_suffix,
             mode_override=CHAT_MODE_TOOLS,
             is_resolved=False,
         )

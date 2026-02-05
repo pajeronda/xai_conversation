@@ -30,6 +30,7 @@ from ..const import (
     PROMPT_PIPELINE_DECISION_LOGIC,
     PROMPT_PIPELINE_EXAMPLES,
     PROMPT_MODE_TOOLS,
+    PROMPT_INTENT_EXECUTION,
     PROMPT_OUTPUT_FORMAT,
     CONF_VISION_PROMPT,
     VISION_ANALYSIS_PROMPT,
@@ -99,10 +100,12 @@ class PromptManager:
             self._get_user_instructions(mode, config),
         ]
 
-        # For tools mode, include CSV hash (already cached in orchestrator)
+        # For tools mode, include CSV hash and intents context
         if mode == CHAT_MODE_TOOLS and orchestrator:
             csv_content = orchestrator.get_static_context_csv()
             components.append(csv_content)
+            intents_context = orchestrator.get_custom_intents_context()
+            components.append(intents_context)
 
         return f"{mode}:{hash_text('|'.join(components))[:12]}"
 
@@ -163,6 +166,15 @@ class PromptManager:
             blocks.append(
                 PROMPT_MODE_TOOLS.format(static_context=static_context).strip()
             )
+            custom_intents = (
+                orchestrator.get_custom_intents_context() if orchestrator else ""
+            )
+            if custom_intents:
+                blocks.append(
+                    PROMPT_INTENT_EXECUTION.format(
+                        custom_intents=custom_intents
+                    ).strip()
+                )
 
         # --- E. User Instructions ---
         if instructions:

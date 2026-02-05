@@ -143,7 +143,17 @@ class BaseConversationProcessor:
                     else None,
                 )
                 if should_retry:
-                    # Clear params.messages for retry if they were modified by Layer 3 (unlikely but safe)
+                    # Cleanup stale AssistantContent from failed stream
+                    # to prevent duplicate bubbles on retry
+                    if (
+                        chat_log.content
+                        and isinstance(
+                            chat_log.content[-1],
+                            ha_conversation.AssistantContent,
+                        )
+                        and chat_log.content[-1].agent_id == self._entity_id
+                    ):
+                        chat_log.content.pop()
                     continue
 
                 # Return partial results to allow fallback if chat was created

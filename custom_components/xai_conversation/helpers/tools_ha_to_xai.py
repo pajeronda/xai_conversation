@@ -90,30 +90,6 @@ def _build_common_schema(
 
 
 # Schemas for fallback tools, defined as constants for clarity and reuse
-_LIGHT_PROPS = {
-    "brightness": {
-        "type": "integer",
-        "minimum": 0,
-        "maximum": 255,
-        "description": "Sets the light brightness on a scale from 0 (off) to 255 (full brightness). For 'set light to 50%', use a value around 128.",
-    },
-    "color_name": {
-        "type": "string",
-        "description": "Sets color by name (standard CSS color names in English). For 'set color to red', use {'color_name': 'red'}.",
-    },
-    "rgb_color": {
-        "type": "array",
-        "items": {"type": "integer", "minimum": 0, "maximum": 255},
-        "minItems": 3,
-        "maxItems": 3,
-        "description": "Sets color using RGB values [R, G, B]. For 'set color to yellow', use {'rgb_color': [255, 255, 0]}.",
-    },
-    "color_temp": {
-        "type": "integer",
-        "description": "Sets color temperature in mireds (e.g., 153-500). Use for 'warm white' or 'cool white'. DO NOT use for standard colors like 'red' or 'blue'.",
-    },
-}
-
 _MEDIA_PROPS = {
     "search_query": {
         "type": "string",
@@ -125,51 +101,58 @@ _MEDIA_PROPS = {
     },
 }
 
-_VOLUME_PROPS = {
-    "volume_level": {
-        "type": "integer",
-        "minimum": 0,
-        "maximum": 100,
-        "description": "Sets the volume to a specific percentage (0-100). For a 'set volume to 50%' request, use {'volume_level': 50}.",
-    },
-}
-
-_TIMER_PROPS = {
+_TIMER_DURATION_PROPS = {
     "hours": {
         "type": "integer",
         "minimum": 0,
-        "description": "Number of hours for the timer's duration.",
+        "description": "Number of hours.",
     },
     "minutes": {
         "type": "integer",
         "minimum": 0,
         "maximum": 59,
-        "description": "Number of minutes for the timer's duration.",
+        "description": "Number of minutes.",
     },
     "seconds": {
         "type": "integer",
         "minimum": 0,
         "maximum": 59,
-        "description": "Number of seconds for the timer's duration.",
-    },
-    "name": {
-        "type": "string",
-        "description": "Optional name for the new timer. Example: 'kitchen timer'.",
-    },
-    "area": {
-        "type": "string",
-        "description": "Optional area to associate with the new timer.",
+        "description": "Number of seconds.",
     },
 }
 
-_TIMER_CONTROL_PROPS = {
+_TIMER_START_PROPS = {
+    **_TIMER_DURATION_PROPS,
     "name": {
         "type": "string",
-        "description": "The name of the timer to control. Used to identify which timer to pause, cancel, etc.",
+        "description": "Optional name for the timer. Example: 'kitchen timer'.",
+    },
+    "conversation_command": {
+        "type": "string",
+        "description": "Command to execute when the timer finishes.",
+    },
+}
+
+_TIMER_IDENTIFY_PROPS = {
+    "start_hours": {
+        "type": "integer",
+        "description": "Hours the timer was originally started with.",
+    },
+    "start_minutes": {
+        "type": "integer",
+        "description": "Minutes the timer was originally started with.",
+    },
+    "start_seconds": {
+        "type": "integer",
+        "description": "Seconds the timer was originally started with.",
+    },
+    "name": {
+        "type": "string",
+        "description": "Name of the timer to control.",
     },
     "area": {
         "type": "string",
-        "description": "The area of the timer to control, used if the name is not unique.",
+        "description": "Area of the device used to start the timer.",
     },
 }
 
@@ -200,14 +183,18 @@ _TODO_PROPS = {
 # in the exposed entities for the tool to be included.
 # If a tool is not in this map, it is included by default (conservative fallback).
 _TOOL_DOMAIN_REQUIREMENTS = {
-    # Domain-specific tools
-    "HassLightSet": {"light"},
+    # Climate
     "HassClimateSetTemperature": {"climate"},
     "HassClimateGetTemperature": {"climate"},
+    # Vacuum
     "HassVacuumStart": {"vacuum"},
     "HassVacuumReturnToBase": {"vacuum"},
-    "HassVacuumPause": {"vacuum"},
-    "HassVacuumStop": {"vacuum"},
+    # Fan
+    "HassFanSetSpeed": {"fan"},
+    # Lawn mower
+    "HassLawnMowerStartMowing": {"lawn_mower"},
+    "HassLawnMowerDock": {"lawn_mower"},
+    # Media player
     "HassMediaSearchAndPlay": {"media_player"},
     "HassMediaPause": {"media_player"},
     "HassMediaUnpause": {"media_player"},
@@ -215,11 +202,12 @@ _TOOL_DOMAIN_REQUIREMENTS = {
     "HassMediaPrevious": {"media_player"},
     "HassSetVolume": {"media_player"},
     "HassSetVolumeRelative": {"media_player"},
-    "HassVolumeUp": {"media_player"},
-    "HassVolumeDown": {"media_player"},
-    "HassOpenCover": {"cover"},
-    "HassCloseCover": {"cover"},
+    "HassMediaPlayerMute": {"media_player"},
+    "HassMediaPlayerUnmute": {"media_player"},
+    # Cover
     "HassSetPosition": {"cover"},
+    "HassStopMoving": {"cover"},
+    # Timer
     "HassStartTimer": {"timer"},
     "HassCancelTimer": {"timer"},
     "HassCancelAllTimers": {"timer"},
@@ -228,55 +216,35 @@ _TOOL_DOMAIN_REQUIREMENTS = {
     "HassPauseTimer": {"timer"},
     "HassUnpauseTimer": {"timer"},
     "HassTimerStatus": {"timer"},
+    # Weather / Calendar / Todo
     "HassGetWeather": {"weather"},
-    "CalendarGetEvents": {"calendar"},
-    "TodoGetItems": {"todo"},
+    "calendar_get_events": {"calendar"},
+    "todo_get_items": {"todo"},
     "HassShoppingListAddItem": {"shopping_list", "todo"},
+    "HassShoppingListCompleteItem": {"shopping_list", "todo"},
     "HassListAddItem": {"todo"},
     "HassListCompleteItem": {"todo"},
-    # Generic tools that require at least one controllable domain
-    # We include these by default (empty set) as they are fundamental to HA operation
+    # Generic tools (empty set = always include)
     "HassTurnOn": set(),
     "HassTurnOff": set(),
-    "HassToggle": set(),
-    # Tools that are always useful or don't map cleanly to a single domain
-    "HassGetState": set(),  # Empty set means always include
+    "HassGetState": set(),
     "HassNevermind": set(),
     "HassGetCurrentDate": set(),
     "HassGetCurrentTime": set(),
-    "TriggerAssistAI": set(),
-    "TriggerAssistMessage": set(),
 }
 
 
 # Tool schema map - defined at module level to avoid reconstruction on every call
 # Maps tool names to their schema generation logic for efficient direct lookups
 _TOOL_SCHEMA_MAP = {
-    # Tools with no additional properties (use common schema)
+    # Generic targeting tools (name, area, floor, domain, device_class)
     "HassTurnOn": _build_common_schema,
     "HassTurnOff": _build_common_schema,
-    "HassVolumeUp": _build_common_schema,
-    "HassVolumeDown": _build_common_schema,
-    "HassOpenCover": _build_common_schema,
-    "HassCloseCover": _build_common_schema,
-    "HassClimateGetTemperature": _build_common_schema,
-    "HassVacuumStart": _build_common_schema,
-    "HassVacuumReturnToBase": _build_common_schema,
-    "HassVacuumPause": _build_common_schema,
-    "HassVacuumStop": _build_common_schema,
-    "TriggerAssistAI": _build_common_schema,
-    "TriggerAssistMessage": _build_common_schema,
-    "HassGetCurrentDate": lambda: {"type": "object", "properties": {}, "required": []},
-    "HassGetCurrentTime": lambda: {"type": "object", "properties": {}, "required": []},
-    "HassNevermind": lambda: {"type": "object", "properties": {}, "required": []},
-    # Tools with additional properties
-    "HassLightSet": lambda: _build_common_schema(_LIGHT_PROPS),
-    "HassSetVolume": lambda: _build_common_schema(_VOLUME_PROPS),
     "HassGetState": lambda: _build_common_schema(
         {
             "state": {
                 "type": "string",
-                "description": "The state to check for, e.g., 'on', 'off', 'locked', 'unlocked', 'open', 'closed'. Example: To check if a light is on, use {'state': 'on'}.",
+                "description": "The state to check for, e.g., 'on', 'off', 'locked', 'unlocked', 'open', 'closed'.",
             }
         }
     ),
@@ -286,72 +254,173 @@ _TOOL_SCHEMA_MAP = {
                 "type": "integer",
                 "minimum": 0,
                 "maximum": 100,
-                "description": "The target position as a percentage from 0 (fully closed) to 100 (fully open). For 'open the blinds halfway', use {'position': 50}.",
+                "description": "Position as percentage (0=fully closed, 100=fully open).",
             }
-        }
+        },
+        ["position"],
     ),
-    # Tools with additional properties and required fields
-    "HassClimateSetTemperature": lambda: _build_common_schema(
-        {
+    # Tools with name/area/floor only (no domain/device_class per official docs)
+    "HassClimateGetTemperature": lambda: {
+        "type": "object",
+        "properties": {
+            "name": {"type": "string", "description": "Name of the climate device"},
+            "area": {"type": "string", "description": "Area/room name"},
+            "floor": {"type": "string", "description": "Floor name"},
+        },
+        "required": [],
+    },
+    "HassVacuumStart": lambda: {
+        "type": "object",
+        "properties": {
+            "name": {"type": "string", "description": "Name of the vacuum"},
+            "area": {"type": "string", "description": "Area/room name"},
+            "floor": {"type": "string", "description": "Floor name"},
+        },
+        "required": [],
+    },
+    "HassVacuumReturnToBase": lambda: {
+        "type": "object",
+        "properties": {
+            "name": {"type": "string", "description": "Name of the vacuum"},
+            "area": {"type": "string", "description": "Area/room name"},
+        },
+        "required": [],
+    },
+    "HassFanSetSpeed": lambda: {
+        "type": "object",
+        "properties": {
+            "name": {"type": "string", "description": "Name of the fan"},
+            "area": {"type": "string", "description": "Area/room name"},
+            "floor": {"type": "string", "description": "Floor name"},
+            "percentage": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 100,
+                "description": "Fan speed percentage (0=off, 100=max).",
+            },
+        },
+        "required": ["percentage"],
+    },
+    "HassLawnMowerStartMowing": lambda: {
+        "type": "object",
+        "properties": {
+            "name": {"type": "string", "description": "Name of the lawn mower"},
+        },
+        "required": [],
+    },
+    "HassLawnMowerDock": lambda: {
+        "type": "object",
+        "properties": {
+            "name": {"type": "string", "description": "Name of the lawn mower"},
+        },
+        "required": [],
+    },
+    "HassGetCurrentDate": lambda: {"type": "object", "properties": {}, "required": []},
+    "HassGetCurrentTime": lambda: {"type": "object", "properties": {}, "required": []},
+    "HassNevermind": lambda: {"type": "object", "properties": {}, "required": []},
+    # Climate
+    "HassClimateSetTemperature": lambda: {
+        "type": "object",
+        "properties": {
+            "name": {"type": "string", "description": "Name of the climate device"},
+            "area": {"type": "string", "description": "Area/room name"},
+            "floor": {"type": "string", "description": "Floor name"},
             "temperature": {
                 "type": "number",
-                "description": "The target temperature for a climate device. The value should be in the system's configured temperature unit (°C or °F).",
-            }
+                "description": "Target temperature in the system's configured unit (°C or °F).",
+            },
         },
-        ["temperature"],
-    ),
-    "HassSetVolumeRelative": lambda: _build_common_schema(
-        {
+        "required": ["temperature"],
+    },
+    # Media player
+    "HassSetVolume": lambda: {
+        "type": "object",
+        "properties": {
+            "name": {"type": "string", "description": "Name of the media player"},
+            "area": {"type": "string", "description": "Area/room name"},
+            "volume_level": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 100,
+                "description": "Volume level from 0 to 100.",
+            },
+        },
+        "required": ["volume_level"],
+    },
+    "HassSetVolumeRelative": lambda: {
+        "type": "object",
+        "properties": {
             "volume_step": {
                 "type": "string",
-                "description": "Adjusts volume relatively. Use 'up' or 'down' for small increments, or an integer from -100 to 100 for a specific percentage change. For 'turn volume up', use {'volume_step': 'up'}. For 'decrease volume by 20', use {'volume_step': -20}.",
-            }
+                "description": "Use 'up' or 'down' for small increments, or an integer from -100 to 100.",
+            },
+            "name": {"type": "string", "description": "Name of the media player"},
+            "area": {"type": "string", "description": "Area/room name"},
+            "floor": {"type": "string", "description": "Floor name"},
         },
-        ["volume_step"],
-    ),
-    # Tools with fully custom schemas
+        "required": ["volume_step"],
+    },
+    "HassMediaPlayerMute": lambda: {
+        "type": "object",
+        "properties": {
+            "name": {"type": "string", "description": "Name of the media player"},
+        },
+        "required": [],
+    },
+    "HassMediaPlayerUnmute": lambda: {
+        "type": "object",
+        "properties": {
+            "name": {"type": "string", "description": "Name of the media player"},
+        },
+        "required": [],
+    },
+    # Timer tools (aligned with official HA intent slots)
     "HassStartTimer": lambda: {
         "type": "object",
-        "properties": _TIMER_PROPS,
+        "properties": _TIMER_START_PROPS,
         "required": [],
     },
     "HassCancelTimer": lambda: {
         "type": "object",
-        "properties": _TIMER_CONTROL_PROPS,
+        "properties": _TIMER_IDENTIFY_PROPS,
         "required": [],
     },
     "HassCancelAllTimers": lambda: {
         "type": "object",
         "properties": {
-            "area": {"type": "string", "description": "Area name to cancel timers in"}
+            "area": {
+                "type": "string",
+                "description": "Area of the device used to start the timers.",
+            }
         },
         "required": [],
     },
     "HassIncreaseTimer": lambda: {
         "type": "object",
-        "properties": _TIMER_CONTROL_PROPS,
+        "properties": {**_TIMER_DURATION_PROPS, **_TIMER_IDENTIFY_PROPS},
         "required": [],
     },
     "HassDecreaseTimer": lambda: {
         "type": "object",
-        "properties": _TIMER_CONTROL_PROPS,
+        "properties": {**_TIMER_DURATION_PROPS, **_TIMER_IDENTIFY_PROPS},
         "required": [],
     },
     "HassPauseTimer": lambda: {
         "type": "object",
-        "properties": _TIMER_CONTROL_PROPS,
+        "properties": _TIMER_IDENTIFY_PROPS,
         "required": [],
     },
     "HassUnpauseTimer": lambda: {
         "type": "object",
-        "properties": _TIMER_CONTROL_PROPS,
+        "properties": _TIMER_IDENTIFY_PROPS,
         "required": [],
     },
     "HassTimerStatus": lambda: {
         "type": "object",
-        "properties": _TIMER_CONTROL_PROPS,
+        "properties": _TIMER_IDENTIFY_PROPS,
         "required": [],
     },
+    # Shopping list / Todo list tools
     "HassShoppingListAddItem": lambda: {
         "type": "object",
         "properties": {
@@ -359,9 +428,15 @@ _TOOL_SCHEMA_MAP = {
                 "type": "string",
                 "description": "The item to add to the shopping list. Example: 'milk'.",
             },
-            "name": {
+        },
+        "required": ["item"],
+    },
+    "HassShoppingListCompleteItem": lambda: {
+        "type": "object",
+        "properties": {
+            "item": {
                 "type": "string",
-                "description": "The name of the list. Defaults to the primary shopping list if not provided.",
+                "description": "The item to check off from the shopping list. Example: 'milk'.",
             },
         },
         "required": ["item"],
@@ -375,10 +450,10 @@ _TOOL_SCHEMA_MAP = {
             },
             "name": {
                 "type": "string",
-                "description": "The name of the list. Defaults to the primary to-do list if not provided.",
+                "description": "The name of the list.",
             },
         },
-        "required": ["item"],
+        "required": ["item", "name"],
     },
     "HassListCompleteItem": lambda: {
         "type": "object",
@@ -389,10 +464,10 @@ _TOOL_SCHEMA_MAP = {
             },
             "name": {
                 "type": "string",
-                "description": "The name of the specific list where the item is located. Defaults to the primary list.",
+                "description": "The name of the list where the item is located.",
             },
         },
-        "required": ["item"],
+        "required": ["item", "name"],
     },
     "HassBroadcast": lambda: {
         "type": "object",
@@ -413,25 +488,74 @@ _TOOL_SCHEMA_MAP = {
         "properties": {"name": {"type": "string", "description": "Location name"}},
         "required": [],
     },
-    "CalendarGetEvents": lambda: _build_common_schema(_CALENDAR_PROPS),
-    "TodoGetItems": lambda: _build_common_schema(_TODO_PROPS),
+    "calendar_get_events": lambda: _build_common_schema(_CALENDAR_PROPS),
+    "todo_get_items": lambda: _build_common_schema(_TODO_PROPS),
+    "IntentExecution": lambda: {
+        "type": "object",
+        "properties": {
+            "text": {
+                "type": "string",
+                "description": "the recognized command in the user's language",
+            }
+        },
+        "required": ["text"],
+    },
+    "HassPhotoAnalysis": lambda: {
+        "type": "object",
+        "properties": {
+            "entity_id": {
+                "type": "string",
+                "description": "camera entity ID (e.g. camera.garden)",
+            },
+            "prompt": {
+                "type": "string",
+                "description": "what to look for or describe in the image",
+            },
+        },
+        "required": ["entity_id"],
+    },
+}
+
+# Tool description overrides — only for tools where HA's default description
+# is too vague and the LLM needs explicit guidance on parameter usage.
+_TOOL_DESCRIPTION_OVERRIDES: dict[str, str] = {
+    "IntentExecution": (
+        "Execute a user command via Home Assistant intents (conversation.process). "
+        "Prefer this tool for the custom intent topics listed in the system prompt; "
+        "it can still be used as a fallback when appropriate."
+    ),
 }
 
 
 def _get_fallback_tool_schema(tool_name: str) -> dict | None:
-    """Provide fallback JSON schema for known HA tools using a structured map.
-    Supports all standard HA intent slots: name, area, floor, domain, device_class.
-    """
-    # Handle media tools, which share properties but have different required fields
+    """Provide fallback JSON schema for known HA tools using a structured map."""
+    # HassMediaSearchAndPlay: name, area, search_query (required), media_class
+    if tool_name == "HassMediaSearchAndPlay":
+        return {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Name of the media player"},
+                "area": {"type": "string", "description": "Area/room name"},
+                **_MEDIA_PROPS,
+            },
+            "required": ["search_query"],
+        }
+
+    # Media control tools: only name/area per official docs
     if tool_name in (
-        "HassMediaSearchAndPlay",
         "HassMediaPause",
         "HassMediaUnpause",
         "HassMediaNext",
         "HassMediaPrevious",
     ):
-        required = ["search_query"] if tool_name == "HassMediaSearchAndPlay" else []
-        return _build_common_schema(_MEDIA_PROPS, required)
+        return {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Name of the media player"},
+                "area": {"type": "string", "description": "Area/room name"},
+            },
+            "required": [],
+        }
 
     # Look up the tool in the module-level map
     schema_func = _TOOL_SCHEMA_MAP.get(tool_name)
@@ -458,11 +582,7 @@ def format_tools_for_xai(ha_tools: list[ha_llm.Tool]) -> tuple[list[dict], dict]
         "failed": 0,
     }
 
-    # Sort tools alphabetically by name for consistent ordering
-    # This improves cache hit rate by ensuring tools are always in the same order
-    sorted_ha_tools = sorted(ha_tools, key=lambda t: str(t.name))
-
-    for ha_tool in sorted_ha_tools:
+    for ha_tool in ha_tools:
         # Convert parameters to xAI JSON schema
         try:
             schema_stats["total"] += 1
@@ -486,14 +606,29 @@ def format_tools_for_xai(ha_tools: list[ha_llm.Tool]) -> tuple[list[dict], dict]
                     schema_stats["converted"] += 1
             else:
                 schema_stats["converted"] += 1
+            # Force override for tools where voluptuous schemas may not
+            # convert cleanly to JSON Schema
+            if str(ha_tool.name) in (
+                "IntentExecution",
+                "HassPhotoAnalysis",
+            ):
+                override = _get_fallback_tool_schema(str(ha_tool.name))
+                if override:
+                    parameters = override
 
             # Normalize parameters dict for consistent serialization
             # Sort keys recursively to ensure stable JSON representation
             parameters = _normalize_json_dict(parameters)
 
+            # Override description for tools that need richer instructions
+            description = _TOOL_DESCRIPTION_OVERRIDES.get(
+                str(ha_tool.name),
+                str(ha_tool.description or "Home Assistant tool"),
+            )
+
             xai_tool_obj = {
                 "name": str(ha_tool.name),
-                "description": str(ha_tool.description or "Home Assistant tool"),
+                "description": description,
                 "parameters": parameters,
             }
             xai_tools.append(xai_tool_obj)

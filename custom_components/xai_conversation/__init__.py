@@ -32,7 +32,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
     """Migrate old entry to new schema."""
     LOGGER.info(
-        "Migration: from version %s.%s to 2.1",
+        "Migration: from version %s.%s to 2.2",
         config_entry.version,
         config_entry.minor_version,
     )
@@ -62,11 +62,19 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
         # Ensure valid config keys in entry.data and subentries
         await coordinator.ensure_valid_config_keys()
 
+    # Migrate to V2.2 (subentry_id in memory keys)
+    # Applies to: V1 (any), V2.0, V2.1 - anyone not already at V2.2+
+    needs_memory_migration = config_entry.version < 2 or (
+        config_entry.version == 2 and config_entry.minor_version < 2
+    )
+    if needs_memory_migration:
+        await coordinator.migrate_memory_v2_2()
+
     # Update version
     hass.config_entries.async_update_entry(
         config_entry,
         version=2,
-        minor_version=1,
+        minor_version=2,
     )
 
     LOGGER.info("Migration: completed successfully")

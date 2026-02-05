@@ -98,6 +98,8 @@ This integration extends the standard Home Assistant tools with additional capab
 | **HassSetInputText** | Sets the text value of an `input_text` entity |
 | **HassRunScript** | Executes a Home Assistant script |
 | **HassTriggerAutomation** | Triggers a Home Assistant automation |
+| **HassPhotoAnalysis** | Have them describe to you what your cameras see |
+| **IntentExecution** | Your custom intents become tools! |
 
 ### xAI Tools
 Enable **Live Search** (web) and **𝕏 Search** in the conversation agent options for real-time information with **citations** (if you enable citations in the conversation agent options).

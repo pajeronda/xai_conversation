@@ -476,8 +476,15 @@ class XAIOptionsFlowBase(ConfigSubentryFlow):
         """Get default name for this subentry type. Must be implemented by subclasses."""
         raise NotImplementedError
 
+    # Template fields that use suggested_value: if absent from user_input
+    # the old value would persist. Ensure cleared fields are saved as "".
+    _TEMPLATE_KEYS = (CONF_PROMPT_PIPELINE, CONF_PROMPT_TOOLS, CONF_LOCATION_CONTEXT)
+
     async def _async_save(self, user_input: dict[str, Any]) -> SubentryFlowResult:
         """Update options and save."""
+        for key in self._TEMPLATE_KEYS:
+            if key not in user_input and key in self.options:
+                self.options[key] = ""
         self.options.update(user_input)
         options = self.options.copy()
 

@@ -289,7 +289,7 @@ class EntityNotFound(HA_HomeAssistantError):
 
     def __init__(self, entity_id: str) -> None:
         """Initialize error."""
-        super().__init__(self, f"entity {entity_id} not found")
+        super().__init__(f"entity {entity_id} not found")
         self.entity_id = entity_id
 
     def __str__(self) -> str:
@@ -302,7 +302,7 @@ class EntityNotExposed(HA_HomeAssistantError):
 
     def __init__(self, entity_id: str) -> None:
         """Initialize error."""
-        super().__init__(self, f"entity {entity_id} not exposed")
+        super().__init__(f"entity {entity_id} not exposed")
         self.entity_id = entity_id
 
     def __str__(self) -> str:
@@ -316,7 +316,6 @@ class CallServiceError(HA_HomeAssistantError):
     def __init__(self, domain: str, service: str, data: object) -> None:
         """Initialize error."""
         super().__init__(
-            self,
             f"unable to call service {domain}.{service} with data {data}. One of 'entity_id', 'area_id', or 'device_id' is required",
         )
         self.domain = domain
@@ -333,7 +332,7 @@ class FunctionNotFound(HA_HomeAssistantError):
 
     def __init__(self, function: str) -> None:
         """Initialize error."""
-        super().__init__(self, f"function '{function}' does not exist")
+        super().__init__(f"function '{function}' does not exist")
         self.function = function
 
     def __str__(self) -> str:
@@ -346,7 +345,7 @@ class NativeNotFound(HA_HomeAssistantError):
 
     def __init__(self, name: str) -> None:
         """Initialize error."""
-        super().__init__(self, f"native function '{name}' does not exist")
+        super().__init__(f"native function '{name}' does not exist")
         self.name = name
 
     def __str__(self) -> str:
@@ -360,14 +359,16 @@ class InvalidFunction(HA_HomeAssistantError):
     def __init__(self, function_name: str) -> None:
         """Initialize error."""
         super().__init__(
-            self,
             f"failed to validate function `{function_name}`",
         )
         self.function_name = function_name
 
     def __str__(self) -> str:
         """Return string representation."""
-        return f"failed to validate function `{self.function_name}` ({self.__cause__})"
+        msg = f"failed to validate function `{self.function_name}`"
+        if self.__cause__ is not None:
+            msg += f" ({self.__cause__})"
+        return msg
 
 
 # ==============================================================================

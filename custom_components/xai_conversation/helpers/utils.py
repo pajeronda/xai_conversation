@@ -322,9 +322,14 @@ async def prepare_history_payload(
                 "tool_calls": getattr(content, "tool_calls", None),
             }
         elif isinstance(content, ha_conversation.ToolResultContent):
+            tool_result = None
+            for attr in ("content", "tool_result", "result", "output"):
+                if hasattr(content, attr):
+                    tool_result = getattr(content, attr)
+                    break
             msg = {
                 "role": "tool",
-                "content": str(content.content),
+                "content": str(tool_result),
                 "tool_call_id": content.tool_call_id,
             }
 

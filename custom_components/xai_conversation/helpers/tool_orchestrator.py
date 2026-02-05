@@ -10,12 +10,22 @@ import csv
 import hashlib
 import io
 import json
+import re
 import time
 from dataclasses import dataclass
 from typing import Any, TYPE_CHECKING
 
+from pathlib import Path
+
+import yaml
+
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import llm as ha_llm
+from homeassistant.helpers import area_registry as ar
+try:  # floor registry introduced in newer HA versions
+    from homeassistant.helpers import floor_registry as fr
+except Exception:  # pragma: no cover - optional dependency
+    fr = None
 from homeassistant.helpers import entity_registry as er
 
 from ..const import (
@@ -29,7 +39,7 @@ from ..exceptions import raise_generic_error
 from .utils import extract_device_id
 from .tools_custom import CUSTOM_TOOLS
 from .tools_ha_to_xai import _filter_tools_by_exposed_domains, format_tools_for_xai
-from .tools_xai_to_ha import convert_xai_to_ha_tool
+from .tools_xai_to_ha import convert_xai_to_ha_tool, _safe_parse_tool_arguments
 from .tools_extended import ExtendedToolError
 
 if TYPE_CHECKING:
@@ -69,6 +79,8 @@ def _get_exposed_entities_with_aliases(
         return []
 
     ent_reg = er.async_get(hass)
+    area_reg = ar.async_get(hass)
+    floor_reg = fr.async_get(hass) if fr else None
     enriched_entities = []
 
     for entity_id, entity_data in exposed_entities_result["entities"].items():
@@ -78,6 +90,24 @@ def _get_exposed_entities_with_aliases(
 
         # Get Registry Entry
         entry = ent_reg.async_get(entity_id)
+
+        # Resolve area/floor names via registries for prompt context
+        area_name = ""
+        floor_name = ""
+        if entry and entry.area_id:
+            area_entry = area_reg.async_get_area(entry.area_id)
+            if area_entry:
+                area_name = area_entry.name or ""
+                floor_id = getattr(area_entry, "floor_id", None)
+                if floor_id and floor_reg:
+                    floor_entry = floor_reg.async_get_floor(floor_id)
+                    floor_name = floor_entry.name if floor_entry else ""
+                else:
+                    floor_name = getattr(area_entry, "floor_name", "") or ""
+        if area_name:
+            entity_data_copy["area"] = area_name
+        if floor_name:
+            entity_data_copy["floor"] = floor_name
 
         # 1. Enrich Name (Fallback chain: HA_LLM > Registry Name > Registry Original Name > State Name)
         if not entity_data_copy.get("name"):
@@ -137,6 +167,10 @@ def resolve_tool_session_config(
     )
 
 
+# Set of custom tool names for deduplication against native HA tools
+_CUSTOM_TOOL_NAMES = {tool.name for tool in CUSTOM_TOOLS}
+
+
 class ToolOrchestrator:
     """Manages tool lifecycle, selection, and execution."""
 
@@ -149,8 +183,7 @@ class ToolOrchestrator:
 
         # Native Tool Cache
         self._cached_ha_tools_map: dict[str, Any] = {}
-        self._cached_active_domains: set[str] | None = None
-        self._cached_entity_ids: set[str] | None = None
+        self._cached_exposed_hash: str | None = None
 
         # Extended Tool Cache
         self._cached_extended_hash: str | None = None
@@ -160,21 +193,22 @@ class ToolOrchestrator:
 
         # Cached Prompt Context (for PromptManager)
         self._cached_static_context_csv: str | None = None
+        self._cached_custom_intents_csv: str | None = None
+        self._custom_intent_names: set[str] = set()
+        self._cached_intents_hash: str | None = None
         self._cached_enriched_entities: list[dict] | None = None
-        self._cached_static_prompt: str | None = None
-        self._cached_static_prompt_hash: str | None = None
 
     def _clear_cache(self):
         """Clear all caches."""
         self._cached_xai_tools = None
         self._cached_ha_tools_map = {}
-        self._cached_active_domains = None
-        self._cached_entity_ids = None
+        self._cached_exposed_hash = None
         self._cached_extended_hash = None
         self._cached_static_context_csv = None
+        self._cached_custom_intents_csv = None
+        self._custom_intent_names = set()
+        self._cached_intents_hash = None
         self._cached_enriched_entities = None
-        self._cached_static_prompt = None
-        self._cached_static_prompt_hash = None
 
     async def async_refresh_tools_if_needed(
         self, user_input, config: ToolSessionConfig
@@ -196,10 +230,21 @@ class ToolOrchestrator:
             self.hass, "conversation", include_state=False
         )
 
+        # Hash the full exposed result to detect ANY change
+        # (entity names, areas, aliases, additions, removals, domain changes)
+        exposed_json = json.dumps(
+            exposed_result.get("entities", {}), sort_keys=True
+        )
+        current_exposed_hash = hashlib.sha256(
+            exposed_json.encode()
+        ).hexdigest()[:12]
+
         current_active_domains = {
             e.split(".")[0] for e in exposed_result.get("entities", [])
         }
-        current_entity_ids = set(exposed_result.get("entities", {}).keys())
+
+        # Lightweight check for custom_sentences changes (stat-based)
+        current_intents_hash = await self._compute_intents_hash()
 
         # 3. Check Cache Validity
         should_rebuild = False
@@ -209,34 +254,37 @@ class ToolOrchestrator:
             should_rebuild = True
             rebuild_reason = "cache_empty"
 
+        elif current_intents_hash != self._cached_intents_hash:
+            should_rebuild = True
+            rebuild_reason = "custom_sentences_changed"
+
         elif config.use_extended_tools:
-            # Extended Mode Check: Hash the YAML
+            # Extended Mode Check: Hash the YAML + exposed entities
             yaml_config = config.extended_tools_yaml
-            current_hash = (
+            current_ext_hash = (
                 hashlib.sha256(yaml_config.encode()).hexdigest()[:8]
                 if yaml_config
                 else None
             )
 
-            if current_hash != self._cached_extended_hash:
+            if current_ext_hash != self._cached_extended_hash:
                 should_rebuild = True
                 rebuild_reason = "extended_yaml_changed"
-            # Also rebuild if we switched mode from Native to Extended
             elif not self._using_extended_mode:
                 should_rebuild = True
                 rebuild_reason = "mode_switch_to_extended"
+            elif current_exposed_hash != self._cached_exposed_hash:
+                should_rebuild = True
+                rebuild_reason = "exposed_entities_changed"
 
         else:
-            # Native Mode Check: Domains or Entities changed
+            # Native Mode Check: exposed entities changed (covers domains, IDs, names, areas, etc.)
             if self._using_extended_mode:
                 should_rebuild = True
                 rebuild_reason = "mode_switch_to_native"
-            elif current_active_domains != self._cached_active_domains:
+            elif current_exposed_hash != self._cached_exposed_hash:
                 should_rebuild = True
-                rebuild_reason = "active_domains_changed"
-            elif current_entity_ids != self._cached_entity_ids:
-                should_rebuild = True
-                rebuild_reason = "entity_ids_changed"
+                rebuild_reason = "exposed_entities_changed"
 
         if not should_rebuild:
             LOGGER.debug(
@@ -248,8 +296,8 @@ class ToolOrchestrator:
         start_time = time.time()
 
         # Update tracking state
-        self._cached_active_domains = current_active_domains
-        self._cached_entity_ids = current_entity_ids
+        self._cached_exposed_hash = current_exposed_hash
+        self._cached_intents_hash = current_intents_hash
 
         if config.use_extended_tools:
             await self._build_extended_tools(config)
@@ -275,8 +323,10 @@ class ToolOrchestrator:
             LOGGER.warning("[orchestrator] extended tools empty, fallback to native")
             self._using_extended_mode = False
             self._cached_xai_tools = []
-            # Note: We don't recurse into _build_native_tools here to avoid complexity.
-            # Next refresh will catch it or we accept empty for this turn.
+            self._cached_ha_tools_map = {}
+            self._cached_static_context_csv = ""
+            self._cached_custom_intents_csv = ""
+            self._custom_intent_names = set()
             return
 
         self._cached_xai_tools = registry.get_specs_for_llm()
@@ -293,6 +343,9 @@ class ToolOrchestrator:
         self._cached_static_context_csv = self._generate_compact_csv_context(
             config.allow_control
         )
+
+        # Build Custom Intents Context for PromptManager
+        self._cached_custom_intents_csv = await self._generate_custom_intents_context()
 
     def _generate_compact_csv_context(self, allow_control: bool = True) -> str:
         """Helper to generate a compact CSV string of exposed entities."""
@@ -314,6 +367,90 @@ class ToolOrchestrator:
             )
         return output.getvalue().strip()
 
+    async def _compute_intents_hash(self) -> str:
+        """Compute a lightweight hash of custom_sentences directory (file paths + mtimes)."""
+        return await self.hass.async_add_executor_job(
+            self._compute_intents_hash_sync
+        )
+
+    def _compute_intents_hash_sync(self) -> str:
+        """Sync implementation of custom_sentences hash (run in executor)."""
+        sentences_dir = Path(self.hass.config.config_dir) / "custom_sentences"
+        if not sentences_dir.exists():
+            return ""
+        parts: list[str] = []
+        for lang_dir in sorted(sentences_dir.iterdir()):
+            if not lang_dir.is_dir():
+                continue
+            for yaml_file in sorted(lang_dir.glob("*.yaml")):
+                try:
+                    st = yaml_file.stat()
+                    parts.append(f"{yaml_file}:{st.st_mtime_ns}:{st.st_size}")
+                except OSError:
+                    continue
+        if not parts:
+            return ""
+        return hashlib.sha256("|".join(parts).encode()).hexdigest()[:12]
+
+    async def _generate_custom_intents_context(self) -> str:
+        """Read custom_sentences YAML and generate a list of custom intents for LLM."""
+
+        def _read_custom_sentences() -> dict[str, list[str]]:
+            sentences_dir = Path(self.hass.config.config_dir) / "custom_sentences"
+            if not sentences_dir.exists():
+                return {}
+
+            intents_info: dict[str, list[str]] = {}
+            for lang_dir in sentences_dir.iterdir():
+                if not lang_dir.is_dir():
+                    continue
+                for yaml_file in lang_dir.glob("*.yaml"):
+                    try:
+                        data = yaml.safe_load(yaml_file.read_text(encoding="utf-8"))
+                    except Exception:
+                        continue
+                    for intent_name, intent_data in (data.get("intents") or {}).items():
+                        if intent_name.startswith("Hass"):
+                            continue
+                        topics: list[str] = []
+                        for entry in intent_data.get("data") or []:
+                            slots = entry.get("slots") or {}
+                            for val in slots.values():
+                                if isinstance(val, str) and val.startswith("call_"):
+                                    topics.append(val[5:].replace("_", " "))
+                        # Fallback: if no call_* slots found, use the intent name
+                        if not topics:
+                            # CamelCase -> spaced lowercase (e.g. SetVolume -> set volume)
+                            human_name = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", intent_name).lower()
+                            topics.append(human_name)
+                        if intent_name not in intents_info:
+                            intents_info[intent_name] = []
+                        intents_info[intent_name].extend(topics)
+            return intents_info
+
+        try:
+            intents_info = await self.hass.async_add_executor_job(
+                _read_custom_sentences
+            )
+        except Exception as err:
+            LOGGER.debug("[orchestrator] error reading custom_sentences: %s", err)
+            self._custom_intent_names = set()
+            return ""
+
+        # Store intent names for filtering them out of the Assist API tool list
+        self._custom_intent_names = set(intents_info.keys())
+
+        all_topics: list[str] = []
+        for topics in intents_info.values():
+            all_topics.extend(topics)
+        unique_topics = list(dict.fromkeys(all_topics))
+
+        return "\n".join(f"- {topic}" for topic in unique_topics)
+
+    def get_custom_intents_context(self) -> str:
+        """Get the cached custom intents context for prompt building."""
+        return self._cached_custom_intents_csv or ""
+
     async def _build_native_tools(self, user_input, exposed_result, active_domains):
         """Build cache for Native HA Tools mode."""
         self._using_extended_mode = False
@@ -331,45 +468,57 @@ class ToolOrchestrator:
             device_id=extract_device_id(user_input),
         )
 
-        # 1. Fetch HA Tools
+        # 1. Read custom_sentences intents FIRST (needed for filtering and prompt)
+        self._cached_custom_intents_csv = await self._generate_custom_intents_context()
+
+        # 2. Fetch HA Tools
         ha_tools = assist_api._async_get_tools(llm_context, exposed_result)
 
-        # 2. Filter by Domains (Using imported helper)
+        # 3. Filter by Domains (Using imported helper)
         ha_tools, dropped_count = _filter_tools_by_exposed_domains(
             ha_tools, exposed_result
         )
 
-        # 3. Inject Custom Tools
-        custom_tool_requirements = {
-            "HassSetInputNumber": "input_number",
-            "HassSetInputBoolean": "input_boolean",
-            "HassSetInputText": "input_text",
-            "HassRunScript": "script",
-            "HassTriggerAutomation": "automation",
-        }
+        # 4. Remove native HA tools that are replaced by custom tools
+        ha_tools = [t for t in ha_tools if t.name not in _CUSTOM_TOOL_NAMES]
 
+        # 5. Remove custom_sentences intents exposed as tools by the Assist API.
+        #    These are handled via the IntentExecution tool, not as individual tools.
+        if self._custom_intent_names:
+            before = len(ha_tools)
+            ha_tools = [t for t in ha_tools if t.name not in self._custom_intent_names]
+            intent_dropped = before - len(ha_tools)
+            if intent_dropped:
+                LOGGER.debug(
+                    "[orchestrator] filtered %d custom_sentences intent-tools: %s",
+                    intent_dropped,
+                    self._custom_intent_names,
+                )
+
+        # 6. Inject Custom Tools (using required_domain from Tool definition)
         for custom_tool in CUSTOM_TOOLS:
-            required_domain = custom_tool_requirements.get(custom_tool.name)
-            if required_domain and required_domain in active_domains:
+            if custom_tool.required_domain is None or custom_tool.required_domain in active_domains:
                 ha_tools.append(custom_tool)
 
-        # 4. Update Caches (Neutral specs)
+        # 7. Update Caches (Neutral specs)
         # SORT tools by name to ensure stable API payload for prompt caching
         ha_tools_sorted = sorted(ha_tools, key=lambda t: t.name)
         self._cached_ha_tools_map = {tool.name: tool for tool in ha_tools_sorted}
         self._cached_xai_tools, schema_stats = format_tools_for_xai(ha_tools_sorted)
 
         # Log consolidated tool stats
+        tool_names = [t.name for t in ha_tools_sorted]
         LOGGER.debug(
-            "[ha-to-xai] tools: %d kept, %d dropped | total=%d (fallback=%d, failed=%d)",
+            "[ha-to-xai] tools: %d kept, %d dropped | total=%d (fallback=%d, failed=%d) | names=%s",
             len(ha_tools_sorted),
             dropped_count,
             schema_stats["total"],
             schema_stats["fallback_used"],
             schema_stats["failed"],
+            tool_names,
         )
 
-        # 5. Build Static Context CSV for PromptManager
+        # 8. Build Static Context CSV for PromptManager
         self._cached_static_context_csv = self._generate_compact_csv_context(True)
 
     def get_xai_tools(self) -> list[dict]:
@@ -379,29 +528,6 @@ class ToolOrchestrator:
     def get_static_context_csv(self) -> str:
         """Get the cached static context (entities, areas, etc.) for prompt building."""
         return self._cached_static_context_csv or ""
-
-    def get_cached_static_prompt(self) -> str | None:
-        """Get the cached static prompt if available."""
-        return self._cached_static_prompt
-
-    def set_cached_static_prompt(self, prompt: str, prompt_hash: str) -> None:
-        """Set the cached static prompt and its hash."""
-        self._cached_static_prompt = prompt
-        self._cached_static_prompt_hash = prompt_hash
-
-    def _parse_arguments_if_needed(self, arguments: Any) -> dict:
-        """Helper to safely parse JSON arguments if passed as string."""
-        if isinstance(arguments, dict):
-            return arguments
-        if isinstance(arguments, str):
-            try:
-                if not arguments.strip():
-                    return {}
-                return json.loads(arguments)
-            except json.JSONDecodeError:
-                LOGGER.warning("[orchestrator] parse error: %s", arguments[:100])
-                return {}
-        return {}
 
     async def async_execute_tool(
         self,
@@ -435,7 +561,7 @@ class ToolOrchestrator:
                         self.hass
                     )
 
-                parsed_args = self._parse_arguments_if_needed(arguments)
+                parsed_args = _safe_parse_tool_arguments(arguments)
 
                 # Delay handling: wrap in composite/script delay and background
                 if "delay" in parsed_args:
@@ -472,8 +598,6 @@ class ToolOrchestrator:
 
                 # Fallback: Try case-insensitive lookup if exact match fails
                 if not ha_tool:
-                    # Case-insensitive map (built on demand or cached if frequent)
-                    # For now, simple iteration is fast enough for <50 tools
                     for cached_name, tool_obj in self._cached_ha_tools_map.items():
                         if (
                             cached_name.lower() == tool_name.lower()
@@ -493,13 +617,11 @@ class ToolOrchestrator:
                         f"Tool '{tool_name}' not found in cached native tools"
                     )
 
-                # Native tools execution
+                # Build tool input with sanitization and validation
                 mock_call = _MockToolCall(tool_name, arguments)
-
-                # Use shared converter for sanitization and validation
                 ha_tool_input = convert_xai_to_ha_tool(mock_call)
 
-                # Build robust LLMContext using shared helper
+                # Build LLM context for execution
                 llm_context = ha_llm.LLMContext(
                     platform=DOMAIN,
                     context=user_input.context,

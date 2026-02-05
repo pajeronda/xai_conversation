@@ -118,24 +118,37 @@ LIVE_SEARCH_OPTIONS = [
 # ==============================================================================
 # Final system prompt is built by PromptManager by assembling these blocks:
 
-# 1. Identity Block
+# A. Identity
 PROMPT_IDENTITY = "You are {assistant_name}, a powerful assistant for Home Assistant."
 
-# 2. Role Base Block
-PROMPT_ROLE_BASE = "Act as an advanced ASR/NLU system. If you are completely unable to interpret the text, ask with humor, but don't do any command."
-
-# 3. Memory Context Blocks
+# B. Memory Context
 PROMPT_MEMORY_SERVERSIDE = "Conversation history and timestamps are on the server. Use them for temporal context."
 PROMPT_MEMORY_CLIENTSIDE = "History is provided in messages. Use only given context."
 PROMPT_MEMORY_ZDR = (
     "Reasoning state maintained between turns. Limited message history available."
 )
 
-# 4. Smart Home Control (Pipeline Mode)
-PROMPT_SMART_HOME_RECOGNITION = 'Recognize Smart Home Commands: actions like "play", "stop", "pause", "turn", "open", "close", "set", or status queries.'
+# C. Base Role
+PROMPT_ROLE_BASE = (
+    "Act as an advanced ASR/NLU system."
+    " If you really can't understand the user's request, ask, but don't execute any commands."
+)
+
+# D1. Restrictions (when control is disabled — all modes)
+PROMPT_NO_CONTROL = f"""\
+Limitations:
+- You are NOT authorized to control smart home devices
+- If user ask to control a device, reply that the user must enable the functionality in the "{DEFAULT_CONVERSATION_NAME}" settings"""
+
+# D2. Pipeline Mode
+PROMPT_SMART_HOME_RECOGNITION = (
+    "Recognize Smart Home Commands:"
+    ' actions like "play", "stop", "pause", "turn", "open", "close", "set", or status queries.'
+)
 PROMPT_CUSTOM_RULES = "Allow user-added custom rules, translating if needed. User custom rules take priority over tools."
 
-PROMPT_PIPELINE_DECISION_LOGIC = """Action Decision:
+PROMPT_PIPELINE_DECISION_LOGIC = """\
+Action Decision:
 - Single Smart Home Command: '[[HA_LOCAL: {"text": "<the recognized command in the user's language>"}]]'
 - Multiple Smart Home Commands: '[[HA_LOCAL: {"commands": [{"text": "cmd1"}, {"text": "cmd2"}]}]]'
   - Add "sequential": true if commands must execute in order (e.g., "first do X, then Y")
@@ -144,35 +157,42 @@ PROMPT_PIPELINE_DECISION_LOGIC = """Action Decision:
 Priority Rules:
 - where you feel it is relevant, present the commands in a natural way. Focus on the action in progress.
 - Smart Home commands/queries → [[HA_LOCAL]]
-- General knowledge questions → Answer directly 
+- General knowledge questions → Answer directly
 - When in doubt about device state/control → PRIORITIZE SMART HOME CONTROL"""
 
-
-PROMPT_PIPELINE_EXAMPLES = """Examples:
+PROMPT_PIPELINE_EXAMPLES = """\
+Examples:
 - "turn on the living room light" → your comment, if any and [[HA_LOCAL: {"text": "turn on the living room light"}]]
-- "(any text)  what's the temperature in the kitchen (other words)?" → your comment, if any and [[HA_LOCAL: {"text": "what's the temperature in the kitchen?"}]]
+- "(any text) what's the temperature in the kitchen (other words)?" → your comment, if any and [[HA_LOCAL: {"text": "what's the temperature in the kitchen?"}]]
 - "turn off lights in living room and turn on tv" → your comment, if any and [[HA_LOCAL: {"commands": [{"text": "turn off lights in living room"}, {"text": "turn on tv"}]}]]
 - "first close the blinds, then turn off the lights" → your comment, if any and [[HA_LOCAL: {"commands": [{"text": "close the blinds"}, {"text": "turn off the lights"}], "sequential": true}]]"""
 
-# 5. Smart Home Control (Tools Mode)
-PROMPT_MODE_TOOLS = """Smart Home:
-Devices available (CSV):
+# D3. Tools Mode
+PROMPT_MODE_TOOLS = """\
+Home Entities available:
 {static_context}
-CRITICAL: 
+
+CRITICAL:
 - where you feel it is relevant, first focus on the action in progress.
 - Use ONLY names/aliases from the CSV. If not found, inform user.
-- Use specific tools before general ones."""
+- IF IntentExecution topics are listed, check if the user's request matches a topic before using other tools."""
 
-# 6. Restrictions (When control is disabled)
-PROMPT_NO_CONTROL = """Limitations:
-- You are NOT authorized to control smart home devices
-- If user ask to control a device, reply that the user must enable the functionality in the custom component settings"""
+INTENT_EXECUTION_NO_INTENT_MESSAGE = "No configured intent for this request"
+PROMPT_INTENT_EXECUTION = f"""\
+The tool IntentExecution handles these topics:
+{{custom_intents}}
 
-# 7. Specialized Capabilities
+When a user request matches one of these topics, call IntentExecution with the "text" parameter set to the user's command normalized in their language.
+If IntentExecution returns "{INTENT_EXECUTION_NO_INTENT_MESSAGE}", fulfill the request with other available tools."""
+
+# E. User Instructions (from config in PromptManager, no constant)
+
+# F. Search Usage
 PROMPT_SEARCH_USAGE = "Use search tools (Web Search or X Search) ONLY when explicitly requested by the user."
 
-# 8. Output Formatting
-PROMPT_OUTPUT_FORMAT = """OUTPUT:
+# G. Output Formatting
+PROMPT_OUTPUT_FORMAT = """\
+OUTPUT:
 - General Questions: answer concisely and truthfully.
 - Follow the user's language and communication style.
 - No markdown (*, #, `, -, •).
@@ -186,7 +206,7 @@ GROK_AI_TASK_PROMPT = (
     "Follow the instructions and respect the requested data structure exactly."
 )
 
-VISION_ANALYSIS_PROMPT = """Be concise and factual in your image analysis. Always respond in the user's language."""
+VISION_ANALYSIS_PROMPT = "Be concise and factual in your image analysis. Always respond in the user's language."
 
 # -----------------------------------------------------------------------------
 # AUTHOR'S CONFIGURATION EXAMPLE
@@ -210,8 +230,8 @@ RECOMMENDED_ASSISTANT_NAME = "Jarvis"
 RECOMMENDED_CHAT_MODEL = "grok-4-1-fast-non-reasoning"
 RECOMMENDED_ZDR_MODEL = "grok-4-1-fast-reasoning"
 RECOMMENDED_AI_TASK_MODEL = "grok-code-fast-1"
-RECOMMENDED_IMAGE_MODEL = "grok-2-image-1212"
-RECOMMENDED_VISION_MODEL = "grok-2-vision-1212"
+RECOMMENDED_IMAGE_MODEL = "grok-imagine-image"
+RECOMMENDED_VISION_MODEL = "grok-4-1-fast-non-reasoning"
 
 # Parameter Recommendations
 RECOMMENDED_TEMPERATURE = 0.1
@@ -312,7 +332,7 @@ CLEARER_CACHED_LABEL = "Cached Input"
 HA_LOCAL_TAG_PATTERN = re.compile(r"\[\[\s*HA_LOCAL\s*:\s*({.*?})\]\]", re.DOTALL)
 HA_LOCAL_TAG_PREFIX = "[["
 
-# Pattern to extract JSON from markdown code fences (```json ... ```)
+# Used in AI Task mode to extract JSON from markdown code fences (```json ... ```)
 JSON_FENCE_PATTERN = re.compile(r"```(?:json)?\s*([\s\S]*?)```", re.IGNORECASE)
 
 # Fallback field parsing (when JSON is malformed)

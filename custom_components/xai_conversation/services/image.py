@@ -4,7 +4,13 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from ..const import LOGGER, STATUS_OK, RECOMMENDED_VISION_MODEL, MODEL_TARGET_VISION
+from ..const import (
+    CONF_VISION_MODEL,
+    LOGGER,
+    MODEL_TARGET_VISION,
+    RECOMMENDED_VISION_MODEL,
+    STATUS_OK,
+)
 from ..exceptions import raise_validation_error
 from ..helpers import (
     LogTimeServices,
@@ -32,7 +38,15 @@ class PhotoAnalysisService(GatewayMixin):
         context_id = call.context.id
         temperature = call.data.get("temperature")
         top_p = call.data.get("top_p")
-        model = call.data.get("model") or RECOMMENDED_VISION_MODEL
+        # Model priority: service call parameter > config flow > recommended default
+        configured_model = RECOMMENDED_VISION_MODEL
+        for subentry in self.entry.subentries.values():
+            if subentry.subentry_type == "ai_task":
+                configured_model = subentry.data.get(
+                    CONF_VISION_MODEL, RECOMMENDED_VISION_MODEL
+                )
+                break
+        model = call.data.get("model") or configured_model
 
         # Parse request data
         prompt = call.data.get("prompt", "").strip()
@@ -68,12 +82,21 @@ class PhotoAnalysisService(GatewayMixin):
             )
 
             # 1. Prepare attachments (functional helper, no entity needed)
-            extra_content = await async_prepare_attachments(
+            prepared = await async_prepare_attachments(
                 self.hass, attachments, images
             )
+            extra_content = prepared.uris
 
             # 2. Setup mixed content messages
-            user_content = [prompt] + (extra_content or [])
+            final_prompt = prompt
+            if prepared.has_skipped:
+                skipped_list = ", ".join(prepared.skipped)
+                final_prompt += (
+                    f"\n\n[System Note: The following files were skipped due to unsupported formats "
+                    f"(xAI supports JPEG, PNG, WebP): {skipped_list}]"
+                )
+
+            user_content = [final_prompt] + (extra_content or [])
             messages = [
                 {
                     "role": "user",

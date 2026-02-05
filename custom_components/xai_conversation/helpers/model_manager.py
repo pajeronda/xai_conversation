@@ -71,6 +71,11 @@ class XAIModelManager:
 
         if image_price_key:
             prices["output_price"] = getattr(model, image_price_key, 0.0)
+            # Capture input prices for image generation models (e.g. grok-imagine-image)
+            prices["input_price"] = getattr(model, "prompt_text_token_price", 0.0)
+            prices["input_image_price"] = getattr(
+                model, "prompt_image_token_price", 0.0
+            )
         else:
             if price_key:
                 prices["input_price"] = getattr(model, price_key, 0.0)

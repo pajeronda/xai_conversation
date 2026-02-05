@@ -70,6 +70,9 @@ def _get_function_executor(value: str):
 
 
 def _get_rest_data(hass, rest_config, arguments):
+    # Work on a shallow copy to avoid mutating the shared config dict
+    rest_config = dict(rest_config)
+
     rest_config.setdefault(CONF_METHOD, rest.const.DEFAULT_METHOD)
     rest_config.setdefault(CONF_VERIFY_SSL, rest.const.DEFAULT_VERIFY_SSL)
     rest_config.setdefault(CONF_TIMEOUT, rest.data.DEFAULT_TIMEOUT)
@@ -405,6 +408,8 @@ class ScriptFunctionExecutor(FunctionExecutor):
         )
 
         result = await script.async_run(run_variables=arguments, context=context)
+        if result is None or not hasattr(result, "variables"):
+            return "Success"
         return result.variables.get("_function_result", "Success")
 
 
@@ -679,20 +684,25 @@ class SqliteFunctionExecutor(FunctionExecutor):
         template_arguments.update(arguments)
 
         q = Template(query, hass).async_render(template_arguments)
+        single = function.get("single") is True
 
-        with sqlite3.connect(db_url, uri=True) as conn:
-            cursor = conn.cursor().execute(q)
-            names = [description[0] for description in cursor.description]
+        def _execute_query():
+            with sqlite3.connect(db_url, uri=True) as conn:
+                cursor = conn.cursor().execute(q)
+                if cursor.description is None:
+                    return []
+                names = [description[0] for description in cursor.description]
 
-            if function.get("single") is True:
-                row = cursor.fetchone()
-                return {name: val for name, val in zip(names, row)}
+                if single:
+                    row = cursor.fetchone()
+                    if row is None:
+                        return {}
+                    return {name: val for name, val in zip(names, row)}
 
-            rows = cursor.fetchall()
-            result = []
-            for row in rows:
-                result.append({name: val for name, val in zip(names, row)})
-            return result
+                rows = cursor.fetchall()
+                return [{name: val for name, val in zip(names, row)} for row in rows]
+
+        return await hass.async_add_executor_job(_execute_query)
 
 
 class ExtendedToolsRegistry:
@@ -780,14 +790,15 @@ class ExtendedToolsRegistry:
             ],
         }
 
-    async def async_execute_raw_config(
+    async def _run_executor(
         self,
         func_config: dict,
         arguments: dict,
         context: Context,
-        exposed_entities: list = None,
+        exposed_entities: list | None,
+        tool_name: str,
     ) -> Any:
-        """Execute a raw function configuration."""
+        """Resolve executor and run a function configuration."""
         func_type = func_config.get("type")
         executor = FUNCTION_EXECUTORS.get(func_type)
         if not executor:
@@ -800,11 +811,23 @@ class ExtendedToolsRegistry:
                 arguments,
                 context,
                 exposed_entities or [],
-                tool_name="raw_config",
+                tool_name=tool_name,
             )
         except Exception as err:
-            LOGGER.exception("[extended] raw config execution failed")
+            LOGGER.exception("[extended] exec '%s' failed", tool_name)
             raise ExtendedToolError(f"Execution failed: {err}")
+
+    async def async_execute_raw_config(
+        self,
+        func_config: dict,
+        arguments: dict,
+        context: Context,
+        exposed_entities: list = None,
+    ) -> Any:
+        """Execute a raw function configuration."""
+        return await self._run_executor(
+            func_config, arguments, context, exposed_entities, tool_name="raw_config"
+        )
 
     async def execute(
         self,
@@ -818,25 +841,9 @@ class ExtendedToolsRegistry:
         if not tool:
             raise ExtendedToolError(f"Tool {name} not found")
 
-        func_config = tool["function"]
-        func_type = func_config.get("type")
-
-        executor = FUNCTION_EXECUTORS.get(func_type)
-        if not executor:
-            raise ExtendedToolError(f"Executor type '{func_type}' not supported")
-
-        try:
-            return await executor.execute(
-                self._hass,
-                func_config,
-                arguments,
-                context,
-                exposed_entities or [],
-                tool_name=name,
-            )
-        except Exception as err:
-            LOGGER.exception("[extended] exec '%s' failed", name)
-            raise ExtendedToolError(f"Execution failed: {err}")
+        return await self._run_executor(
+            tool["function"], arguments, context, exposed_entities, tool_name=name
+        )
 
     @staticmethod
     def validate_yaml(yaml_str: str) -> tuple[bool, str | None]:

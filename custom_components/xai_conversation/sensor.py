@@ -681,13 +681,18 @@ class XAIPricingSensor(SensorEntity):
             "input_price": "Input",
             "output_price": "Output",
             "cached_input_price": CLEARER_CACHED_LABEL,
-            "input_image_price": CLEARER_VISION_LABEL,
+            "input_image_price": "Image Input"
+            if self._is_image_model
+            else CLEARER_VISION_LABEL,
             "search_price": CLEARER_SEARCH_LABEL,
         }
         label = label_map.get(price_type, price_type.replace("_", " ").strip())
 
         display_name = _format_model_name(model_name)
-        if self._is_image_model and self._price_type == "output_price":
+        if self._is_image_model and self._price_type in (
+            "output_price",
+            "input_image_price",
+        ):
             self._attr_name = f"{display_name} {label} (per image)"
         elif price_type == "search_price":
             self._attr_name = f"{display_name} {label} (per call)"
@@ -710,7 +715,8 @@ class XAIPricingSensor(SensorEntity):
     def _is_unit_price(self) -> bool:
         """Check if this is a unit price (per image/call) vs token price."""
         return (
-            self._is_image_model and self._price_type == "output_price"
+            self._is_image_model
+            and self._price_type in ("output_price", "input_image_price")
         ) or self._price_type == "search_price"
 
     def _convert_price(self, raw_price: float) -> float:

@@ -310,6 +310,24 @@ class XaiInitManager:
                 except Exception as err:
                     LOGGER.warning("Failed to remove file %s: %s", filename, err)
 
+    async def migrate_memory_v2_2(self) -> None:
+        """Migrate memory to V2.2 format with subentry_id in keys.
+
+        Deletes memory file to force new keys with subentry_id isolation.
+        """
+        folder_name = DEFAULT_CONVERSATION_NAME.lower().replace(" ", "_")
+        storage_base = Path(self.hass.config.path(".storage"))
+        memory_file = storage_base / folder_name / f"{DOMAIN}.memory"
+
+        if memory_file.exists():
+            try:
+                await self.hass.async_add_executor_job(memory_file.unlink)
+                LOGGER.info(
+                    "Migration V2.2: reset conversation memory for subentry isolation"
+                )
+            except Exception as err:
+                LOGGER.warning("Migration V2.2: failed to reset memory - %s", err)
+
     async def ensure_valid_config_keys(self) -> None:
         """Ensure entry.data and subentry.data contain only valid keys.
 

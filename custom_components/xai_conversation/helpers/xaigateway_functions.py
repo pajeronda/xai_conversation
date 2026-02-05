@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
@@ -103,6 +104,7 @@ class ChatOptions:
     client_tools: list | None = None
     scope: str | None = None
     identifier: str | None = None
+    subentry_id: str | None = None  # For memory key isolation between subentries
     task_name: str | None = None
     task_structure: dict | None = None
     max_turns: int | None = None
@@ -123,6 +125,7 @@ class ChatOptions:
     messages: list[dict[str, Any]] | None = None
     is_resolved: bool = False
     prompt_hash: str | None = None
+    prompt_suffix: str | None = None
 
 
 # ==========================================================================
@@ -263,6 +266,8 @@ def resolve_chat_parameters(
     resolved.client_tools = opts.client_tools
     resolved.scope = resolved.scope or opts.scope
     resolved.identifier = resolved.identifier or opts.identifier
+    # Use function parameter as primary source, fallback to opts
+    resolved.subentry_id = subentry_id or opts.subentry_id
     resolved.task_name = opts.task_name
     resolved.task_structure = opts.task_structure
     resolved.mixed_content = opts.mixed_content
@@ -275,6 +280,7 @@ def resolve_chat_parameters(
     resolved.forced_last_message = opts.forced_last_message
     resolved.messages = opts.messages
     resolved.prompt_hash = opts.prompt_hash
+    resolved.prompt_suffix = opts.prompt_suffix
 
     resolved.config = config
     resolved.is_resolved = True
@@ -309,7 +315,14 @@ async def resolve_memory_context(
     if not (store_messages or is_zdr) or not options.scope or not options.identifier:
         return None, None, None
 
-    conv_key = MemoryManager.generate_key(options.scope, options.identifier, mode)
+    # subentry_id is required for memory isolation
+    if not options.subentry_id:
+        LOGGER.debug("[gateway] memory: skipped - no subentry_id")
+        return None, None, None
+
+    conv_key = MemoryManager.generate_key(
+        options.scope, options.identifier, mode, options.subentry_id
+    )
     memory = hass.data[DOMAIN]["conversation_memory"]
     previous_response_id = None
     stored_hash = None
@@ -561,9 +574,37 @@ def prepare_sdk_payload(
                 full_content = f"{system_prompt}\n{session_context}"
             sdk_messages.append(translate_system_message(full_content))
 
-    # 2. Add History turns
+    # 2. Add History turns and apply prompt suffix if needed
     if messages:
-        msg_list = translate_messages_to_sdk(messages)
+        # Detect if we need to apply a suffix to the last user message
+        final_messages = messages
+        if params.prompt_suffix:
+            # Create a copy to avoid mutating the input list/dicts
+            final_messages = [dict(m) for m in messages]
+            # Find the last USER message
+            for i in range(len(final_messages) - 1, -1, -1):
+                if final_messages[i].get("role") == "user":
+                    content = final_messages[i].get("content", "")
+                    if isinstance(content, list):
+                        # Append to the first text part found, or add a new string part
+                        text_part_found = False
+                        for j in range(len(content)):
+                            if isinstance(content[j], str) and not content[j].startswith(
+                                ("data:", "http")
+                            ):
+                                content[j] += params.prompt_suffix
+                                text_part_found = True
+                                break
+                        if not text_part_found:
+                            content.append(params.prompt_suffix)
+                        final_messages[i]["content"] = content
+                    else:
+                        final_messages[i]["content"] = (
+                            str(content) + params.prompt_suffix
+                        )
+                    break
+
+        msg_list = translate_messages_to_sdk(final_messages)
         if msg_list:
             sdk_messages.extend(msg_list)
 
@@ -651,14 +692,20 @@ def translate_assistant_message(
 
 
 def translate_tool_message(content: str, tool_call_id: str = "") -> Any:
-    """Create an SDK tool message.
+    """Create an SDK tool message with optional tool_call_id for proper linking.
 
-    Note: Per SDK examples (docs/xai_sdk-1.5.0/examples/sync/function_calling.py),
-    tool_result() only takes the content string. The SDK handles tool_call matching
-    internally based on conversation context.
+    The tool_call_id links this result to a specific tool call (should match
+    tool_call.id from the assistant's response). Supported since xai_sdk 1.6.0.
     """
     if not xai_tool_result:
         return None
+
+    # Pass tool_call_id only if supported by the SDK version
+    if tool_call_id:
+        import inspect
+
+        if "tool_call_id" in inspect.signature(xai_tool_result).parameters:
+            return xai_tool_result(str(content), tool_call_id=tool_call_id)
 
     return xai_tool_result(str(content))
 
@@ -775,12 +822,42 @@ def assemble_chat_args(
         MODEL_TARGET_VISION,
         MODEL_TARGET_IMAGE,
     ):
-        if search_mode == LIVE_SEARCH_WEB:
-            server_tools.append(web_search())
-        elif search_mode == LIVE_SEARCH_X:
-            server_tools.append(x_search())
-        elif search_mode in [LIVE_SEARCH_FULL, "auto", "on"]:
-            server_tools.extend([web_search(), x_search()])
+        # SECURITY/API FILTER: Grok-3 and older do NOT support server-side tools
+        model_name = (params.model or "").lower()
+        version_match = re.search(r"grok-(\d+)", model_name)
+        if version_match:
+            major_version = int(version_match.group(1))
+            if major_version < 4:
+                LOGGER.debug(
+                    "[gateway] Stripping server-side tools: model %s < grok-4",
+                    params.model,
+                )
+                search_mode = LIVE_SEARCH_OFF
+
+        # If still enabled, build session/location options and tools
+        if search_mode != LIVE_SEARCH_OFF:
+            # Build user location kwargs for web_search (SDK >= 1.6.0)
+            ws_kwargs: dict[str, str] = {}
+            loc_str = (
+                params.config.get(CONF_LOCATION_CONTEXT, "").strip()
+                if params.config
+                else ""
+            )
+            if loc_str:
+                import inspect
+
+                if "user_location_city" in inspect.signature(web_search).parameters:
+                    parts = [p.strip() for p in loc_str.split(",")]
+                    ws_kwargs["user_location_city"] = parts[0]
+                    if len(parts) > 1 and len(parts[-1]) == 2:
+                        ws_kwargs["user_location_country"] = parts[-1].upper()
+
+            if search_mode == LIVE_SEARCH_WEB:
+                server_tools.append(web_search(**ws_kwargs))
+            elif search_mode == LIVE_SEARCH_X:
+                server_tools.append(x_search())
+            elif search_mode in [LIVE_SEARCH_FULL, "auto", "on"]:
+                server_tools.extend([web_search(**ws_kwargs), x_search()])
 
     # User defined tools (client-side) - convert dicts to SDK protobuf format
     if params.client_tools:

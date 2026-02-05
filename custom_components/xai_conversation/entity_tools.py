@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 # Home Assistant imports
+from homeassistant.components import conversation as ha_conversation
 
 # Local imports
 from .const import (
@@ -81,6 +82,7 @@ class XAIToolsProcessor(BaseConversationProcessor):
         )
 
         # Use pre-resolved options if available, otherwise fallback to local creation
+        # Note: subentry_id is set by entity._async_handle_chat_log via resolve_chat_parameters
         params = options or ChatOptions(
             user_input=user_input, mode_override=CHAT_MODE_TOOLS
         )
@@ -164,6 +166,14 @@ class XAIToolsProcessor(BaseConversationProcessor):
                             tool_output_content, tool_call_id=result.tool_call_id
                         )
                     )
+                    # Sync tool result to chat_log for history consistency
+                    chat_log.content.append(
+                        self._build_tool_result_content(
+                            tool_output_content,
+                            result.tool_call_id,
+                            result.tool_name,
+                        )
+                    )
             else:
                 LOGGER.debug("[tools] complete: server-side tools only")
                 break
@@ -226,8 +236,7 @@ class XAIToolsProcessor(BaseConversationProcessor):
             return await self._execute_single_tool(tc, user_input, session_config)
 
         tasks = [
-            _exec_with_stagger(tc, idx)
-            for idx, tc in enumerate(client_tool_calls)
+            _exec_with_stagger(tc, idx) for idx, tc in enumerate(client_tool_calls)
         ]
 
         # Gather preserves order (unlike as_completed) - important for SDK tool matching
@@ -254,6 +263,40 @@ class XAIToolsProcessor(BaseConversationProcessor):
                 tool_results.append(result)
 
         return tool_results
+
+    def _build_tool_result_content(
+        self, content: str, tool_call_id: str, tool_name: str
+    ) -> ha_conversation.ToolResultContent:
+        """Build ToolResultContent with compatibility across HA versions."""
+        fields = getattr(ha_conversation.ToolResultContent, "__dataclass_fields__", {})
+        result_field = None
+        for candidate in ("content", "tool_result", "result", "output"):
+            if candidate in fields:
+                result_field = candidate
+                break
+        payload = {
+            "agent_id": self._entity_id,
+            "tool_call_id": tool_call_id,
+            "tool_name": tool_name,
+        }
+        if result_field:
+            payload[result_field] = content
+        else:
+            # Fallback for non-dataclass implementations
+            try:
+                return ha_conversation.ToolResultContent(
+                    agent_id=self._entity_id,
+                    tool_call_id=tool_call_id,
+                    tool_name=tool_name,
+                    content=content,
+                )
+            except TypeError:
+                return ha_conversation.ToolResultContent(
+                    agent_id=self._entity_id,
+                    tool_call_id=tool_call_id,
+                    tool_name=tool_name,
+                )
+        return ha_conversation.ToolResultContent(**payload)
 
     async def _execute_single_tool(
         self, tool_call, user_input, session_config: ToolSessionConfig

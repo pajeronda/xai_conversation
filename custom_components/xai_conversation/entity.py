@@ -226,9 +226,10 @@ class XAIBaseLLMEntity(HA_Entity):
         service_type = getattr(self, "service_type", "ai_task")
 
         # 1. Pre-process image/attachment parts to detect if vision is needed
-        extra_content = await async_prepare_attachments(
+        prepared = await async_prepare_attachments(
             self.hass, extra_attachments, extra_images
         )
+        extra_content = prepared.uris
 
         # 2. Resolve parameters (pick model based on content)
         opts = options or ChatOptions()
@@ -240,6 +241,15 @@ class XAIBaseLLMEntity(HA_Entity):
             service_type, self.entry, self.subentry.subentry_id, opts
         )
         params.extra_content = extra_content
+
+        # 3. Add system note for skipped attachments if any
+        if prepared.has_skipped:
+            skipped_list = ", ".join(prepared.skipped)
+            params.prompt_suffix = (
+                f"\n\n[System Note: The following files were skipped due to unsupported formats "
+                f"(xAI supports JPEG, PNG, WebP): {skipped_list}]"
+            )
+
         model = params.model
 
         # Note: No enrichment (timestamps/user names) for AI tasks - not needed for one-shot

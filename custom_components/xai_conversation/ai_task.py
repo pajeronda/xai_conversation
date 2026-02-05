@@ -31,6 +31,7 @@ from .helpers import (
     LogTimeServices,
     ChatOptions,
     convert_ha_schema_to_xai,
+    async_prepare_attachments,
 )
 from .entity import XAIBaseLLMEntity
 from .exceptions import raise_generic_error, raise_validation_error
@@ -158,11 +159,26 @@ class XAITaskEntity(
         config = self.get_config_dict()
         model = config.get(CONF_IMAGE_MODEL, RECOMMENDED_IMAGE_MODEL)
 
+        # Process attachments for image editing (img2img)
+        image_url = None
+        attachments = getattr(task, "attachments", None)
+        final_instructions = task.instructions
+        if attachments:
+            prepared = await async_prepare_attachments(self.hass, attachments)
+            if prepared.uris:
+                image_url = prepared.uris[0]
+            if prepared.has_skipped:
+                skipped_list = ", ".join(prepared.skipped)
+                final_instructions += (
+                    f"\n\n[System Note: The following files were skipped due to unsupported formats: {skipped_list}]"
+                )
+
         context = {"mode": "image", "model": model, "prompt_length": len(prompt)}
         async with LogTimeServices(LOGGER, "ai_task", context) as timer:
             response = await self.gateway.async_generate_image(
-                prompt=prompt,
+                prompt=final_instructions,
                 model=model,
+                image_url=image_url,
                 options=ChatOptions(timer=timer),
                 entity=self,
             )
