@@ -81,7 +81,13 @@ def _sanitize_argument_value(key: str, value: Any) -> Any:
         return str_value.lower() == "true"
 
     # Handle numeric strings for specific keys
-    if key in ("brightness", "brightness_pct", "color_temp", "color_temp_kelvin", "temperature"):
+    if key in (
+        "brightness",
+        "brightness_pct",
+        "color_temp",
+        "color_temp_kelvin",
+        "temperature",
+    ):
         try:
             return float(str_value) if "." in str_value else int(str_value)
         except ValueError:

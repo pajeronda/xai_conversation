@@ -58,6 +58,12 @@ class IntelligentPipeline(BaseConversationProcessor):
         """Execute pipeline, passing the timer down for API measurement."""
         parser = StreamParser()
 
+        # Ensure custom intents cache is populated for prompt building (non-blocking)
+        if self._entity and hasattr(self._entity, "_tools_processor"):
+            orchestrator = getattr(self._entity._tools_processor, "_orchestrator", None)
+            if orchestrator:
+                await orchestrator.async_refresh_custom_intents_cache()
+
         # Execute chat loop via base processor
         # Note: subentry_id is set by entity._async_handle_chat_log via resolve_chat_parameters
         resolved_options = options or ChatOptions(user_input=self.user_input)
@@ -341,6 +347,10 @@ class IntelligentPipeline(BaseConversationProcessor):
     ) -> None:
         """Execute a non-streaming fallback request when streaming fails."""
         LOGGER.debug("[pipeline] stream failed, using sample fallback: %s", err)
+
+        if chat is None:
+            LOGGER.error("[pipeline] fallback aborted: chat is None")
+            return
 
         async with timer.record_api_call():
             response = await chat.sample()

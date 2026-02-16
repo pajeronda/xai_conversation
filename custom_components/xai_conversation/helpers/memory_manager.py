@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+import asyncio
 from contextvars import ContextVar
 from datetime import timedelta
 from typing import TYPE_CHECKING, TypedDict, NotRequired, Iterable, Callable, Any
@@ -70,6 +71,29 @@ class MemoryManager:
         self._loaded = False
         self._dirty = False
         self._deleted_keys: set[str] = set()
+        self._listeners: list[Callable[[], Any]] = []
+
+    # --- Listener Management (Observer Pattern) ---
+
+    def register_listener(self, callback: Callable[[], Any]) -> Callable[[], None]:
+        """Register a listener to be notified when memory changes."""
+        self._listeners.append(callback)
+
+        def unsubscribe():
+            if callback in self._listeners:
+                self._listeners.remove(callback)
+
+        return unsubscribe
+
+    def _notify_listeners(self) -> None:
+        """Notify all registered listeners that memory has changed."""
+        for callback in list(self._listeners):
+            try:
+                res = callback()
+                if asyncio.iscoroutine(res):
+                    self.hass.async_create_task(res)
+            except Exception as err:
+                LOGGER.error("[memory] listener notification failed: %s", err)
 
     @staticmethod
     def generate_key(
@@ -90,6 +114,30 @@ class MemoryManager:
         """
         return f"{scope}:{identifier}:sub:{subentry_id}:mode:{mode}"
 
+    @staticmethod
+    def parse_key(key: str) -> tuple[str, str, str, str] | None:
+        """Parse a memory key into (scope, identifier, subentry_id, mode).
+
+        Expected format: {scope}:{identifier}:sub:{subentry_id}:mode:{mode}
+        Returns None if the key does not match the expected format.
+        """
+        if ":sub:" not in key or ":mode:" not in key:
+            return None
+
+        scope_and_id, _, rest = key.partition(":sub:")
+        if not scope_and_id or not rest:
+            return None
+
+        if ":" not in scope_and_id:
+            return None
+
+        scope, identifier = scope_and_id.split(":", 1)
+        subentry_id, _, mode = rest.partition(":mode:")
+        if not scope or not identifier or not subentry_id or not mode:
+            return None
+
+        return scope, identifier, subentry_id, mode
+
     async def async_get_last_response_id(self, key: str) -> str | None:
         """Retrieve the last response ID for a given key."""
         await self._ensure_loaded()
@@ -106,6 +154,38 @@ class MemoryManager:
         # Set as active parent for subsequent save_response calls in same task
         _ACTIVE_PARENTID.set(last_id)
         return last_id
+
+    async def async_get_turn_count(self, key: str) -> int:
+        """Return number of stored turns for a given memory key."""
+        await self._ensure_loaded()
+        entry = self._memory.get(key)
+        if not entry:
+            return 0
+        return len(entry.get("responses", []))
+
+    async def async_get_turn_counts(
+        self,
+    ) -> list[tuple[str, str, str, str, int]]:
+        """Return turn counts for all memory keys.
+
+        Returns a list of tuples:
+        (scope, identifier, subentry_id, mode, turns)
+        """
+        await self._ensure_loaded()
+        results: list[tuple[str, str, str, str, int]] = []
+        for key, entry in self._memory.items():
+            responses = entry.get("responses", [])
+            if not responses:
+                continue
+
+            parsed = self.parse_key(key)
+            if not parsed:
+                continue
+
+            scope, identifier, subentry_id, mode = parsed
+            results.append((scope, identifier, subentry_id, mode, len(responses)))
+
+        return results
 
     async def async_get_stored_hash(self, key: str) -> str | None:
         """Retrieve the stored prompt hash for a given key."""
@@ -155,6 +235,7 @@ class MemoryManager:
 
         # Update active parent to the new response ID for subsequent turns (e.g., tool loops)
         _ACTIVE_PARENTID.set(response_id)
+        self._notify_listeners()
 
     async def async_save_encrypted_blob(self, key: str, blob: str) -> None:
         """Save an encrypted blob for ZDR mode (overwrites previous)."""
@@ -298,6 +379,7 @@ class MemoryManager:
         self._dirty = True
         if flush:
             await self.async_flush()
+        self._notify_listeners()
 
         return {"all": all_ids, "server_stored": server_ids}
 
@@ -326,10 +408,7 @@ class MemoryManager:
     async def async_cleanup_expired(
         self, scope: str | None = None, identifier: str | None = None
     ) -> dict[str, list[str]]:
-        """Remove expired sessions based on inactivity (Session-Aware).
-
-        A session (all messages with same root_id) is expired only if its
-        MOST RECENT message is older than the TTL.
+        """Remove expired sessions based on inactivity.
 
         Args:
             scope: Optional scope (user/device) to filter cleanup.
@@ -344,43 +423,42 @@ class MemoryManager:
         if not self._memory:
             return {"all": [], "server_stored": []}
 
-        # Determine target key if scope/identifier provided
-        target_key = f"{scope}:{identifier}" if scope and identifier else None
+        # 1. Determine TTLs
+        device_ttl = self.entry.data.get(
+            CONF_MEMORY_DEVICE_TTL_HOURS, RECOMMENDED_MEMORY_DEVICE_TTL_HOURS
+        ) * 3600
+        user_ttl = self.entry.data.get(
+            CONF_MEMORY_USER_TTL_HOURS, RECOMMENDED_MEMORY_USER_TTL_HOURS
+        ) * 3600
 
         now = time.time()
         all_deleted_ids: list[str] = []
         server_stored_ids: list[str] = []
-        keys_to_delete = []
+        keys_to_delete: list[str] = []
 
-        # Iterate only over the target key or the whole memory
-        items_to_process = (
-            [(target_key, self._memory[target_key])]
-            if target_key and target_key in self._memory
-            else list(self._memory.items())
-        )
+        # 2. Iterate Memory Entries
+        for key, entry in self._memory.items():
+            # Parse key to get scope
+            parsed = self.parse_key(key)
+            if not parsed:
+                continue
+            k_scope, k_id, _ = parsed
 
-        for key, entry in items_to_process:
+            # Filter if arguments provided
+            if scope and k_scope != scope:
+                continue
+            if identifier and k_id != identifier:
+                continue
+
+            ttl = device_ttl if k_scope == "device" else user_ttl
+
             responses = entry.get("responses", [])
-            last_updated = entry.get("last_updated", 0)
-            blob = entry.get("encrypted_blob")
-
-            if not responses and not blob:
+            # Check empty entries (no responses and no ZDR blob)
+            if not responses and not entry.get("encrypted_blob"):
                 keys_to_delete.append(key)
                 continue
 
-            # Determine TTL based on key type
-            key_scope = "device" if key.startswith("device:") else "user"
-            if key_scope == "device":
-                ttl_hours = self.entry.data.get(
-                    CONF_MEMORY_DEVICE_TTL_HOURS, RECOMMENDED_MEMORY_DEVICE_TTL_HOURS
-                )
-            else:
-                ttl_hours = self.entry.data.get(
-                    CONF_MEMORY_USER_TTL_HOURS, RECOMMENDED_MEMORY_USER_TTL_HOURS
-                )
-
-            ttl_seconds = ttl_hours * 3600
-            # Group by root_id
+            # Group by root_id (Session)
             sessions: dict[str, list[ResponseData]] = {}
             for r in responses:
                 rid = r.get("root_id") or r["id"]
@@ -389,39 +467,61 @@ class MemoryManager:
                 sessions[rid].append(r)
 
             valid_responses: list[ResponseData] = []
-            session_deleted_count = 0
+            entry_modified = False
 
-            for root_id, session_messages in sessions.items():
-                # Check inactivity: only the most recent message matters
+            for session_messages in sessions.values():
+                # Check expiration (Inactive logic: whole session expires)
                 last_used = max(m["timestamp"] for m in session_messages)
-                if last_updated > last_used:
-                    last_used = last_updated
-
-                if (now - last_used) > ttl_seconds:
-                    # Session expired - collect IDs
+                if (now - last_used) > ttl:
+                    # Expired
                     for m in session_messages:
                         if m.get("id"):
                             all_deleted_ids.append(m["id"])
                             if m.get("store_messages", False):
                                 server_stored_ids.append(m["id"])
-                    session_deleted_count += 1
+                    entry_modified = True
                 else:
-                    # Session active
                     valid_responses.extend(session_messages)
 
-            if not valid_responses and not blob:
+            # Update entry if changed
+            if entry_modified:
+                if valid_responses:
+                    entry["responses"] = sorted(valid_responses, key=lambda x: x["timestamp"])
+                else:
+                    entry["responses"] = []
+                self._save_needed = True
+
+            # If entry is now empty, mark for deletion
+            if not entry.get("responses") and not entry.get("encrypted_blob"):
                 keys_to_delete.append(key)
-            elif session_deleted_count > 0:
-                entry["responses"] = sorted(
-                    valid_responses, key=lambda x: x["timestamp"]
-                )
-                self._dirty = True
 
+        # 3. Cleanup Keys
         for key in keys_to_delete:
-            self._memory.pop(key, None)
-            self._dirty = True
+            if key in self._memory:
+                self._memory.pop(key)
+                self._save_needed = True
 
-        if self._dirty:
+        # 4. Rebuild Index and Finalize
+        if all_deleted_ids:
+            # Rebuild flat index to match memory
+            new_responses = {}
+            for entry in self._memory.values():
+                for r in entry.get("responses", []):
+                    new_responses[r["id"]] = r
+            self._responses = new_responses
+
+            LOGGER.info(
+                "Cleanup: removed %d messages from expired sessions",
+                len(all_deleted_ids),
+            )
+            # Cleanup ZDR blobs referenced by deleted sessions
+            self._cleanup_encrypted_blobs(list(self._responses.values()))
+
+        if self._save_needed:
             await self.async_flush()
+            self._notify_listeners()
+
+        if server_stored_ids:
+            LOGGER.debug("Cleanup: %d server-side IDs flagged", len(server_stored_ids))
 
         return {"all": all_deleted_ids, "server_stored": server_stored_ids}

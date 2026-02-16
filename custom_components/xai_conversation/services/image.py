@@ -82,9 +82,7 @@ class PhotoAnalysisService(GatewayMixin):
             )
 
             # 1. Prepare attachments (functional helper, no entity needed)
-            prepared = await async_prepare_attachments(
-                self.hass, attachments, images
-            )
+            prepared = await async_prepare_attachments(self.hass, attachments, images)
             extra_content = prepared.uris
 
             # 2. Setup mixed content messages

@@ -589,9 +589,9 @@ def prepare_sdk_payload(
                         # Append to the first text part found, or add a new string part
                         text_part_found = False
                         for j in range(len(content)):
-                            if isinstance(content[j], str) and not content[j].startswith(
-                                ("data:", "http")
-                            ):
+                            if isinstance(content[j], str) and not content[
+                                j
+                            ].startswith(("data:", "http")):
                                 content[j] += params.prompt_suffix
                                 text_part_found = True
                                 break

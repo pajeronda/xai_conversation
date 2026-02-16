@@ -170,7 +170,10 @@ async def _async_process_single_source(
                         content_type,
                         processed_path,
                     )
-                    return None, f"{processed_path} (tipo {content_type} non supportato)"
+                    return (
+                        None,
+                        f"{processed_path} (tipo {content_type} non supportato)",
+                    )
 
             # Proceed to download if potentially valid
             async with session.get(processed_path, timeout=15) as response:
@@ -180,7 +183,10 @@ async def _async_process_single_source(
                         processed_path,
                         response.status,
                     )
-                    return None, f"{processed_path} (errore download: {response.status})"
+                    return (
+                        None,
+                        f"{processed_path} (errore download: {response.status})",
+                    )
 
                 final_content_type = response.headers.get("Content-Type", content_type)
                 image_bytes = await response.read()

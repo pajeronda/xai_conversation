@@ -279,6 +279,9 @@ class XAIConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_api_host:
             sensors_defaults[CONF_API_HOST] = user_api_host
 
+        # Use the assistant name as the conversation subentry title
+        conv_title = conv_defaults.get(CONF_ASSISTANT_NAME, DEFAULT_CONVERSATION_NAME)
+
         return self.async_create_entry(
             title=DEFAULT_MANUFACTURER,
             data=entry_data,
@@ -286,7 +289,7 @@ class XAIConfigFlow(ConfigFlow, domain=DOMAIN):
                 {
                     "subentry_type": "conversation",
                     "data": conv_defaults,
-                    "title": DEFAULT_CONVERSATION_NAME,
+                    "title": conv_title,
                     "unique_id": f"{DOMAIN}:conversation",
                 },
                 {

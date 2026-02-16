@@ -169,9 +169,7 @@ class XAITaskEntity(
                 image_url = prepared.uris[0]
             if prepared.has_skipped:
                 skipped_list = ", ".join(prepared.skipped)
-                final_instructions += (
-                    f"\n\n[System Note: The following files were skipped due to unsupported formats: {skipped_list}]"
-                )
+                final_instructions += f"\n\n[System Note: The following files were skipped due to unsupported formats: {skipped_list}]"
 
         context = {"mode": "image", "model": model, "prompt_length": len(prompt)}
         async with LogTimeServices(LOGGER, "ai_task", context) as timer:

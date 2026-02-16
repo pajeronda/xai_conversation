@@ -29,6 +29,7 @@ from ..const import (
     PROMPT_CUSTOM_RULES,
     PROMPT_PIPELINE_DECISION_LOGIC,
     PROMPT_PIPELINE_EXAMPLES,
+    PROMPT_PIPELINE_INTENT_TOPICS,
     PROMPT_MODE_TOOLS,
     PROMPT_INTENT_EXECUTION,
     PROMPT_OUTPUT_FORMAT,
@@ -100,12 +101,14 @@ class PromptManager:
             self._get_user_instructions(mode, config),
         ]
 
-        # For tools mode, include CSV hash and intents context
+        # For tools/pipeline mode, include intents context (and CSV for tools)
+        if mode in (CHAT_MODE_TOOLS, CHAT_MODE_PIPELINE) and orchestrator:
+            intents_context = orchestrator.get_custom_intents_context()
+            components.append(intents_context)
+
         if mode == CHAT_MODE_TOOLS and orchestrator:
             csv_content = orchestrator.get_static_context_csv()
             components.append(csv_content)
-            intents_context = orchestrator.get_custom_intents_context()
-            components.append(intents_context)
 
         return f"{mode}:{hash_text('|'.join(components))[:12]}"
 
@@ -153,6 +156,15 @@ class PromptManager:
             blocks.append(PROMPT_NO_CONTROL)
         elif mode == CHAT_MODE_PIPELINE:
             blocks.append(PROMPT_SMART_HOME_RECOGNITION)
+            custom_intents = (
+                orchestrator.get_custom_intents_context() if orchestrator else ""
+            )
+            if custom_intents:
+                blocks.append(
+                    PROMPT_PIPELINE_INTENT_TOPICS.format(
+                        custom_intents=custom_intents
+                    ).strip()
+                )
             if instructions:
                 blocks.append(PROMPT_CUSTOM_RULES)
             blocks.extend(

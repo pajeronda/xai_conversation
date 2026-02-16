@@ -15,7 +15,11 @@ from homeassistant.const import (
     EVENT_HOMEASSISTANT_STOP,
 )
 from homeassistant.core import Event
-from homeassistant.helpers import entity_registry as ha_entity_registry, restore_state
+from homeassistant.helpers import (
+    device_registry as ha_device_registry,
+    entity_registry as ha_entity_registry,
+    restore_state,
+)
 from homeassistant.helpers.event import async_track_time_interval
 
 from .const import (
@@ -135,6 +139,9 @@ class XaiInitManager:
         # FINAL SYNC: Ensure self.entry is updated after all subentry modifications
         self.entry = self.hass.config_entries.async_get_entry(self.entry.entry_id)
 
+        # Clean up orphaned turn sensor devices/entities before platforms load
+        self._cleanup_orphaned_turn_sensor_devices()
+
         # Set up listeners and periodic tasks (will raise on failure)
         try:
             self._setup_listeners()
@@ -214,6 +221,58 @@ class XaiInitManager:
         self._async_remove_registered_entities(
             is_orphaned_pricing_sensor, "orphaned pricing"
         )
+
+    def _cleanup_orphaned_turn_sensor_devices(self) -> None:
+        """Migrate turn sensor entities and remove orphaned per-user/per-device devices.
+
+        Old code registered turn sensors with separate per-user/per-device devices
+        and without a subentry. Now they share the xAI Notifications device.
+        Must run BEFORE async_forward_entry_setups.
+        """
+        # Find the sensors subentry
+        sensors_subentry_id: str | None = None
+        for se in self.entry.subentries.values():
+            if se.subentry_type == "sensors":
+                sensors_subentry_id = se.subentry_id
+                break
+
+        if sensors_subentry_id is None:
+            return
+
+        # 1. Fix config_subentry_id for turn sensor entities without one
+        ent_reg = ha_entity_registry.async_get(self.hass)
+        for ent in ha_entity_registry.async_entries_for_config_entry(
+            ent_reg, self.entry.entry_id
+        ):
+            if ent.config_subentry_id is not None:
+                continue
+            if ent.unique_id and "_turns_" in ent.unique_id:
+                LOGGER.debug(
+                    "Migrating turn sensor entity %s to subentry %s",
+                    ent.entity_id,
+                    sensors_subentry_id,
+                )
+                ent_reg.async_update_entity(
+                    ent.entity_id,
+                    config_subentry_id=sensors_subentry_id,
+                )
+
+        # 2. Remove old per-user/per-device devices (no longer needed)
+        dev_reg = ha_device_registry.async_get(self.hass)
+        for device in list(
+            ha_device_registry.async_entries_for_config_entry(
+                dev_reg, self.entry.entry_id
+            )
+        ):
+            if not device.name:
+                continue
+            if device.name.startswith("User: ") or device.name.startswith("Device: "):
+                LOGGER.debug(
+                    "Removing orphaned turn sensor device: %s (%s)",
+                    device.name,
+                    device.id,
+                )
+                dev_reg.async_remove_device(device.id)
 
     async def clean_deprecated_subentries(self) -> None:
         """Clean up deprecated subentries and migrate valid types.
@@ -630,7 +689,7 @@ class XaiInitManager:
                 )
 
         # Step 4: Unregister services
-        unregister_services(self.hass)
+        unregister_services(self.hass, self.entry.entry_id)
 
         # Step 5: Close Gateway (gRPC channels cleanup)
         await self.gateway.close()

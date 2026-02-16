@@ -167,6 +167,12 @@ Examples:
 - "turn off lights in living room and turn on tv" → your comment, if any and [[HA_LOCAL: {"commands": [{"text": "turn off lights in living room"}, {"text": "turn on tv"}]}]]
 - "first close the blinds, then turn off the lights" → your comment, if any and [[HA_LOCAL: {"commands": [{"text": "close the blinds"}, {"text": "turn off the lights"}], "sequential": true}]]"""
 
+PROMPT_PIPELINE_INTENT_TOPICS = """\
+Custom intent topics (from custom_sentences):
+{custom_intents}
+
+When a user request matches one of these topics, treat it as a Smart Home command and respond with [[HA_LOCAL: {{"text": "<the user's command in their language>"}}]]."""
+
 # D3. Tools Mode
 PROMPT_MODE_TOOLS = """\
 Home Entities available:
@@ -202,9 +208,7 @@ OUTPUT:
 # -----------------------------------------------------------------------------
 # SPECIFIC SERVICE PROMPTS
 # -----------------------------------------------------------------------------
-GROK_AI_TASK_PROMPT = (
-    "Follow the instructions and respect the requested data structure exactly."
-)
+GROK_AI_TASK_PROMPT = "Follow the instructions and respect the requested data structure exactly. Always respond in the user's language."
 
 VISION_ANALYSIS_PROMPT = "Be concise and factual in your image analysis. Always respond in the user's language."
 

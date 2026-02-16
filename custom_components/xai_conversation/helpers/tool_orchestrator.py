@@ -22,6 +22,7 @@ import yaml
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import llm as ha_llm
 from homeassistant.helpers import area_registry as ar
+
 try:  # floor registry introduced in newer HA versions
     from homeassistant.helpers import floor_registry as fr
 except Exception:  # pragma: no cover - optional dependency
@@ -58,6 +59,54 @@ class _MockToolCall:
         self.function = self.Function(name, args)
 
 
+def _safe_get_exposed_entities(
+    hass: HomeAssistant, assistant_id: str = "conversation", include_state: bool = False
+) -> dict:
+    get_exposed = getattr(ha_llm, "_get_exposed_entities", None)
+    if not get_exposed:
+        LOGGER.warning(
+            "[orchestrator] HA LLM API missing _get_exposed_entities; tools disabled."
+        )
+        return {"entities": {}}
+    try:
+        return get_exposed(hass, assistant_id, include_state=include_state)
+    except Exception as err:
+        LOGGER.warning(
+            "[orchestrator] failed to read exposed entities: %s", err, exc_info=True
+        )
+        return {"entities": {}}
+
+
+def _safe_get_assist_api(hass: HomeAssistant):
+    get_apis = getattr(ha_llm, "_async_get_apis", None)
+    if not get_apis:
+        LOGGER.error("[orchestrator] HA LLM API missing _async_get_apis.")
+        return None
+    try:
+        return get_apis(hass).get(ha_llm.LLM_API_ASSIST)
+    except Exception as err:
+        LOGGER.error(
+            "[orchestrator] failed to access Assist API: %s", err, exc_info=True
+        )
+        return None
+
+
+def _safe_get_assist_tools(assist_api, llm_context, exposed_result):
+    get_tools = getattr(assist_api, "_async_get_tools", None)
+    if not get_tools:
+        LOGGER.error("[orchestrator] Assist API missing _async_get_tools.")
+        raise_generic_error(
+            "Assist API tools are not available in this Home Assistant version."
+        )
+    try:
+        return get_tools(llm_context, exposed_result)
+    except Exception as err:
+        LOGGER.error(
+            "[orchestrator] failed to fetch Assist tools: %s", err, exc_info=True
+        )
+        raise_generic_error("Failed to fetch Assist tools from Home Assistant.")
+
+
 def _get_exposed_entities_with_aliases(
     hass: HomeAssistant, assistant_id: str = "conversation"
 ) -> list[dict]:
@@ -71,7 +120,7 @@ def _get_exposed_entities_with_aliases(
         List of entity data dictionaries including 'aliases' field if present.
     """
     # Get base exposed entities (no state needed for static context)
-    exposed_entities_result = ha_llm._get_exposed_entities(
+    exposed_entities_result = _safe_get_exposed_entities(
         hass, assistant_id, include_state=False
     )
 
@@ -226,18 +275,14 @@ class ToolOrchestrator:
             return True
 
         # 2. Get Home Assistant Exposed Entities
-        exposed_result = ha_llm._get_exposed_entities(
+        exposed_result = _safe_get_exposed_entities(
             self.hass, "conversation", include_state=False
         )
 
         # Hash the full exposed result to detect ANY change
         # (entity names, areas, aliases, additions, removals, domain changes)
-        exposed_json = json.dumps(
-            exposed_result.get("entities", {}), sort_keys=True
-        )
-        current_exposed_hash = hashlib.sha256(
-            exposed_json.encode()
-        ).hexdigest()[:12]
+        exposed_json = json.dumps(exposed_result.get("entities", {}), sort_keys=True)
+        current_exposed_hash = hashlib.sha256(exposed_json.encode()).hexdigest()[:12]
 
         current_active_domains = {
             e.split(".")[0] for e in exposed_result.get("entities", [])
@@ -369,9 +414,7 @@ class ToolOrchestrator:
 
     async def _compute_intents_hash(self) -> str:
         """Compute a lightweight hash of custom_sentences directory (file paths + mtimes)."""
-        return await self.hass.async_add_executor_job(
-            self._compute_intents_hash_sync
-        )
+        return await self.hass.async_add_executor_job(self._compute_intents_hash_sync)
 
     def _compute_intents_hash_sync(self) -> str:
         """Sync implementation of custom_sentences hash (run in executor)."""
@@ -395,48 +438,55 @@ class ToolOrchestrator:
     async def _generate_custom_intents_context(self) -> str:
         """Read custom_sentences YAML and generate a list of custom intents for LLM."""
 
-        def _read_custom_sentences() -> dict[str, list[str]]:
-            sentences_dir = Path(self.hass.config.config_dir) / "custom_sentences"
-            if not sentences_dir.exists():
-                return {}
-
-            intents_info: dict[str, list[str]] = {}
-            for lang_dir in sentences_dir.iterdir():
-                if not lang_dir.is_dir():
-                    continue
-                for yaml_file in lang_dir.glob("*.yaml"):
-                    try:
-                        data = yaml.safe_load(yaml_file.read_text(encoding="utf-8"))
-                    except Exception:
-                        continue
-                    for intent_name, intent_data in (data.get("intents") or {}).items():
-                        if intent_name.startswith("Hass"):
-                            continue
-                        topics: list[str] = []
-                        for entry in intent_data.get("data") or []:
-                            slots = entry.get("slots") or {}
-                            for val in slots.values():
-                                if isinstance(val, str) and val.startswith("call_"):
-                                    topics.append(val[5:].replace("_", " "))
-                        # Fallback: if no call_* slots found, use the intent name
-                        if not topics:
-                            # CamelCase -> spaced lowercase (e.g. SetVolume -> set volume)
-                            human_name = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", intent_name).lower()
-                            topics.append(human_name)
-                        if intent_name not in intents_info:
-                            intents_info[intent_name] = []
-                        intents_info[intent_name].extend(topics)
-            return intents_info
-
         try:
             intents_info = await self.hass.async_add_executor_job(
-                _read_custom_sentences
+                self._read_custom_sentences_sync
             )
         except Exception as err:
             LOGGER.debug("[orchestrator] error reading custom_sentences: %s", err)
             self._custom_intent_names = set()
             return ""
 
+        return self._build_custom_intents_context(intents_info)
+
+    def _read_custom_sentences_sync(self) -> dict[str, list[str]]:
+        """Sync reader for custom_sentences intents (executor only)."""
+        sentences_dir = Path(self.hass.config.config_dir) / "custom_sentences"
+        if not sentences_dir.exists():
+            return {}
+
+        intents_info: dict[str, list[str]] = {}
+        for lang_dir in sentences_dir.iterdir():
+            if not lang_dir.is_dir():
+                continue
+            for yaml_file in lang_dir.glob("*.yaml"):
+                try:
+                    data = yaml.safe_load(yaml_file.read_text(encoding="utf-8"))
+                except Exception:
+                    continue
+                for intent_name, intent_data in (data.get("intents") or {}).items():
+                    if intent_name.startswith("Hass"):
+                        continue
+                    topics: list[str] = []
+                    for entry in intent_data.get("data") or []:
+                        slots = entry.get("slots") or {}
+                        for val in slots.values():
+                            if isinstance(val, str) and val.startswith("call_"):
+                                topics.append(val[5:].replace("_", " "))
+                    # Fallback: if no call_* slots found, use the intent name
+                    if not topics:
+                        # CamelCase -> spaced lowercase (e.g. SetVolume -> set volume)
+                        human_name = re.sub(
+                            r"(?<=[a-z])(?=[A-Z])", " ", intent_name
+                        ).lower()
+                        topics.append(human_name)
+                    if intent_name not in intents_info:
+                        intents_info[intent_name] = []
+                    intents_info[intent_name].extend(topics)
+        return intents_info
+
+    def _build_custom_intents_context(self, intents_info: dict[str, list[str]]) -> str:
+        """Build topics list and store custom intent names."""
         # Store intent names for filtering them out of the Assist API tool list
         self._custom_intent_names = set(intents_info.keys())
 
@@ -451,12 +501,26 @@ class ToolOrchestrator:
         """Get the cached custom intents context for prompt building."""
         return self._cached_custom_intents_csv or ""
 
+    async def async_refresh_custom_intents_cache(self) -> bool:
+        """Refresh custom intents cache safely (async, non-blocking)."""
+        current_hash = await self._compute_intents_hash()
+        if (
+            self._cached_custom_intents_csv is None
+            or current_hash != self._cached_intents_hash
+        ):
+            self._cached_custom_intents_csv = (
+                await self._generate_custom_intents_context()
+            )
+            self._cached_intents_hash = current_hash
+            return True
+        return False
+
     async def _build_native_tools(self, user_input, exposed_result, active_domains):
         """Build cache for Native HA Tools mode."""
         self._using_extended_mode = False
         self._cached_extended_hash = None
 
-        assist_api = ha_llm._async_get_apis(self.hass).get(ha_llm.LLM_API_ASSIST)
+        assist_api = _safe_get_assist_api(self.hass)
         if not assist_api:
             raise_generic_error("AssistAPI is not available in Home Assistant.")
 
@@ -472,7 +536,7 @@ class ToolOrchestrator:
         self._cached_custom_intents_csv = await self._generate_custom_intents_context()
 
         # 2. Fetch HA Tools
-        ha_tools = assist_api._async_get_tools(llm_context, exposed_result)
+        ha_tools = _safe_get_assist_tools(assist_api, llm_context, exposed_result)
 
         # 3. Filter by Domains (Using imported helper)
         ha_tools, dropped_count = _filter_tools_by_exposed_domains(
@@ -497,7 +561,10 @@ class ToolOrchestrator:
 
         # 6. Inject Custom Tools (using required_domain from Tool definition)
         for custom_tool in CUSTOM_TOOLS:
-            if custom_tool.required_domain is None or custom_tool.required_domain in active_domains:
+            if (
+                custom_tool.required_domain is None
+                or custom_tool.required_domain in active_domains
+            ):
                 ha_tools.append(custom_tool)
 
         # 7. Update Caches (Neutral specs)

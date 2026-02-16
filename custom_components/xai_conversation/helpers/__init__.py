@@ -95,6 +95,8 @@ from .utils import (
     get_xai_entity,
     extract_user_id,
     extract_device_id,
+    async_get_user_display_name,
+    get_device_display_name,
     extract_scope_and_identifier,
     format_user_message_with_metadata,
     should_show_citations,
@@ -141,6 +143,8 @@ __all__ = [
     # Conversation
     "extract_user_id",
     "extract_device_id",
+    "async_get_user_display_name",
+    "get_device_display_name",
     "extract_scope_and_identifier",
     "parse_id_list",
     "format_user_message_with_metadata",

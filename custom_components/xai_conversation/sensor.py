@@ -29,11 +29,16 @@ from .const import (
     CLEARER_VISION_LABEL,
     CLEARER_SEARCH_LABEL,
     CLEARER_CACHED_LABEL,
+    CHAT_MODE_PIPELINE,
+    CHAT_MODE_TOOLS,
     XAIConfigEntry,
 )
 from .helpers import (
     get_pricing_conversion_factor,
     get_tokens_per_million,
+    MemoryManager,
+    async_get_user_display_name,
+    get_device_display_name,
 )
 
 
@@ -69,6 +74,103 @@ def _format_model_name(model_name: str) -> str:
     formatted = re.sub(r"-(\d+)-(\d+)(-|$)", r"-\1.\2\3", model_name)
     # Replace remaining hyphens with spaces and title case
     return formatted.replace("-", " ").title()
+
+
+class XAITurnSensorsManager:
+    """Manage dynamic creation of user chat turn sensors."""
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        entry: XAIConfigEntry,
+        subentry,
+        async_add_entities: AddEntitiesCallback,
+    ) -> None:
+        self.hass = hass
+        self._entry = entry
+        self._subentry = subentry
+        self._async_add_entities = async_add_entities
+        self._created: set[tuple[str, str, str, str]] = set()
+        self._unsubscribe = None
+
+    async def async_start(self) -> None:
+        memory = self.hass.data[DOMAIN].get("conversation_memory")
+        if memory and not self._unsubscribe:
+            self._unsubscribe = memory.register_listener(self._schedule_sync)
+        await self.async_sync_from_memory()
+
+    def async_stop(self) -> None:
+        if self._unsubscribe:
+            self._unsubscribe()
+            self._unsubscribe = None
+
+    def _schedule_sync(self):
+        return self.async_sync_from_memory()
+
+    async def async_sync_from_memory(self) -> None:
+        memory = self.hass.data[DOMAIN].get("conversation_memory")
+        if not memory:
+            return
+
+        try:
+            turn_counts = await memory.async_get_turn_counts()
+        except Exception as err:
+            LOGGER.warning("sensor: failed to load turn counts - %s", err)
+            return
+
+        if not turn_counts:
+            return
+
+        subentry_titles = {
+            se.subentry_id: se.title
+            for se in self._entry.subentries.values()
+            if se.subentry_type == "conversation"
+        }
+
+        sensors_to_add = []
+        for scope, identifier, subentry_id, mode, turns in turn_counts:
+            if scope not in ("user", "device"):
+                continue
+            if mode not in (CHAT_MODE_PIPELINE, CHAT_MODE_TOOLS):
+                continue
+            if turns <= 0:
+                continue
+
+            key = (scope, identifier, subentry_id, mode)
+            if key in self._created:
+                continue
+
+            subentry_title = subentry_titles.get(subentry_id)
+            if subentry_title is None:
+                # Turn counts should only exist for conversation subentries.
+                # Skip anything else (like AI Task which is stateless).
+                continue
+            if scope == "user":
+                display_name = (
+                    await async_get_user_display_name(self.hass, identifier) or "User"
+                )
+            else:
+                display_name = (
+                    get_device_display_name(self.hass, identifier) or "Device"
+                )
+            sensors_to_add.append(
+                XAIChatTurnsSensor(
+                    self.hass,
+                    self._entry,
+                    scope,
+                    identifier,
+                    display_name,
+                    subentry_id,
+                    subentry_title,
+                    mode,
+                )
+            )
+            self._created.add(key)
+
+        if sensors_to_add:
+            self._async_add_entities(
+                sensors_to_add, config_subentry_id=self._subentry.subentry_id
+            )
 
 
 async def async_setup_entry(
@@ -188,6 +290,9 @@ async def async_setup_entry(
         if DOMAIN not in hass.data:
             hass.data[DOMAIN] = {}
         hass.data[DOMAIN][f"{entry.entry_id}_sensors"] = sensors
+        manager = XAITurnSensorsManager(hass, entry, subentry, async_add_entities)
+        hass.data[DOMAIN][f"{entry.entry_id}_turn_sensors_manager"] = manager
+        await manager.async_start()
 
         LOGGER.debug("sensor: created %d token sensors", len(sensors))
 
@@ -815,3 +920,95 @@ class XAIAvailableModelsSensor(SensorEntity):
             "models_list": self._available_models,
             "last_updated": dt_util.now().isoformat(),
         }
+
+
+class XAIChatTurnsSensor(SensorEntity):
+    """Sensor that reports chat turn count for a user or device per subentry/mode."""
+
+    _attr_has_entity_name = True
+    _attr_should_poll = False
+    _attr_entity_registry_enabled_default = True
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = "turns"
+
+    _ICONS = {"user": "mdi:message-text-clock", "device": "mdi:tablet-dashboard"}
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        entry: XAIConfigEntry,
+        scope: str,
+        identifier: str,
+        display_name: str,
+        subentry_id: str,
+        subentry_title: str,
+        mode: str,
+    ) -> None:
+        self.hass = hass
+        self._entry = entry
+        self._scope = scope
+        self._identifier = identifier
+        self._display_name = display_name
+        self._subentry_id = subentry_id
+        self._subentry_title = subentry_title
+        self._mode = mode
+        uid_prefix = "turns_device_" if scope == "device" else "turns_"
+        self._attr_unique_id = (
+            f"{entry.entry_id}_{uid_prefix}{identifier}_{subentry_id}_{mode}"
+        )
+        self._attr_name = f"{display_name} - {subentry_title} ({mode})"
+        self._attr_icon = self._ICONS.get(scope, "mdi:message-text-clock")
+        self._attr_native_value = 0
+        self._unsubscribe = None
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(
+            identifiers={(DOMAIN, f"{self._entry.entry_id}_notifications")},
+            name="xAI Notifications",
+            manufacturer=DEFAULT_MANUFACTURER,
+            model="xAI Notifications",
+            sw_version="1.0",
+        )
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        memory = self.hass.data[DOMAIN].get("conversation_memory")
+        if memory:
+            self._unsubscribe = memory.register_listener(self._schedule_update)
+        await self._update_from_memory()
+
+    async def async_will_remove_from_hass(self) -> None:
+        if self._unsubscribe:
+            self._unsubscribe()
+            self._unsubscribe = None
+        await super().async_will_remove_from_hass()
+
+    def _schedule_update(self):
+        return self._update_from_memory()
+
+    async def _update_from_memory(self) -> None:
+        memory = self.hass.data[DOMAIN].get("conversation_memory")
+        if not memory:
+            self._attr_native_value = 0
+            self.async_write_ha_state()
+            return
+
+        key = MemoryManager.generate_key(
+            self._scope, self._identifier, self._mode, self._subentry_id
+        )
+        try:
+            self._attr_native_value = await memory.async_get_turn_count(key)
+        except Exception:
+            self._attr_native_value = 0
+        self.async_write_ha_state()
+
+        if self._scope == "user":
+            name = await async_get_user_display_name(self.hass, self._identifier)
+        else:
+            name = get_device_display_name(self.hass, self._identifier)
+        if name and name != self._display_name:
+            self._display_name = name
+            self._attr_name = (
+                f"{self._display_name} - {self._subentry_title} ({self._mode})"
+            )

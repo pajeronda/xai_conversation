@@ -12,6 +12,7 @@ from homeassistant.core import Context, HomeAssistant
 from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import llm as ha_llm
+
 try:  # floor registry introduced in newer HA versions
     from homeassistant.helpers import floor_registry as fr
 except Exception:  # pragma: no cover - optional dependency
@@ -49,9 +50,7 @@ class Tool:
 # ==========================================================================
 
 
-def _resolve_light_entity_id(
-    hass: HomeAssistant, tool_args: dict
-) -> str | None:
+def _resolve_light_entity_id(hass: HomeAssistant, tool_args: dict) -> str | None:
     """Resolve a light entity_id from intent targeting slots (name, area).
 
     Searches exposed entities for a light entity matching

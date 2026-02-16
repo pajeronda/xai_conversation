@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import replace
-from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.components import conversation as ha_conversation
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as ha_entity_registry
+from homeassistant.util import dt as dt_util
 
 from ..const import (
     CHAT_MODE_CHATONLY,
@@ -64,7 +64,7 @@ async def format_user_message_with_metadata(
     ):
         return message
 
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M") if include_timestamp else None
+    timestamp = dt_util.now().strftime("%Y-%m-%d %H:%M") if include_timestamp else None
     prefix = None
 
     # 1. Try User/Person Name (only if enabled via config)
@@ -190,6 +190,40 @@ def extract_device_id(obj: Any) -> str | None:
         return obj.data.get("device_id") or obj.data.get("satellite_id")
 
     return getattr(obj, "device_id", None) or None
+
+
+async def async_get_user_display_name(hass: HomeAssistant, user_id: str) -> str | None:
+    """Resolve user display name from person entity or auth user."""
+    if not user_id:
+        return None
+
+    # Prefer person entity name when mapped to user_id
+    for state in hass.states.async_all("person"):
+        if state.attributes.get("user_id") == user_id:
+            return state.name
+
+    try:
+        user = await hass.auth.async_get_user(user_id)
+        if user and user.name:
+            return user.name
+    except Exception:
+        return None
+
+    return None
+
+
+def get_device_display_name(hass: HomeAssistant, device_id: str) -> str | None:
+    """Resolve device display name from device registry."""
+    if not device_id:
+        return None
+    try:
+        device_registry = dr.async_get(hass)
+        device = device_registry.async_get(device_id)
+        if not device:
+            return None
+        return device.name_by_user or device.name
+    except Exception:
+        return None
 
 
 def extract_scope_and_identifier(user_input) -> tuple[str, str]:
