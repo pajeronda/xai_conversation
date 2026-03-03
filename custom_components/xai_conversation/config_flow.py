@@ -32,8 +32,12 @@ from .const import (
     CONF_CHAT_MODEL,
     CONF_EXTENDED_TOOLS_YAML,
     CONF_IMAGE_MODEL,
+    CONF_IMAGE_ASPECT_RATIO,
+    CONF_IMAGE_RESOLUTION,
     CONF_LIVE_SEARCH,
     CONF_LOCATION_CONTEXT,
+    IMAGE_ASPECT_RATIO_OPTIONS,
+    IMAGE_RESOLUTION_OPTIONS,
     LIVE_SEARCH_OPTIONS,
     CONF_MAX_TOKENS,
     CONF_MEMORY_CLEANUP_INTERVAL_HOURS,
@@ -98,6 +102,26 @@ def _live_search_selector() -> selector.SelectSelector:
     return selector.SelectSelector(
         selector.SelectSelectorConfig(
             options=LIVE_SEARCH_OPTIONS,
+            mode=selector.SelectSelectorMode.DROPDOWN,
+        )
+    )
+
+
+def _image_aspect_ratio_selector() -> selector.SelectSelector:
+    """Dropdown selector for image aspect ratio options."""
+    return selector.SelectSelector(
+        selector.SelectSelectorConfig(
+            options=IMAGE_ASPECT_RATIO_OPTIONS,
+            mode=selector.SelectSelectorMode.DROPDOWN,
+        )
+    )
+
+
+def _image_resolution_selector() -> selector.SelectSelector:
+    """Dropdown selector for image resolution options."""
+    return selector.SelectSelector(
+        selector.SelectSelectorConfig(
+            options=IMAGE_RESOLUTION_OPTIONS,
             mode=selector.SelectSelectorMode.DROPDOWN,
         )
     )
@@ -351,6 +375,23 @@ class XAIIntegrationOptionsFlow(OptionsFlow):
             )
             new_use_extended = user_input.get(CONF_USE_EXTENDED_TOOLS, False)
 
+            # Validate API Key if it was changed
+            if CONF_API_KEY in user_input and user_input[
+                CONF_API_KEY
+            ] != self.config_entry.data.get(CONF_API_KEY):
+                try:
+                    await XAIGateway.async_validate_api_key(
+                        api_key=user_input[CONF_API_KEY],
+                        api_host=user_input.get(
+                            CONF_API_HOST, self.config_entry.data.get(CONF_API_HOST)
+                        ),
+                    )
+                except ValueError as err:
+                    errors["base"] = str(err)
+                except Exception:
+                    LOGGER.exception("Unexpected exception during API key validation")
+                    errors["base"] = "unknown"
+
             # If YAML is provided, validate it
             yaml_config = user_input.get(CONF_EXTENDED_TOOLS_YAML)
             if new_use_extended and yaml_config:
@@ -412,6 +453,10 @@ class XAIIntegrationOptionsFlow(OptionsFlow):
 
         # Build schema
         schema_dict = {
+            vol.Optional(
+                CONF_API_KEY,
+                default=data.get(CONF_API_KEY, ""),
+            ): str,
             vol.Optional(
                 CONF_API_HOST,
                 description={"suggested_value": data.get(CONF_API_HOST, "")},
@@ -707,6 +752,8 @@ class XAIAITaskOptionsFlow(XAICoreLLMOptionsFlow):
                 self._opt_tpl(CONF_VISION_PROMPT, R): TEMPLATE_SELECTOR,
                 vol.Optional(CONF_CHAT_MODEL, default=model): _model_selector(),
                 self._opt(CONF_IMAGE_MODEL, R): _model_selector(),
+                self._opt(CONF_IMAGE_ASPECT_RATIO, R): _image_aspect_ratio_selector(),
+                self._opt(CONF_IMAGE_RESOLUTION, R): _image_resolution_selector(),
                 self._opt(CONF_VISION_MODEL, R): _model_selector(),
             }
         )

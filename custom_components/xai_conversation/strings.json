@@ -38,7 +38,8 @@
   },
   "options": {
     "error": {
-      "invalid_yaml": "Invalid YAML configuration. Please check the syntax and required fields."
+      "invalid_yaml": "Invalid YAML configuration. Please check the syntax and required fields.",
+      "invalid_api_key": "Invalid API key or API host. The key must start with 'xai-' and the host must be reachable."
     },
     "step": {
       "init": {

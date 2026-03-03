@@ -28,6 +28,8 @@ CONF_TIMEOUT = "timeout"
 # 2. Model Selection
 CONF_CHAT_MODEL = "chat_model"
 CONF_IMAGE_MODEL = "image_model"
+CONF_IMAGE_ASPECT_RATIO = "image_aspect_ratio"
+CONF_IMAGE_RESOLUTION = "image_resolution"
 CONF_VISION_MODEL = "vision_model"
 
 # 3. Mode & Capabilities Enablement
@@ -235,7 +237,27 @@ RECOMMENDED_CHAT_MODEL = "grok-4-1-fast-non-reasoning"
 RECOMMENDED_ZDR_MODEL = "grok-4-1-fast-reasoning"
 RECOMMENDED_AI_TASK_MODEL = "grok-code-fast-1"
 RECOMMENDED_IMAGE_MODEL = "grok-imagine-image"
+RECOMMENDED_IMAGE_ASPECT_RATIO = "auto"
+RECOMMENDED_IMAGE_RESOLUTION = "1k"
 RECOMMENDED_VISION_MODEL = "grok-4-1-fast-non-reasoning"
+
+IMAGE_ASPECT_RATIO_OPTIONS = [
+    "auto",
+    "1:1",
+    "16:9",
+    "9:16",
+    "4:3",
+    "3:4",
+    "3:2",
+    "2:3",
+    "2:1",
+    "1:2",
+    "19.5:9",
+    "9:19.5",
+    "20:9",
+    "9:20",
+]
+IMAGE_RESOLUTION_OPTIONS = ["1k", "2k"]
 
 # Parameter Recommendations
 RECOMMENDED_TEMPERATURE = 0.1
@@ -290,6 +312,8 @@ RECOMMENDED_PIPELINE_OPTIONS = {
 RECOMMENDED_AI_TASK_OPTIONS = {
     CONF_CHAT_MODEL: RECOMMENDED_AI_TASK_MODEL,
     CONF_IMAGE_MODEL: RECOMMENDED_IMAGE_MODEL,
+    CONF_IMAGE_ASPECT_RATIO: RECOMMENDED_IMAGE_ASPECT_RATIO,
+    CONF_IMAGE_RESOLUTION: RECOMMENDED_IMAGE_RESOLUTION,
     CONF_VISION_MODEL: RECOMMENDED_VISION_MODEL,
     CONF_MAX_TOKENS: 5000,
     CONF_TEMPERATURE: RECOMMENDED_TEMPERATURE,

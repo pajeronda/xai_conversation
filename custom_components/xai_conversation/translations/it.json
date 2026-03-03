@@ -45,6 +45,7 @@
         "title": "Configurazione xAI",
         "description": "Configura i parametri di memoria per utenti e dispositivi, e imposta i tools personalizzati estesi. L'integrazione rileva automaticamente se una richiesta proviene da un utente (smartphone/PC/tablet) o da un dispositivo (satellite vocale) e applica le impostazioni di memoria appropriate.",
         "data": {
+          "api_key": "Chiave API",
           "api_host": "Endpoint API",
           "use_extended_tools": "Abilita Configurazione Extended Tools",
           "extended_tools_yaml": "Configurazione YAML Extended Tools",
@@ -54,6 +55,7 @@
           "memory_cleanup_interval_hours": "Intervallo pulizia memoria (ore)"
         },
         "data_description": {
+          "api_key": "La tua chiave API xAI (inizia con 'xai-').",
           "api_host": "Hostname dell'endpoint API. Usa 'api.x.ai' per il routing globale oppure specifica un endpoint regionale: 'us-east-1.api.x.ai' o 'eu-west-1.api.x.ai'.",
           "use_extended_tools": "Abilita per configurare tools personalizzati in formato Extended OpenAI Conversation. Se abilitato, questi tools saranno disponibili per tutti gli agenti conversazionali che supportano i tools estesi.",
           "extended_tools_yaml": "Definisci qui i tuoi tools personalizzati. Il formato è pienamente compatibile con Extended OpenAI Conversation. Puoi copiare/incollare la tua configurazione esistente.",
@@ -163,6 +165,8 @@
             "vision_prompt": "Prompt per analisi foto",
             "chat_model": "Modello",
             "image_model": "Modello per immagini",
+            "image_aspect_ratio": "Proporzioni (Aspect Ratio)",
+            "image_resolution": "Risoluzione",
             "vision_model": "Modello per analisi foto",
             "max_tokens": "Token massimi",
             "temperature": "Temperatura",
@@ -175,6 +179,8 @@
             "vision_prompt": "Prompt di sistema per l'analisi foto. Definisce come il modello vision deve analizzare le immagini (es. conciso, dettagliato, fattuale).",
             "chat_model": "Seleziona il modello Grok da utilizzare.",
             "image_model": "Modello utilizzato esclusivamente per la generazione di immagini.",
+            "image_aspect_ratio": "Le proporzioni con cui Grok genererà l'immagine. Impostazione predefinita consigliata: auto.",
+            "image_resolution": "La risoluzione (livello di definizione) con cui Grok genererà l'immagine. In base al modello l'uso di 2k richiederà un abbonamento Pro e/o raddoppierà il consumo dei token.",
             "vision_model": "Modello utilizzato esclusivamente per l'analisi delle foto (documenti, diagrammi, grafici, screenshot, fotografie).",
             "max_tokens": "Numero massimo di token da generare.",
             "temperature": "Controlla la casualità delle risposte (0.0 = deterministica, 2.0 = molto creativa).",

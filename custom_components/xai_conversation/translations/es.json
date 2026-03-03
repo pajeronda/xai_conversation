@@ -45,6 +45,7 @@
         "title": "Configuración xAI",
         "description": "Configura los parámetros de memoria para usuarios y dispositivos asistentes de voz, así como herramientas extendidas.",
         "data": {
+          "api_key": "Clave API",
           "api_host": "Punto final de la API",
           "use_extended_tools": "Habilitar Config Herramientas Extendidas",
           "extended_tools_yaml": "Configuración YAML de Herramientas Extendidas",
@@ -54,6 +55,7 @@
           "memory_remote_delete": "Borrar de los servidores xAI al limpiar"
         },
         "data_description": {
+          "api_key": "Tu clave API de xAI (comienza con 'xai-').",
           "api_host": "Nombre de host del punto final de la API. Usa 'api.x.ai' para enrutamiento global con redirección automática a un host regional o especifica directamente un host regional: 'us-east-1.api.x.ai' o 'eu-west-1.api.x.ai'.",
           "use_extended_tools": "Habilitar para configurar herramientas personalizadas en formato Extended OpenAI Conversation.",
           "extended_tools_yaml": "Defina aquí sus herramientas personalizadas. El formato es totalmente compatible con Extended OpenAI Conversation. Puede copiar/pegar su configuración existente.",
@@ -163,6 +165,8 @@
             "vision_prompt": "Prompt de visión",
             "chat_model": "Modelo",
             "image_model": "Modelo de imágenes",
+            "image_aspect_ratio": "Proporción de Imagen (Aspect Ratio)",
+            "image_resolution": "Resolución de Imagen",
             "vision_model": "Modelo de análisis de fotos",
             "max_tokens": "Tokens máximos",
             "temperature": "Temperatura",
@@ -175,6 +179,8 @@
             "vision_prompt": "Prompt de sistema para análisis de fotos. Define cómo el modelo de visión debe analizar imágenes (ej. conciso, detallado, factual).",
             "chat_model": "Selecciona el modelo Grok a utilizar.",
             "image_model": "Modelo utilizado exclusivamente para la generación de imágenes.",
+            "image_aspect_ratio": "Las proporciones con las que Grok generará la imagen. Valor predeterminado recomendado: auto.",
+            "image_resolution": "La resolución (nivel de definición) con la que Grok generará la imagen. Según el modelo, el uso de 2k requerirá una suscripción Pro y/o duplicará el consumo de tokens.",
             "vision_model": "Modelo utilizado exclusivamente para el análisis de fotos (documentos, diagramas, gráficos, capturas de pantalla, fotografías).",
             "max_tokens": "Número máximo de tokens a generar.",
             "temperature": "Controla la aleatoriedad de las respuestas (0.0 = determinista, 2.0 = muy creativo).",

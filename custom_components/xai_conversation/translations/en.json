@@ -45,6 +45,7 @@
         "title": "xAI Configuration",
         "description": "Configure memory parameters for users and devices, and set up extended custom tools. The integration automatically detects if a request comes from a user (smartphone/PC/tablet) or a device (voice satellite) and applies the appropriate memory settings.",
         "data": {
+          "api_key": "API Key",
           "api_host": "API Endpoint",
           "use_extended_tools": "Enable Extended Tools Configuration",
           "extended_tools_yaml": "Extended Tools YAML Configuration",
@@ -54,6 +55,7 @@
           "memory_cleanup_interval_hours": "Memory cleanup interval (hours)"
         },
         "data_description": {
+          "api_key": "Your xAI API key (starts with 'xai-')",
           "api_host": "API endpoint hostname. Use 'api.x.ai' for global routing or a specific regional endpoint: 'us-east-1.api.x.ai' or 'eu-west-1.api.x.ai'.",
           "use_extended_tools": "Enable to configure custom tools in Extended OpenAI Conversation format. When enabled, these tools will be available to all conversation agents that support extended tools.",
           "extended_tools_yaml": "Define your custom tools here. The format is fully compatible with Extended OpenAI Conversation. You can copy/paste your existing configuration.",
@@ -163,6 +165,8 @@
             "vision_prompt": "Vision Prompt",
             "chat_model": "Model",
             "image_model": "Image Model",
+            "image_aspect_ratio": "Image Aspect Ratio",
+            "image_resolution": "Image Resolution",
             "vision_model": "Vision Model",
             "max_tokens": "Max tokens",
             "temperature": "Temperature",
@@ -175,6 +179,8 @@
             "vision_prompt": "System prompt for photo analysis. Defines how the vision model should analyze images (e.g., concise, detailed, factual).",
             "chat_model": "Select the Grok model to use",
             "image_model": "Model used exclusively for image generation",
+            "image_aspect_ratio": "The aspect ratio for generated images. Recommended default: auto.",
+            "image_resolution": "The resolution of the generated image. Depending on the model, 2k may require a Pro subscription and/or double the token cost.",
             "vision_model": "Model used exclusively for photo analysis (documents, diagrams, charts, screenshots, photographs)",
             "max_tokens": "Maximum number of tokens to generate",
             "temperature": "Controls randomness in responses (0.0 = deterministic, 2.0 = very creative)",

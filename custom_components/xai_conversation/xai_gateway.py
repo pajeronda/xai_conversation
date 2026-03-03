@@ -360,6 +360,9 @@ class XAIGateway:
         prompt: str,
         model: str,
         image_url: str | None = None,
+        image_urls: list[str] | None = None,
+        aspect_ratio: str | None = None,
+        resolution: str | None = None,
         options: ChatOptions | None = None,
         entity: Any | None = None,
     ) -> Any:
@@ -372,6 +375,9 @@ class XAIGateway:
             prompt: Text prompt for generation or editing instructions.
             model: Model identifier (e.g. grok-imagine-image).
             image_url: Optional base64 data URI or URL of input image for editing.
+            image_urls: Optional list of base64 data URIs or URLs for multiple image editing.
+            aspect_ratio: Optional aspect ratio for the generated image.
+            resolution: Optional resolution for the generated image.
             options: Chat options for telemetry.
             entity: Calling entity for logging.
         """
@@ -392,25 +398,47 @@ class XAIGateway:
             sample_kwargs: dict[str, Any] = {
                 "model": model,
                 "prompt": prompt,
-                "image_format": "base64",
+                "image_format": "url",
             }
             if image_url:
                 sample_kwargs["image_url"] = image_url
+            if image_urls:
+                sample_kwargs["image_urls"] = image_urls
+            if aspect_ratio and aspect_ratio != "auto":
+                sample_kwargs["aspect_ratio"] = aspect_ratio
+            if resolution:
+                sample_kwargs["resolution"] = resolution
 
             async with timer.record_api_call():
                 try:
                     response = await client.image.sample(**sample_kwargs)
-                except TypeError:
-                    # SDK version doesn't support image_url, retry without it
-                    if "image_url" in sample_kwargs:
-                        LOGGER.warning(
-                            "xAI SDK does not support image_url parameter. "
-                            "Update the SDK to enable image editing. Retrying without it."
-                        )
-                        sample_kwargs.pop("image_url")
-                        response = await client.image.sample(**sample_kwargs)
-                    else:
-                        raise
+                except TypeError as err:
+                    # SDK version doesn't support new parameters, retry without them
+                    fallback_kwargs = {
+                        "model": model,
+                        "prompt": prompt,
+                        "image_format": "url",
+                    }
+                    if image_url:
+                        fallback_kwargs["image_url"] = image_url
+
+                    LOGGER.warning(
+                        "xAI SDK does not support all image parameters. "
+                        "Update the SDK to enable image_urls, aspect_ratio, and resolution. Retrying with basic parameters."
+                    )
+                    try:
+                        response = await client.image.sample(**fallback_kwargs)
+                    except TypeError:
+                        # Even image_url is not supported (very old SDK)
+                        if "image_url" in fallback_kwargs:
+                            LOGGER.warning(
+                                "xAI SDK does not support image_url parameter either. "
+                                "Retrying without it."
+                            )
+                            fallback_kwargs.pop("image_url")
+                            response = await client.image.sample(**fallback_kwargs)
+                        else:
+                            raise err
 
             # Log completion for billing/usage
             await async_log_completion(

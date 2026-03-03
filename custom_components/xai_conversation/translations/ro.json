@@ -45,6 +45,7 @@
         "title": "Configurare xAI",
         "description": "Configurează parametrii de memorie pentru utilizatori și dispozitive de asistență vocală, precum și instrumente extinse.",
         "data": {
+          "api_key": "Cheie API",
           "api_host": "Endpoint API",
           "use_extended_tools": "Activează Configurare Instrumente Extinse",
           "extended_tools_yaml": "Configurare YAML Instrumente Extinse",
@@ -54,6 +55,7 @@
           "memory_remote_delete": "Șterge de pe serverele xAI la curățare"
         },
         "data_description": {
+          "api_key": "Cheia ta API xAI (începe cu 'xai-').",
           "api_host": "Hostname-ul endpoint-ului API. Folosește 'api.x.ai' pentru rutare globală cu redirecționare automată către o gazdă regională sau specifică direct o gazdă regională: 'us-east-1.api.x.ai' sau 'eu-west-1.api.x.ai'.",
           "use_extended_tools": "Activează pentru a configura instrumente personalizate în format Extended OpenAI Conversation.",
           "extended_tools_yaml": "Definește aici instrumentele tale personalizate. Formatul este complet compatibil cu Extended OpenAI Conversation. Poți copia/lipi configurația existentă.",
@@ -163,6 +165,8 @@
             "vision_prompt": "Prompt Viziune",
             "chat_model": "Model",
             "image_model": "Model Imagine",
+            "image_aspect_ratio": "Proporția Imaginii (Aspect Ratio)",
+            "image_resolution": "Rezoluția Imaginii",
             "vision_model": "Model Viziune",
             "max_tokens": "Max tokeni",
             "temperature": "Temperatură",
@@ -175,6 +179,8 @@
             "vision_prompt": "Prompt-ul sistemului pentru analiza foto. Definește cum ar trebui modelul de viziune să analizeze imaginile (ex. concis, detaliat, factual).",
             "chat_model": "Selectează modelul Grok de utilizat.",
             "image_model": "Model utilizat exclusiv pentru generarea imaginilor.",
+            "image_aspect_ratio": "Proporțiile cu care Grok va genera imaginea. Valoarea implicită recomandată: auto.",
+            "image_resolution": "Rezoluția imaginii generate. În funcție de model, utilizarea rezoluției de 2k poate necesita un abonament Pro și/sau dubla costul în tokeni.",
             "vision_model": "Model utilizat exclusiv pentru analiza fotografiilor (documente, diagrame, grafice, capturi de ecran, fotografii).",
             "max_tokens": "Numărul maxim de tokeni de generat.",
             "temperature": "Controlează aleatoriul răspunsurilor (0.0 = deterministic, 2.0 = foarte creativ).",

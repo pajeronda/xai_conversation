@@ -45,6 +45,7 @@
         "title": "xAI Konfiguration",
         "description": "Konfigurieren Sie Speicherparameter für Benutzer und Sprachassistenten-Geräte sowie erweiterte Tools.",
         "data": {
+          "api_key": "API-Schlüssel",
           "api_host": "API-Endpunkt",
           "use_extended_tools": "Erweiterte Tools Konfiguration aktivieren",
           "extended_tools_yaml": "Erweiterte Tools YAML-Konfiguration",
@@ -54,6 +55,7 @@
           "memory_remote_delete": "Bei Bereinigung von xAI-Servern löschen"
         },
         "data_description": {
+          "api_key": "Ihr xAI API-Schlüssel (beginnt mit 'xai-').",
           "api_host": "Hostname des API-Endpunkts. Verwenden Sie 'api.x.ai' für globales Routing mit automatischer Umleitung zu einem regionalen Host oder geben Sie direkt einen regionalen Host an: 'us-east-1.api.x.ai' oder 'eu-west-1.api.x.ai'.",
           "use_extended_tools": "Aktivieren Sie diese Option, um benutzerdefinierte Tools im Format Extended OpenAI Conversation zu konfigurieren.",
           "extended_tools_yaml": "Definieren Sie hier Ihre benutzerdefinierten Tools. Das Format ist vollständig kompatibel mit Extended OpenAI Conversation. Sie können Ihre bestehende Konfiguration kopieren/einfügen.",
@@ -163,6 +165,8 @@
             "vision_prompt": "Vision-Prompt",
             "chat_model": "Modell",
             "image_model": "Bildgenerierungsmodell",
+            "image_aspect_ratio": "Seitenverhältnis (Aspect Ratio)",
+            "image_resolution": "Bildauflösung",
             "vision_model": "Fotoanalysemodell",
             "max_tokens": "Maximale Tokens",
             "temperature": "Temperatur",
@@ -175,6 +179,8 @@
             "vision_prompt": "System-Prompt für Fotoanalyse. Definiert, wie das Vision-Modell Bilder analysieren soll (z.B. prägnant, detailliert, faktisch).",
             "chat_model": "Wählen Sie das zu verwendende Grok-Modell.",
             "image_model": "Modell ausschließlich für die Bildgenerierung verwendet.",
+            "image_aspect_ratio": "Das Seitenverhältnis für generierte Bilder. Empfohlener Standard: auto.",
+            "image_resolution": "Die Auflösung des generierten Bildes. Je nach Modell kann 2k ein Pro-Abonnement erfordern und/oder die Token-Kosten verdoppeln.",
             "vision_model": "Modell ausschließlich für die Fotoanalyse verwendet (Dokumente, Diagramme, Grafiken, Screenshots, Fotografien).",
             "max_tokens": "Maximale Anzahl zu generierender Tokens.",
             "temperature": "Steuert die Zufälligkeit der Antworten (0.0 = deterministisch, 2.0 = sehr kreativ).",

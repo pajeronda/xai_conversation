@@ -424,12 +424,18 @@ class MemoryManager:
             return {"all": [], "server_stored": []}
 
         # 1. Determine TTLs
-        device_ttl = self.entry.data.get(
-            CONF_MEMORY_DEVICE_TTL_HOURS, RECOMMENDED_MEMORY_DEVICE_TTL_HOURS
-        ) * 3600
-        user_ttl = self.entry.data.get(
-            CONF_MEMORY_USER_TTL_HOURS, RECOMMENDED_MEMORY_USER_TTL_HOURS
-        ) * 3600
+        device_ttl = (
+            self.entry.data.get(
+                CONF_MEMORY_DEVICE_TTL_HOURS, RECOMMENDED_MEMORY_DEVICE_TTL_HOURS
+            )
+            * 3600
+        )
+        user_ttl = (
+            self.entry.data.get(
+                CONF_MEMORY_USER_TTL_HOURS, RECOMMENDED_MEMORY_USER_TTL_HOURS
+            )
+            * 3600
+        )
 
         now = time.time()
         all_deleted_ids: list[str] = []
@@ -486,7 +492,9 @@ class MemoryManager:
             # Update entry if changed
             if entry_modified:
                 if valid_responses:
-                    entry["responses"] = sorted(valid_responses, key=lambda x: x["timestamp"])
+                    entry["responses"] = sorted(
+                        valid_responses, key=lambda x: x["timestamp"]
+                    )
                 else:
                     entry["responses"] = []
                 self._save_needed = True

@@ -45,6 +45,7 @@
         "title": "xAI 配置",
         "description": "配置用户和语音助手设备的内存参数，以及扩展工具。",
         "data": {
+          "api_key": "API 密钥",
           "api_host": "API 端点",
           "use_extended_tools": "启用 Extended Tools 配置",
           "extended_tools_yaml": "Extended Tools YAML 配置",
@@ -54,6 +55,7 @@
           "memory_remote_delete": "清理时从 xAI 服务器删除"
         },
         "data_description": {
+          "api_key": "您的 xAI API 密钥（以 'xai-' 开头）。",
           "api_host": "API 端点主机名。使用 'api.x.ai' 进行全局路由并自动重定向到区域主机，或直接指定区域主机：'us-east-1.api.x.ai' 或 'eu-west-1.api.x.ai'。",
           "use_extended_tools": "启用以配置 Extended OpenAI Conversation 格式的自定义工具。",
           "extended_tools_yaml": "在此处定义您的自定义工具。格式与 Extended OpenAI Conversation 完全兼容。您可以直接复制粘贴现有配置。",
@@ -163,6 +165,8 @@
             "vision_prompt": "视觉提示词",
             "chat_model": "模型",
             "image_model": "图像模型",
+            "image_aspect_ratio": "图像比例 (Aspect Ratio)",
+            "image_resolution": "图像分辨率",
             "vision_model": "照片分析模型",
             "max_tokens": "最大令牌数",
             "temperature": "温度",
@@ -175,6 +179,8 @@
             "vision_prompt": "照片分析的系统提示词。定义视觉模型应如何分析图像（例如简洁、详细、事实）。",
             "chat_model": "选择要使用的 Grok 模型。",
             "image_model": "专门用于图像生成的模型。",
+            "image_aspect_ratio": "Grok 生成图像的比例。推荐默认值：自动 (auto)。",
+            "image_resolution": "生成图像的分辨率。根据模型的不同，使用 2k 可能需要 Pro 订阅和/或双倍的代币成本。",
             "vision_model": "专门用于照片分析的模型（文档、图表、图形、截图、照片）。",
             "max_tokens": "要生成的最大令牌数。",
             "temperature": "控制响应的随机性（0.0 = 确定性，2.0 = 非常有创意）。",

@@ -18,9 +18,13 @@ from homeassistant.components import conversation as ha_conversation
 # Local application imports
 from .const import (
     CONF_IMAGE_MODEL,
+    CONF_IMAGE_ASPECT_RATIO,
+    CONF_IMAGE_RESOLUTION,
     DEFAULT_IMAGE_MIME_TYPE,
     LOGGER,
     RECOMMENDED_IMAGE_MODEL,
+    RECOMMENDED_IMAGE_ASPECT_RATIO,
+    RECOMMENDED_IMAGE_RESOLUTION,
     XAIConfigEntry,
 )
 from .helpers import (
@@ -158,15 +162,24 @@ class XAITaskEntity(
         # Read model directly from entity config
         config = self.get_config_dict()
         model = config.get(CONF_IMAGE_MODEL, RECOMMENDED_IMAGE_MODEL)
+        aspect_ratio = config.get(
+            CONF_IMAGE_ASPECT_RATIO, RECOMMENDED_IMAGE_ASPECT_RATIO
+        )
+        resolution = config.get(CONF_IMAGE_RESOLUTION, RECOMMENDED_IMAGE_RESOLUTION)
 
         # Process attachments for image editing (img2img)
         image_url = None
+        image_urls = None
         attachments = getattr(task, "attachments", None)
         final_instructions = task.instructions
         if attachments:
             prepared = await async_prepare_attachments(self.hass, attachments)
             if prepared.uris:
-                image_url = prepared.uris[0]
+                if len(prepared.uris) == 1:
+                    image_url = prepared.uris[0]
+                else:
+                    # xAI SDK cap at 3 images for multi-image edit
+                    image_urls = prepared.uris[:3]
             if prepared.has_skipped:
                 skipped_list = ", ".join(prepared.skipped)
                 final_instructions += f"\n\n[System Note: The following files were skipped due to unsupported formats: {skipped_list}]"
@@ -177,6 +190,9 @@ class XAITaskEntity(
                 prompt=final_instructions,
                 model=model,
                 image_url=image_url,
+                image_urls=image_urls,
+                aspect_ratio=aspect_ratio,
+                resolution=resolution,
                 options=ChatOptions(timer=timer),
                 entity=self,
             )
