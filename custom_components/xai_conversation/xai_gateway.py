@@ -306,9 +306,14 @@ class XAIGateway:
         )
 
         # 2. Determine if System Prompt is required (New session or Dynamic Update)
-        force_system = not prev_id or (prompt_hash and stored_hash != prompt_hash)
+        # Also force system prompt if extra_system_prompt is provided by HA pipeline
+        extra_system_prompt = None
+        if params.user_input:
+            extra_system_prompt = getattr(params.user_input, "extra_system_prompt", None)
+
+        force_system = not prev_id or (prompt_hash and stored_hash != prompt_hash) or bool(extra_system_prompt)
         if force_system:
-            reason = "new session" if not prev_id else "prompt updated"
+            reason = "new session" if not prev_id else ("extra_system_prompt" if extra_system_prompt else "prompt updated")
             LOGGER.debug(
                 "[gateway] prompt: INJECTING SYSTEM PROMPT (reason: %s)", reason
             )
@@ -324,6 +329,11 @@ class XAIGateway:
                 )
         else:
             LOGGER.debug("[gateway] prompt: NO PROMPT SENT (using server context)")
+
+        # 2.1 Append extra_system_prompt from HA pipeline (e.g. intent_script)
+        if system_prompt and extra_system_prompt:
+            system_prompt = f"{system_prompt}\n\n{extra_system_prompt}"
+            LOGGER.debug("[gateway] prompt: appended extra_system_prompt")
 
         # 3. ZDR encrypted blob retrieval (Session restoration)
         encrypted_blob = None
@@ -472,6 +482,12 @@ class XAIGateway:
             system_prompt = self.prompt_manager.get_prompt(
                 params.mode or "ai_task", params.config
             )
+
+        # Append extra_system_prompt from HA pipeline if present
+        if params.user_input:
+            extra_sp = getattr(params.user_input, "extra_system_prompt", None)
+            if extra_sp:
+                system_prompt = f"{system_prompt}\n\n{extra_sp}"
 
         # Build SDK payload
         sdk_messages = prepare_sdk_payload(
