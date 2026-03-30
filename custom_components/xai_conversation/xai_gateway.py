@@ -296,9 +296,11 @@ class XAIGateway:
         if entity and hasattr(entity, "_tools_processor"):
             orchestrator = getattr(entity._tools_processor, "_orchestrator", None)
 
+        extra_system_prompt = getattr(params.user_input, "extra_system_prompt", None) if params.user_input else None
+
         # Calculate prompt hash using gateway's prompt_manager with full context
         prompt_hash = self.prompt_manager.get_prompt_hash(
-            mode, params.config, orchestrator
+            mode, params.config, orchestrator, extra_system_prompt
         )
 
         conv_key, prev_id, stored_hash = await resolve_memory_context(
@@ -313,7 +315,7 @@ class XAIGateway:
                 "[gateway] prompt: INJECTING SYSTEM PROMPT (reason: %s)", reason
             )
             system_prompt = params.system_prompt or self.prompt_manager.get_prompt(
-                mode, params.config, orchestrator=orchestrator
+                mode, params.config, orchestrator=orchestrator, extra_system_prompt=extra_system_prompt
             )
 
             if prev_id and prompt_hash != stored_hash:
@@ -466,11 +468,13 @@ class XAIGateway:
         model = params.model
         hass = hass or self.hass
 
+        extra_system_prompt = getattr(params.user_input, "extra_system_prompt", None) if params.user_input else None
+        
         # System prompt: use resolved value or get from shared manager if still missing
         system_prompt = params.system_prompt
         if not system_prompt:
             system_prompt = self.prompt_manager.get_prompt(
-                params.mode or "ai_task", params.config
+                params.mode or "ai_task", params.config, extra_system_prompt=extra_system_prompt
             )
 
         # Build SDK payload

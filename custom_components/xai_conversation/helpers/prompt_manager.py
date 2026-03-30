@@ -17,6 +17,7 @@ from ..const import (
     CONF_LIVE_SEARCH,
     CONF_PROMPT_PIPELINE,
     CONF_PROMPT_TOOLS,
+    CONF_USE_INTELLIGENT_PIPELINE,
     GROK_AI_TASK_PROMPT,
     LIVE_SEARCH_OFF,
     PROMPT_IDENTITY,
@@ -58,29 +59,30 @@ class PromptManager:
     # PUBLIC API - Gateway chiede solo MODE
     # ==========================================================================
 
-    def get_prompt(self, mode: str, config: dict, orchestrator=None) -> str:
+    def get_prompt(self, mode: str, config: dict, orchestrator=None, extra_system_prompt: str | None = None) -> str:
         """Get prompt for mode. Cached.
 
         Args:
             mode: "pipeline", "tools", "chatonly", "ai_task", "vision"
             config: Configuration dict to use.
             orchestrator: Optional ToolOrchestrator for static context.
+            extra_system_prompt: Optional dynamic prompt override.
         """
-        cache_key = self._get_cache_key(mode, config, orchestrator)
+        cache_key = self._get_cache_key(mode, config, orchestrator, extra_system_prompt)
         if cache_key in self._cache:
             return self._cache[cache_key]
 
-        prompt = self._build_prompt(mode, config, orchestrator)
+        prompt = self._build_prompt(mode, config, orchestrator, extra_system_prompt)
         self._cache[cache_key] = prompt
         return prompt
 
-    def get_prompt_hash(self, mode: str, config: dict, orchestrator=None) -> str:
+    def get_prompt_hash(self, mode: str, config: dict, orchestrator=None, extra_system_prompt: str | None = None) -> str:
         """Get hash of prompt for memory keys. Cached."""
-        cache_key = self._get_cache_key(mode, config, orchestrator)
+        cache_key = self._get_cache_key(mode, config, orchestrator, extra_system_prompt)
         if cache_key in self._hash_cache:
             return self._hash_cache[cache_key]
 
-        prompt = self.get_prompt(mode, config, orchestrator)
+        prompt = self.get_prompt(mode, config, orchestrator, extra_system_prompt)
         prompt_hash = hash_text(prompt)
         self._hash_cache[cache_key] = prompt_hash
         return prompt_hash
@@ -89,7 +91,7 @@ class PromptManager:
     # INTERNAL - Build prompts autonomously
     # ==========================================================================
 
-    def _get_cache_key(self, mode: str, config: dict, orchestrator=None) -> str:
+    def _get_cache_key(self, mode: str, config: dict, orchestrator=None, extra_system_prompt: str | None = None) -> str:
         """Generate cache key based on mode and variable components."""
         components = [
             mode,
@@ -98,7 +100,7 @@ class PromptManager:
             str(config.get(CONF_ALLOW_SMART_HOME_CONTROL, True)),
             str(config.get(CONF_LIVE_SEARCH, LIVE_SEARCH_OFF) != LIVE_SEARCH_OFF),
             config.get(CONF_AI_TASK_PROMPT, ""),
-            self._get_user_instructions(mode, config),
+            self._get_user_instructions(mode, config, extra_system_prompt),
         ]
 
         # For tools/pipeline mode, include intents context (and CSV for tools)
@@ -112,7 +114,7 @@ class PromptManager:
 
         return f"{mode}:{hash_text('|'.join(components))[:12]}"
 
-    def _build_prompt(self, mode: str, config: dict, orchestrator=None) -> str:
+    def _build_prompt(self, mode: str, config: dict, orchestrator=None, extra_system_prompt: str | None = None) -> str:
         """Build prompt for mode."""
         if mode == "ai_task":
             return config.get(CONF_AI_TASK_PROMPT) or GROK_AI_TASK_PROMPT
@@ -121,16 +123,16 @@ class PromptManager:
             return config.get(CONF_VISION_PROMPT) or VISION_ANALYSIS_PROMPT
 
         if mode in (CHAT_MODE_TOOLS, CHAT_MODE_PIPELINE, CHAT_MODE_CHATONLY):
-            return self._build_conversation_prompt(mode, config, orchestrator)
+            return self._build_conversation_prompt(mode, config, orchestrator, extra_system_prompt)
 
         return ""
 
     def _build_conversation_prompt(
-        self, mode: str, config: dict, orchestrator=None
+        self, mode: str, config: dict, orchestrator=None, extra_system_prompt: str | None = None
     ) -> str:
         """Build prompt for tools/pipeline/chatonly modes."""
         blocks = []
-        instructions = self._get_user_instructions(mode, config)
+        instructions = self._get_user_instructions(mode, config, extra_system_prompt)
 
         # --- A. Identity ---
         assistant_name = config.get(CONF_ASSISTANT_NAME)
@@ -201,13 +203,22 @@ class PromptManager:
 
         return "\n\n".join(blocks).strip()
 
-    def _get_user_instructions(self, mode: str, config: dict) -> str:
-        """Get user instructions from config."""
+    def _get_user_instructions(self, mode: str, config: dict, extra_system_prompt: str | None = None) -> str:
+        """Get user instructions from config and merge dynamic overriding if present."""
+        base = ""
         if mode == CHAT_MODE_PIPELINE:
-            return config.get(CONF_PROMPT_PIPELINE, "").strip()
-        if mode == CHAT_MODE_TOOLS:
-            return config.get(CONF_PROMPT_TOOLS, "").strip()
-        return ""
+            base = config.get(CONF_PROMPT_PIPELINE, "").strip()
+        elif mode == CHAT_MODE_TOOLS:
+            base = config.get(CONF_PROMPT_TOOLS, "").strip()
+        elif mode == CHAT_MODE_CHATONLY:
+            use_pipeline = config.get(CONF_USE_INTELLIGENT_PIPELINE, True)
+            base = config.get(
+                CONF_PROMPT_PIPELINE if use_pipeline else CONF_PROMPT_TOOLS, ""
+            ).strip()
+            
+        if extra_system_prompt:
+            return f"{base}\n{extra_system_prompt}".strip() if base else extra_system_prompt
+        return base
 
     def _get_static_context(self, orchestrator=None) -> str:
         """Get static context CSV from ToolOrchestrator."""

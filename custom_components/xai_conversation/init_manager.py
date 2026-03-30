@@ -141,6 +141,7 @@ class XaiInitManager:
 
         # Clean up orphaned turn sensor devices/entities before platforms load
         self._cleanup_orphaned_turn_sensor_devices()
+        await self._async_cleanup_orphaned_turn_sensors()
 
         # Set up listeners and periodic tasks (will raise on failure)
         try:
@@ -191,10 +192,10 @@ class XaiInitManager:
             return
 
         pricing_suffixes = (
-            "input_price",
-            "output_price",
             "cached_input_price",
             "input_image_price",
+            "input_price",
+            "output_price",
             "search_price",
         )
 
@@ -216,6 +217,11 @@ class XaiInitManager:
             model_data = xai_models_data.get(model_name)
             if not model_data:
                 return True
+                
+            # If the model exists but its name differs (it's an alias), we don't create sensors. Thus, the old one is orphaned.
+            if model_data.get("name") != model_name:
+                return True
+                
             return model_data.get(suffix, 0.0) <= 0
 
         self._async_remove_registered_entities(
@@ -273,6 +279,34 @@ class XaiInitManager:
                     device.id,
                 )
                 dev_reg.async_remove_device(device.id)
+
+    async def _async_cleanup_orphaned_turn_sensors(self) -> None:
+        """Remove turn sensors from registry that have no active counts (startup sweep)."""
+        memory = self.hass.data[DOMAIN].get("conversation_memory")
+        if not memory:
+            return
+            
+        try:
+            turn_counts = await memory.async_get_turn_counts()
+        except Exception:
+            return
+
+        active_uids = set()
+        for scope, identifier, subentry_id, mode, turns in turn_counts:
+            if turns > 0:
+                uid_prefix = "turns_device_" if scope == "device" else "turns_"
+                unique_id = f"{self.entry.entry_id}_{uid_prefix}{identifier}_{subentry_id}_{mode}"
+                active_uids.add(unique_id)
+
+        def is_orphaned_turn_sensor(entity: ha_entity_registry.RegistryEntry) -> bool:
+            uid = entity.unique_id
+            if not uid.startswith(f"{self.entry.entry_id}_turns_"):
+                return False
+            return uid not in active_uids
+
+        self._async_remove_registered_entities(
+            is_orphaned_turn_sensor, "orphaned turn sensor"
+        )
 
     async def clean_deprecated_subentries(self) -> None:
         """Clean up deprecated subentries and migrate valid types.

@@ -128,6 +128,7 @@ class XAITurnSensorsManager:
         }
 
         sensors_to_add = []
+        active_keys = set()
         for scope, identifier, subentry_id, mode, turns in turn_counts:
             if scope not in ("user", "device"):
                 continue
@@ -137,6 +138,7 @@ class XAITurnSensorsManager:
                 continue
 
             key = (scope, identifier, subentry_id, mode)
+            active_keys.add(key)
             if key in self._created:
                 continue
 
@@ -171,6 +173,25 @@ class XAITurnSensorsManager:
             self._async_add_entities(
                 sensors_to_add, config_subentry_id=self._subentry.subentry_id
             )
+
+        # Clear out sensors that were created but have hit zero turns (runtime cleanup)
+        orphaned_keys = self._created - active_keys
+        if orphaned_keys:
+            import homeassistant.helpers.entity_registry as er
+            from homeassistant.const import Platform
+            ent_reg = er.async_get(self.hass)
+            
+            for key in orphaned_keys:
+                scope, identifier, subentry_id, mode = key
+                uid_prefix = "turns_device_" if scope == "device" else "turns_"
+                unique_id = f"{self._entry.entry_id}_{uid_prefix}{identifier}_{subentry_id}_{mode}"
+                
+                entity_id = ent_reg.async_get_entity_id(Platform.SENSOR, DOMAIN, unique_id)
+                if entity_id:
+                    LOGGER.debug("Removing reset/orphaned turn sensor: %s", entity_id)
+                    ent_reg.async_remove(entity_id)
+                
+                self._created.remove(key)
 
 
 async def async_setup_entry(

@@ -35,8 +35,8 @@ class ResponseData(TypedDict):
 
 # Context variable to track the active parent response ID during an execution flow.
 # This allows automatic session tagging without modifying external function signatures.
-_ACTIVE_PARENTID: ContextVar[str | None] = ContextVar(
-    "xai_active_parentid", default=None
+_ACTIVE_PARENT_ID: ContextVar[str | None] = ContextVar(
+    "xai_active_parent_id", default=None
 )
 
 
@@ -139,7 +139,14 @@ class MemoryManager:
         return scope, identifier, subentry_id, mode
 
     async def async_get_last_response_id(self, key: str) -> str | None:
-        """Retrieve the last response ID for a given key."""
+        """Retrieve the last response ID for a given key.
+
+        Args:
+            key: The conversation memory key.
+
+        Returns:
+            The last response ID, or None if not found.
+        """
         await self._ensure_loaded()
 
         # New conversation turn: clear deletion guard so new saves are accepted
@@ -147,16 +154,23 @@ class MemoryManager:
 
         entry = self._memory.get(key)
         if not entry or not entry["responses"]:
-            _ACTIVE_PARENTID.set(None)
+            _ACTIVE_PARENT_ID.set(None)
             return None
 
         last_id = entry["responses"][-1]["id"]
         # Set as active parent for subsequent save_response calls in same task
-        _ACTIVE_PARENTID.set(last_id)
+        _ACTIVE_PARENT_ID.set(last_id)
         return last_id
 
     async def async_get_turn_count(self, key: str) -> int:
-        """Return number of stored turns for a given memory key."""
+        """Return number of stored turns for a given memory key.
+
+        Args:
+            key: The conversation memory key.
+
+        Returns:
+            The number of stored turns.
+        """
         await self._ensure_loaded()
         entry = self._memory.get(key)
         if not entry:
@@ -168,8 +182,8 @@ class MemoryManager:
     ) -> list[tuple[str, str, str, str, int]]:
         """Return turn counts for all memory keys.
 
-        Returns a list of tuples:
-        (scope, identifier, subentry_id, mode, turns)
+        Returns:
+            A list of tuples: (scope, identifier, subentry_id, mode, turns)
         """
         await self._ensure_loaded()
         results: list[tuple[str, str, str, str, int]] = []
@@ -212,7 +226,7 @@ class MemoryManager:
         if prompt_hash:
             self._memory[key]["prompt_hash"] = prompt_hash
 
-        parent_id = _ACTIVE_PARENTID.get()
+        parent_id = _ACTIVE_PARENT_ID.get()
         root_id = response_id  # Default for new sessions
 
         # If a parent exists in current context, inherit its root_id
@@ -234,7 +248,7 @@ class MemoryManager:
         self._dirty = True
 
         # Update active parent to the new response ID for subsequent turns (e.g., tool loops)
-        _ACTIVE_PARENTID.set(response_id)
+        _ACTIVE_PARENT_ID.set(response_id)
         self._notify_listeners()
 
     async def async_save_encrypted_blob(self, key: str, blob: str) -> None:
@@ -390,7 +404,15 @@ class MemoryManager:
         cleanup_interval_hours: int,
         on_cleanup: Callable[[list[str]], Any] | None = None,
     ):
-        """Setup periodic cleanup task."""
+        """Setup periodic cleanup task.
+
+        Args:
+            cleanup_interval_hours: Interval in hours between cleanups.
+            on_cleanup: Callback function called after cleanup, receiving server-stored deleted IDs.
+
+        Returns:
+            A callable to unsubscribe the periodic task.
+        """
 
         async def _cleanup(_now):
             deleted_ids = await self.async_cleanup_expired()
@@ -398,8 +420,8 @@ class MemoryManager:
                 LOGGER.debug(
                     "[memory] cleanup: %d sessions expired", len(deleted_ids["all"])
                 )
-                if on_cleanup:
-                    await on_cleanup(deleted_ids)
+                if on_cleanup and deleted_ids.get("server_stored"):
+                    await on_cleanup(deleted_ids["server_stored"])
 
         interval = timedelta(hours=cleanup_interval_hours)
         unsub = async_track_time_interval(self.hass, _cleanup, interval)
@@ -443,12 +465,12 @@ class MemoryManager:
         keys_to_delete: list[str] = []
 
         # 2. Iterate Memory Entries
-        for key, entry in self._memory.items():
+        for key, entry in self._memory.copy().items():
             # Parse key to get scope
             parsed = self.parse_key(key)
             if not parsed:
                 continue
-            k_scope, k_id, _ = parsed
+            k_scope, k_id, _, _ = parsed
 
             # Filter if arguments provided
             if scope and k_scope != scope:
@@ -457,47 +479,55 @@ class MemoryManager:
                 continue
 
             ttl = device_ttl if k_scope == "device" else user_ttl
-
-            responses = entry.get("responses", [])
-            # Check empty entries (no responses and no ZDR blob)
-            if not responses and not entry.get("encrypted_blob"):
-                keys_to_delete.append(key)
-                continue
-
-            # Group by root_id (Session)
-            sessions: dict[str, list[ResponseData]] = {}
-            for r in responses:
-                rid = r.get("root_id") or r["id"]
-                if rid not in sessions:
-                    sessions[rid] = []
-                sessions[rid].append(r)
-
-            valid_responses: list[ResponseData] = []
             entry_modified = False
 
-            for session_messages in sessions.values():
-                # Check expiration (Inactive logic: whole session expires)
-                last_used = max(m["timestamp"] for m in session_messages)
-                if (now - last_used) > ttl:
-                    # Expired
-                    for m in session_messages:
-                        if m.get("id"):
-                            all_deleted_ids.append(m["id"])
-                            if m.get("store_messages", False):
-                                server_stored_ids.append(m["id"])
+            # --- TTL check for ZDR blobs ---
+            if entry.get("encrypted_blob") and entry.get("last_updated"):
+                if (now - entry["last_updated"]) > ttl:
+                    # Blob expired
+                    entry.pop("encrypted_blob", None)
+                    entry.pop("last_updated", None)
                     entry_modified = True
-                else:
-                    valid_responses.extend(session_messages)
 
-            # Update entry if changed
+            responses = entry.get("responses", [])
+
+            # --- TTL check for Server Responses ---
+            if responses:
+                # Group by root_id (Session)
+                sessions: dict[str, list[ResponseData]] = {}
+                for r in responses:
+                    rid = r.get("root_id") or r["id"]
+                    if rid not in sessions:
+                        sessions[rid] = []
+                    sessions[rid].append(r)
+
+                valid_responses: list[ResponseData] = []
+
+                for session_messages in sessions.values():
+                    # Check expiration (Inactive logic: whole session expires)
+                    last_used = max(m["timestamp"] for m in session_messages)
+                    if (now - last_used) > ttl:
+                        # Expired
+                        for m in session_messages:
+                            if m.get("id"):
+                                all_deleted_ids.append(m["id"])
+                                if m.get("store_messages", False):
+                                    server_stored_ids.append(m["id"])
+                        entry_modified = True
+                    else:
+                        valid_responses.extend(session_messages)
+
+                # Update entry if changed
+                if entry_modified:
+                    if valid_responses:
+                        entry["responses"] = sorted(
+                            valid_responses, key=lambda x: x["timestamp"]
+                        )
+                    else:
+                        entry["responses"] = []
+
             if entry_modified:
-                if valid_responses:
-                    entry["responses"] = sorted(
-                        valid_responses, key=lambda x: x["timestamp"]
-                    )
-                else:
-                    entry["responses"] = []
-                self._save_needed = True
+                self._dirty = True
 
             # If entry is now empty, mark for deletion
             if not entry.get("responses") and not entry.get("encrypted_blob"):
@@ -507,25 +537,16 @@ class MemoryManager:
         for key in keys_to_delete:
             if key in self._memory:
                 self._memory.pop(key)
-                self._save_needed = True
+                self._dirty = True
 
-        # 4. Rebuild Index and Finalize
+        # 4. Finalize
         if all_deleted_ids:
-            # Rebuild flat index to match memory
-            new_responses = {}
-            for entry in self._memory.values():
-                for r in entry.get("responses", []):
-                    new_responses[r["id"]] = r
-            self._responses = new_responses
-
             LOGGER.info(
                 "Cleanup: removed %d messages from expired sessions",
                 len(all_deleted_ids),
             )
-            # Cleanup ZDR blobs referenced by deleted sessions
-            self._cleanup_encrypted_blobs(list(self._responses.values()))
 
-        if self._save_needed:
+        if self._dirty:
             await self.async_flush()
             self._notify_listeners()
 
