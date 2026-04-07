@@ -173,7 +173,7 @@ def _get_exposed_entities_with_aliases(
 
         # 2. Enrich Aliases
         if entry and entry.aliases:
-            entity_data_copy["aliases"] = sorted(list(entry.aliases))
+            entity_data_copy["aliases"] = sorted(str(a) for a in entry.aliases)
 
         enriched_entities.append(entity_data_copy)
 
@@ -406,7 +406,7 @@ class ToolOrchestrator:
 
         for entity in self._cached_enriched_entities:
             aliases = entity.get("aliases", [])
-            aliases_str = "/".join(sorted(aliases)) if aliases else ""
+            aliases_str = "/".join(sorted(str(a) for a in aliases)) if aliases else ""
             writer.writerow(
                 [entity.get("entity_id", ""), entity.get("name", ""), aliases_str]
             )
