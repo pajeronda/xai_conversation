@@ -1,0 +1,238 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Configuração da integração xAI Conversation",
+        "description": "Configure sua integração do xAI Conversation para o Home Assistant. Defina sua chave de API, endpoint, nome do assistente e modo de pesquisa. Configurações adicionais, como ferramentas estendidas e parâmetros de memória, podem ser ajustadas posteriormente.",
+        "data": {
+          "api_key": "Chave de API",
+          "api_host": "Endpoint da API (padrão: 'api.x.ai')",
+          "assistant_name": "Nome do Assistente",
+          "live_search": "Modo de Pesquisa em Tempo Real",
+          "send_user_name": "Incluir nome do usuário nas mensagens"
+        },
+        "data_description": {
+          "api_key": "Sua chave de API do xAI (começa com 'xai-')",
+          "api_host": "Hostname do endpoint da API. Use 'api.x.ai' para roteamento global ou um endpoint regional específico: 'us-east-1.api.x.ai' ou 'eu-west-1.api.x.ai'.",
+          "assistant_name": "O nome que o seu assistente usará para se identificar (ex., 'Jarvis', 'Alexa', 'HAL').",
+          "live_search": "Habilitar recursos de pesquisa na web: 'off' (desativado), 'web search' (obter base da internet), 'x search' (pesquisa do x), 'full' (web + x)",
+          "send_user_name": "Adicionar o nome de usuário do Home Assistant à conversa com o Grok."
+        }
+      },
+      "confirm": {
+        "title": "Confirmar Informações da Chave de API",
+        "description": "Chave de API validada com sucesso. Revise os detalhes abaixo:\n\n**Nome:** {name}\n**ID da Equipe:** {team_id}\n**Status:** ✅ OK"
+      }
+    },
+    "error": {
+      "invalid_api_key": "Chave de API inválida. Deve começar com 'xai-'",
+      "api_key_disabled": "A chave da API está desativada no painel do xAI.",
+      "api_key_blocked": "A chave da API foi bloqueada pelo xAI.",
+      "team_blocked": "A conta da equipe associada foi bloqueada.",
+      "missing_dependency": "A dependência necessária 'xai_sdk' não está instalada.",
+      "unknown": "Ocorreu um erro inesperado. Tente novamente."
+    },
+    "create_entry": {
+      "default": "Integração xAI Conversation configurada com sucesso!"
+    }
+  },
+  "options": {
+    "error": {
+      "invalid_yaml": "Configuração YAML inválida. Verifique a sintaxe e os campos obrigatórios."
+    },
+    "step": {
+      "init": {
+        "title": "Configuração Global do xAI",
+        "description": "Configure os parâmetros da memória para usuários e dispositivos, além de configurar as ferramentas. A integração detecta se o pedido foi iniciado através do painel (smartphone/tablet/PC) ou através das caixinhas de voz (Assistentes via Satélites Voice) ajustando como ele grava as conversas na memória.",
+        "data": {
+          "api_key": "Chave de API",
+          "api_host": "Endpoint da API",
+          "use_extended_tools": "Habilitar Configuração de Ferramentas Estendidas",
+          "extended_tools_yaml": "Configuração YAML de Ferramentas Estendidas",
+          "memory_user_ttl_hours": "Memória do usuário TTL (horas)",
+          "memory_device_ttl_hours": "Memória do dispositivo TTL (horas)",
+          "memory_remote_delete": "Excluir dos servidores xAI na limpeza",
+          "memory_cleanup_interval_hours": "Intervalo de limpeza da memória (horas)"
+        },
+        "data_description": {
+          "api_key": "Sua chave de API do xAI (começa com 'xai-')",
+          "api_host": "Hostname da infra do xAI.",
+          "use_extended_tools": "Habilite para configurar ferramentas no formato Extended OpenAI Conversation. Uma vez habilitado, funcionará como global.",
+          "extended_tools_yaml": "Defina suas ferramentas neste bloco estilo YAML.",
+          "memory_user_ttl_hours": "Expiração das conversas passadas pelas interações via app ou navegador web. Padrão: 672 horas (28 dias)",
+          "memory_device_ttl_hours": "Tempo máximo armazenado de suas conversas captadas pelo microfone de caixa de automação inteligente em sua casa. Padrão: 672 horas (28 dias)",
+          "memory_remote_delete": "Se marcada a caixa, ele exigirá permissão para limpar as conversas lá na base remota dos bancos de dados salvos através API xAI.",
+          "memory_cleanup_interval_hours": "Agendar intervalo de dias que as limpezas acima atuarão. Padrão: 24 horas"
+        }
+      }
+    }
+  },
+  "config_subentries": {
+    "conversation": {
+      "initiate_flow": {
+        "user": "Adicionar agente conversacional",
+        "reconfigure": "Reconfigurar agente conversacional"
+      },
+      "entry_type": "conversation",
+      "step": {
+        "init": {
+          "title": "xAI Conversation",
+          "data": {
+            "name": "Nome",
+            "store_messages": "Armazenamento no Servidor (xAI Cloud Memories)",
+            "zero_data_retention": "Nenhuma Retenção de Dados (ZDR)",
+            "use_intelligent_pipeline": "Habilitar Pipeline Inteligente",
+            "allow_smart_home_control": "Permitir o controle da sua Casa Inteligente (Automação)",
+            "use_extended_tools": "Usar Ferramentas Estendidas (Config. Global)",
+            "send_user_name": "Incluir nome do perfil (usuário) nas mensagens",
+            "show_citations": "Mostrar referências citadas no chat",
+            "assistant_name": "Nome do Assistente",
+            "location_context": "Localização e País Atual",
+            "live_search": "Modos de Pesquisa Web",
+            "pipeline_prompt": "Instruções do pipeline (Apenas injetadas juntas a regra local normal)",
+            "prompt_tools": "Instruções adicionais (Apenas no Modo Ferramentas / Action)",
+            "chat_model": "Modelo Grok (IA)",
+            "max_tokens": "Tokens máximos de respotas (Tamanho Restrito Textual)",
+            "temperature": "Temperatura",
+            "top_p": "Top P",
+            "reasoning_effort": "Velocidade na Reflexão das Lógicas / Raciocínio (Apenas suportados)"
+          },
+          "data_description": {
+            "name": "Nome único para nomear este bot interno do assistente dentro do menu Home Assistant.",
+            "store_messages": "Isso diminuirá a carga local da banda consumida nos dados de pacote JSON, porque guarda o grosso das conversas hospedado criptografado pela xAI. Modos e intervalos (Limpezas Expiração e Remotas) precisam ser ajustados no Menu Configuração Local Geral do Plugin.",
+            "zero_data_retention": "As informações nunca deixarão sua estrutura, exceto pelo básico da chamada, garantindo que nada está guardado permanentemente remota na xAI (As conversas se guiam através arquivo salvo de base). Habilitar desativa Armazenamento de Servidor.",
+            "use_intelligent_pipeline": "Liga a inteligência condicional da conversa do assistente para responder mais rápido ou ir para os botões e recursos domóticos imediatamente ou puxar dados do batepapo. Desligado segue baseando só através Native LLM APIs.",
+            "allow_smart_home_control": "Decide quando e onde a automação vai agir. LIGAR = Controlar seus componentes (luzes/tvs/janelas). DESLIGAR = Desprezar a central de aparelhos para responder de modo texto em modo puro de bate papo (Chatbot local). Obs: Essa mudança cria limpezas num chat já ativo.",
+            "use_extended_tools": "Substitui ferramentas internas básicas por seu projeto Custom API YAML configurado pelas extensões de OpenAI Action.",
+            "send_user_name": "Sincroniza seu Perfil Base Home Assistant para que a inteligência reconheça ou grave quem está mandando os áudios e prompts textuais locais pelo assistente.",
+            "show_citations": "Ativa a busca visual com links azuis citando a estrutura externa ou link base para cada verificação referenciada e enviada via web no Chat. Fica sujo e ilegível se usado só pelo Google/Alexa voice (Recomenda-se DESLIGAR nas assistentes áudios).",
+            "assistant_name": "Para dar mais personificação em seus assistentes. (e.g., 'Jarvis', 'HAL', 'Sara').",
+            "location_context": "Ponto exato e específico para pesquisas ligadas ao clima de rua, informações públicas ou relatar a central. Caso em branco, é deduzido pela Região/Fuso global configurados nas abas Globais do HA.",
+            "live_search": "Opções de pesquisa usando base Web, Internet ou a Rede-X no Twitter.",
+            "pipeline_prompt": "Adição nos Promptes. Permite gerenciar regras no bot por base fixando ações obrigatórias no início das automações ou intents da Pipeline xAI do Agente.",
+            "prompt_tools": "Comandos extras fixados (Usável somente nas chamadas modo action tools APIs).",
+            "chat_model": "Selecione na listagem um modelo Grok do API da xAI.",
+            "max_tokens": "Quantidade maior tolerável de custo de API e saídas geradas que este bot retornará.",
+            "temperature": "Valores zero fazem dele bem estritamente matemático para a automação. Acima geram liberdade criativa e batepapo amigável para texto puro. Não recomenda-se misturar limites altos se precisa controlar aparelhos.",
+            "top_p": "Nucleus variados (Sampling). Base pra criar saídas lógicas de algoritmos.",
+            "reasoning_effort": "Qual o perfil computacional interno de pensamento ele dará às lógicas. (baixo ou alta dedicação)."
+          }
+        }
+      },
+      "abort": {
+        "reconfigure_successful": "Agente Conversacional Reconfigurado!"
+      }
+    },
+    "sensors": {
+      "initiate_flow": {
+        "user": "Adicionar Sensores e Estatísticas",
+        "reconfigure": "Reconfigurar Sensores Métricos"
+      },
+      "entry_type": "sensor",
+      "step": {
+        "init": {
+          "title": "Gerenciamento Métrico de Token",
+          "data": {
+            "name": "Identificador",
+            "tokens_per_million": "Tokens em fator de Milhão",
+            "xai_pricing_conversion_factor": "Fator Numérico xAI unitário base",
+            "pricing_update_interval_hours": "Intervalo no Download Preços"
+          },
+          "data_description": {
+            "name": "Crie algo fácil para identificação.",
+            "tokens_per_million": "Cálculos matemáticos dos fatores de Token por quantia monetária. Default Base: 1000000.",
+            "xai_pricing_conversion_factor": "Unidade de cálculo oficial xAI que converte base-dados da infra devolvendo moedas tipo US Dollar / Milhões de token no sistema local. Default: 10000",
+            "pricing_update_interval_hours": "Quantia limite antes de puxar do API as referências financeiras contratuais da API xAI."
+          }
+        }
+      },
+      "abort": {
+        "reconfigure_successful": "Sensor Reconfigurado Com Sucesso!"
+      }
+    },
+    "ai_task": {
+      "initiate_flow": {
+        "user": "Adicionar Ferramenta de IA (AI Task)",
+        "reconfigure": "Reconfigurar Tarefa (AI Task)"
+      },
+      "entry_type": "ai_task",
+      "step": {
+        "init": {
+          "title": "xAI Task (Imagens / Documentos / Textos Específicos)",
+          "data": {
+            "name": "Nome da Nova Tarefa IA",
+            "ai_task_prompt": "Prompt Inicial Geral",
+            "vision_prompt": "Prompt Visão Customizado",
+            "chat_model": "Modelos Discursivos Conversa",
+            "image_model": "Modelo Gerador de Imagem Cênica",
+            "image_aspect_ratio": "Lente (Rácio de Tela Aspecto Visual)",
+            "image_resolution": "Ajustamento Alta/Baixa Resoluções para Lentes",
+            "vision_model": "Modelagem e Lente Digital para Análise Mista ou Fotográficas (Vision Models)",
+            "max_tokens": "Limites de palavras (Saída Tokens)",
+            "temperature": "Temperatura",
+            "top_p": "Parâmetro-P",
+            "reasoning_effort": "Pensamentos limitados e reflexão para tarefas complexas"
+          },
+          "data_description": {
+            "name": "Descrição que diferencie seu comando nas Action APIs chamadas nestes Tasks.",
+            "ai_task_prompt": "Substitui comandos originais por base de formatação global obrigatória - Excelente a padronizar JSON Saida fixas mas delicado.",
+            "vision_prompt": "Qual atitude adotará o modelo de visão frente ao interpretar papéis na tela foto enviada da casa (E.g descrições breves de alarmes).",
+            "image_model": "Qual geração digital pictória de pintura/modelação base gerará sua figura via automações dos prompts e serviços.",
+            "image_aspect_ratio": "Proporcional em retângulos ou quadrados automatizados (Recomenda-se modo Inteligente ou automático visual local).",
+            "image_resolution": "Telas Maiores do que as automáticas (Exemplos: 2K ou Pro) forçarão subscritas limitadas no serviço com limites duplicados dependente da tarifa da xAI Dev APIs.",
+            "vision_model": "Classificador digital fotográfico.",
+            "max_tokens": "Evita gastos pesados de limite caso uma tarefa entre num repasso lógico incorreto limitando em um teto base numérico nas saídas na Action Call por base de Tokens.",
+            "temperature": "Recomenda-se valores fixados próximos zero (Ex: 0.1) nestas tasks pois reduzem saídas quebradas quando em repassagens lógicas a variáveis autônomas nas automações.",
+            "top_p": "Nucleos base (Sampling Nucleus).",
+            "reasoning_effort": "Ajusta restrição interna aos modelos do mini (grok-3-mini) em alta, normal e baixa (High/Normal/Low)."
+          }
+        }
+      },
+      "abort": {
+        "reconfigure_successful": "Criado / Modificado."
+      }
+    }
+  },
+  "services": {
+    "clear_memory": {
+      "name": "Esvaziar Memórias",
+      "description": "Exclui históricos no local ou das origens que a inteligência está gravando contextualmente pelo projeto.",
+      "fields": {
+        "user_id": {
+          "name": "Por Usuário Específico",
+          "description": "Destrói informações pelo nome/Id vinculado de perfil de acesso HA."
+        },
+        "satellite_id": {
+          "name": "Assistente em Base Local",
+          "description": "Isola e deleta conversações de satélites no qual escolheu (Espaços ou cômodos da Assistente Virtual limitados onde ela conversa as referências dos comandos anteriores)."
+        },
+        "delete_all": {
+          "name": "Limpeza Global Severa",
+          "description": "Perda em massa irreparável. Reseta e mata para o usuário global todas interfaces salvos conversacionais ativas ou salvas."
+        },
+        "include_server": {
+          "name": "Anexar Base em Nuvem Externa",
+          "description": "Ao mandar deletar, enviar também ordem pelo pacote API na web do servidor pra descartar lixeiras externas mantidas na Cloud do aplicativo para as chaves APIs locais listados acimas das conversas limitando Zero Retention Limits."
+        },
+        "only_inactive": {
+          "name": "Excluir As Mais Antigas (Abandonadas)",
+          "description": "Excluir baseados não nos comandos recentes. Foca em limpeza nas antigas ou limite programado na TTL Global acima nas opções base ou nativos nos 28 Dias expirados limite."
+        }
+      }
+    },
+    "manage_sensors": {
+      "name": "Refazimento dos Sensores (Gerencial)",
+      "description": "Ferramenta p/ administrá-los. Rode apenas num dos itens.",
+      "fields": {
+        "reload_pricing": {
+          "name": "Recalibragem de Custos via Download xAI APIs",
+          "description": "Força baixar o limite preço contratual numérico novo do sistema externo caso a Grok API os tenha manipulado as tarifas unitárias neste dia limitando recálculos via base limit das moedas locais automáticas no sensor financeiro integrável na casa."
+        },
+        "reset_stats": {
+          "name": "Resetar Faturas Métricas do Consumo de Token Interno Locais",
+          "description": "Apaga informações gastas voltando a contagem a zero na chamada do Sensor financeiro Local de Contagem nas Entidades Home Assistant (Isso não perdoa faturas nas bases da empresa Cloud API oficial das suas senhas em assinaturas com Grok Oficial para limpezas de fatura externa monetária via plataforma xAI de Cloud/Billing Site)."
+        }
+      }
+    }
+  }
+}
