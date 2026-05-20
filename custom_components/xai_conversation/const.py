@@ -232,14 +232,14 @@ VISION_ANALYSIS_PROMPT = "Be concise and factual in your image analysis. Always 
 # Identity Defaults
 RECOMMENDED_ASSISTANT_NAME = "Jarvis"
 
-# Default Model Selection (Optimized for Grok-3 models)
-RECOMMENDED_CHAT_MODEL = "grok-4-1-fast-non-reasoning"
-RECOMMENDED_ZDR_MODEL = "grok-4-1-fast-reasoning"
-RECOMMENDED_AI_TASK_MODEL = "grok-code-fast-1"
+# Default Model Selection (Optimized for Grok-4.3)
+RECOMMENDED_CHAT_MODEL = "grok-4.3"
+RECOMMENDED_ZDR_MODEL = "grok-4.3"
+RECOMMENDED_AI_TASK_MODEL = "grok-build-0.1"
 RECOMMENDED_IMAGE_MODEL = "grok-imagine-image"
 RECOMMENDED_IMAGE_ASPECT_RATIO = "auto"
 RECOMMENDED_IMAGE_RESOLUTION = "1k"
-RECOMMENDED_VISION_MODEL = "grok-4-1-fast-non-reasoning"
+RECOMMENDED_VISION_MODEL = "grok-4.3"
 
 IMAGE_ASPECT_RATIO_OPTIONS = [
     "auto",
@@ -262,7 +262,8 @@ IMAGE_RESOLUTION_OPTIONS = ["1k", "2k"]
 # Parameter Recommendations
 RECOMMENDED_TEMPERATURE = 0.1
 RECOMMENDED_TOP_P = 1
-RECOMMENDED_REASONING_EFFORT = "low"
+RECOMMENDED_REASONING_EFFORT = "none"
+RECOMMENDED_ZDR_REASONING_EFFORT = "low"  # ZDR requires reasoning for encrypted blob
 RECOMMENDED_LIVE_SEARCH = "off"
 RECOMMENDED_STORE_MESSAGES = True
 RECOMMENDED_SEND_USER_NAME = False

@@ -78,6 +78,7 @@ from .const import (
     RECOMMENDED_REASONING_EFFORT,
     RECOMMENDED_SENSORS_OPTIONS,
     RECOMMENDED_ZDR_MODEL,
+    RECOMMENDED_ZDR_REASONING_EFFORT,
     SUPPORTED_MODELS,
 )
 
@@ -87,11 +88,14 @@ from .const import (
 # =============================================================================
 
 
-def _model_selector() -> selector.SelectSelector:
-    """Dropdown selector for supported models."""
+def _model_selector(current_value: str | None = None) -> selector.SelectSelector:
+    """Dropdown selector for supported models with legacy tolerance."""
+    options = list(SUPPORTED_MODELS)
+    if current_value and current_value not in options:
+        options.insert(0, current_value)
     return selector.SelectSelector(
         selector.SelectSelectorConfig(
-            options=SUPPORTED_MODELS,
+            options=options,
             mode=selector.SelectSelectorMode.DROPDOWN,
         )
     )
@@ -131,7 +135,7 @@ def _reasoning_effort_selector() -> selector.SelectSelector:
     """Dropdown selector for reasoning effort levels."""
     return selector.SelectSelector(
         selector.SelectSelectorConfig(
-            options=["low", "medium", "high", "max"],
+            options=["none", "low", "medium", "high"],
             mode=selector.SelectSelectorMode.DROPDOWN,
         )
     )
@@ -587,7 +591,7 @@ class XAICoreLLMOptionsFlow(XAIOptionsFlowBase):
         """Get common LLM schema fields (max_tokens, temperature, top_p, reasoning, optionally model)."""
         fields = {}
         if include_model:
-            fields[vol.Optional(CONF_CHAT_MODEL, default=model)] = _model_selector()
+            fields[vol.Optional(CONF_CHAT_MODEL, default=model)] = _model_selector(model)
         fields.update(
             {
                 self._opt(CONF_MAX_TOKENS): _number_box(1, 8192),
@@ -657,6 +661,8 @@ class XAIConversationOptionsFlow(XAICoreLLMOptionsFlow):
             if new_zdr != current_zdr:
                 if new_zdr:
                     user_input[CONF_STORE_MESSAGES] = False
+                    # ZDR requires reasoning for encrypted blob generation
+                    user_input[CONF_REASONING_EFFORT] = RECOMMENDED_ZDR_REASONING_EFFORT
                     if (
                         user_input.get(CONF_CHAT_MODEL, model)
                         not in REASONING_EFFORT_MODELS
@@ -667,6 +673,7 @@ class XAIConversationOptionsFlow(XAICoreLLMOptionsFlow):
                         )
                 else:
                     user_input[CONF_CHAT_MODEL] = RECOMMENDED_CHAT_MODEL
+                    user_input[CONF_REASONING_EFFORT] = RECOMMENDED_REASONING_EFFORT
                     LOGGER.debug("[config] ZDR disabled: reverting to fast model")
 
                 options.update(user_input)
@@ -750,11 +757,15 @@ class XAIAITaskOptionsFlow(XAICoreLLMOptionsFlow):
             {
                 self._opt_tpl(CONF_AI_TASK_PROMPT, R): TEMPLATE_SELECTOR,
                 self._opt_tpl(CONF_VISION_PROMPT, R): TEMPLATE_SELECTOR,
-                vol.Optional(CONF_CHAT_MODEL, default=model): _model_selector(),
-                self._opt(CONF_IMAGE_MODEL, R): _model_selector(),
+                vol.Optional(CONF_CHAT_MODEL, default=model): _model_selector(model),
+                self._opt(CONF_IMAGE_MODEL, R): _model_selector(
+                    self.options.get(CONF_IMAGE_MODEL)
+                ),
                 self._opt(CONF_IMAGE_ASPECT_RATIO, R): _image_aspect_ratio_selector(),
                 self._opt(CONF_IMAGE_RESOLUTION, R): _image_resolution_selector(),
-                self._opt(CONF_VISION_MODEL, R): _model_selector(),
+                self._opt(CONF_VISION_MODEL, R): _model_selector(
+                    self.options.get(CONF_VISION_MODEL)
+                ),
             }
         )
         # Add LLM fields without model (already added above)

@@ -213,13 +213,19 @@ class XAIModelManager:
                 if m_type in ["language", "image"]:
                     dynamic_supported.add(model_name)
 
-                    # Dynamic Reasoning Detection Strategy:
-                    # 1. Models starting with 'grok-3' (Grok-3 is reasoning-first)
-                    # 2. Models containing '-reasoning'
-                    # 3. EXCLUDE models containing '-non-reasoning'
+                    # Dynamic Reasoning Detection Strategy (Grok-4.3 era):
+                    # 1. grok-4.3 supports configurable reasoning_effort
+                    # 2. grok-build models support reasoning (default none)
+                    # 3. grok-4.20-multi-agent uses effort for agent count
+                    # 4. Models containing '-reasoning' (explicit reasoning)
+                    # 5. EXCLUDE models containing '-non-reasoning'
                     name_lower = model_name.lower()
-                    # Official documentation: only grok-3-mini supports reasoning_effort
-                    if "grok-3-mini" in name_lower:
+                    if "-non-reasoning" not in name_lower and (
+                        "grok-4.3" in name_lower
+                        or "grok-build" in name_lower
+                        or "multi-agent" in name_lower
+                        or name_lower.endswith("-reasoning")
+                    ):
                         dynamic_reasoning.add(model_name)
 
         # Sort for consistency

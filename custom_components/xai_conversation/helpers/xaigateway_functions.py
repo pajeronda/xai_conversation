@@ -798,12 +798,8 @@ def assemble_chat_args(
     if params.top_p is not None:
         args["top_p"] = params.top_p
     # Only send reasoning_effort for models that explicitly support it
-    is_reasoning_model = params.model and (
-        params.model in REASONING_EFFORT_MODELS
-        or "reasoning" in params.model.lower()
-        and "non-reasoning" not in params.model.lower()
-    )
-    if params.reasoning_effort and is_reasoning_model:
+    is_reasoning_model = params.model in REASONING_EFFORT_MODELS
+    if params.reasoning_effort is not None and is_reasoning_model:
         args["reasoning_effort"] = params.reasoning_effort
 
     # Safety: ensure presence_penalty, frequency_penalty and stop are NOT sent for reasoning models
