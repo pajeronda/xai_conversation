@@ -225,18 +225,13 @@ class XAIToolsProcessor(BaseConversationProcessor):
             )
             return [result]
 
-        # Multiple tools: parallel execution with staggered start
+        # Multiple tools: parallel execution without artificial delay
         # Uses asyncio.gather to preserve original order (important for SDK tool matching)
         LOGGER.debug("[tools] parallel exec: %d tools", len(client_tool_calls))
 
-        async def _exec_with_stagger(tc, idx: int) -> ToolOutput:
-            """Execute tool with staggered delay to avoid race conditions."""
-            if idx > 0:
-                await asyncio.sleep(idx * 0.1)
-            return await self._execute_single_tool(tc, user_input, session_config)
-
         tasks = [
-            _exec_with_stagger(tc, idx) for idx, tc in enumerate(client_tool_calls)
+            self._execute_single_tool(tc, user_input, session_config)
+            for tc in client_tool_calls
         ]
 
         # Gather preserves order (unlike as_completed) - important for SDK tool matching

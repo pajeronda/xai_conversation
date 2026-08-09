@@ -18,7 +18,7 @@ from homeassistant.config_entries import (
     OptionsFlow,
 )
 from homeassistant.const import CONF_API_KEY
-from homeassistant.core import callback as ha_callback
+from homeassistant.core import callback as ha_callback, HomeAssistant
 from homeassistant.helpers import selector
 
 from .xai_gateway import XAIGateway
@@ -71,7 +71,6 @@ from .const import (
     DOMAIN,
     LOGGER,
     MEMORY_DEFAULTS,
-    REASONING_EFFORT_MODELS,
     RECOMMENDED_AI_TASK_OPTIONS,
     RECOMMENDED_CHAT_MODEL,
     RECOMMENDED_PIPELINE_OPTIONS,
@@ -79,7 +78,6 @@ from .const import (
     RECOMMENDED_SENSORS_OPTIONS,
     RECOMMENDED_ZDR_MODEL,
     RECOMMENDED_ZDR_REASONING_EFFORT,
-    SUPPORTED_MODELS,
 )
 
 
@@ -88,9 +86,12 @@ from .const import (
 # =============================================================================
 
 
-def _model_selector(current_value: str | None = None) -> selector.SelectSelector:
+def _model_selector(
+    hass: HomeAssistant, current_value: str | None = None
+) -> selector.SelectSelector:
     """Dropdown selector for supported models with legacy tolerance."""
-    options = list(SUPPORTED_MODELS)
+    model_manager = hass.data.get(DOMAIN, {}).get("model_manager")
+    options = list(model_manager.supported_models) if model_manager else []
     if current_value and current_value not in options:
         options.insert(0, current_value)
     return selector.SelectSelector(
@@ -579,9 +580,11 @@ class XAIOptionsFlowBase(ConfigSubentryFlow):
 
     def _needs_reload_for_model(self, model: str, new_model: str) -> bool:
         """Check if form needs reload based on model change (reasoning features)."""
-        return (model in REASONING_EFFORT_MODELS) != (
-            new_model in REASONING_EFFORT_MODELS
+        model_manager = self.hass.data.get(DOMAIN, {}).get("model_manager")
+        reasoning_models = (
+            model_manager.reasoning_effort_models if model_manager else []
         )
+        return (model in reasoning_models) != (new_model in reasoning_models)
 
 
 class XAICoreLLMOptionsFlow(XAIOptionsFlowBase):
@@ -591,7 +594,9 @@ class XAICoreLLMOptionsFlow(XAIOptionsFlowBase):
         """Get common LLM schema fields (max_tokens, temperature, top_p, reasoning, optionally model)."""
         fields = {}
         if include_model:
-            fields[vol.Optional(CONF_CHAT_MODEL, default=model)] = _model_selector(model)
+            fields[vol.Optional(CONF_CHAT_MODEL, default=model)] = _model_selector(
+                self.hass, model
+            )
         fields.update(
             {
                 self._opt(CONF_MAX_TOKENS): _number_box(1, 8192),
@@ -599,7 +604,11 @@ class XAICoreLLMOptionsFlow(XAIOptionsFlowBase):
                 self._opt(CONF_TOP_P): _number_box(0.0, 1.0, 0.05),
             }
         )
-        if model in REASONING_EFFORT_MODELS:
+        model_manager = self.hass.data.get(DOMAIN, {}).get("model_manager")
+        reasoning_models = (
+            model_manager.reasoning_effort_models if model_manager else []
+        )
+        if model in reasoning_models:
             fields[
                 self._opt(
                     CONF_REASONING_EFFORT,
@@ -663,10 +672,11 @@ class XAIConversationOptionsFlow(XAICoreLLMOptionsFlow):
                     user_input[CONF_STORE_MESSAGES] = False
                     # ZDR requires reasoning for encrypted blob generation
                     user_input[CONF_REASONING_EFFORT] = RECOMMENDED_ZDR_REASONING_EFFORT
-                    if (
-                        user_input.get(CONF_CHAT_MODEL, model)
-                        not in REASONING_EFFORT_MODELS
-                    ):
+                    model_manager = self.hass.data.get(DOMAIN, {}).get("model_manager")
+                    reasoning_models = (
+                        model_manager.reasoning_effort_models if model_manager else []
+                    )
+                    if user_input.get(CONF_CHAT_MODEL, model) not in reasoning_models:
                         user_input[CONF_CHAT_MODEL] = RECOMMENDED_ZDR_MODEL
                         LOGGER.debug(
                             "[config] ZDR enabled: auto-switching to reasoning"
@@ -757,14 +767,16 @@ class XAIAITaskOptionsFlow(XAICoreLLMOptionsFlow):
             {
                 self._opt_tpl(CONF_AI_TASK_PROMPT, R): TEMPLATE_SELECTOR,
                 self._opt_tpl(CONF_VISION_PROMPT, R): TEMPLATE_SELECTOR,
-                vol.Optional(CONF_CHAT_MODEL, default=model): _model_selector(model),
+                vol.Optional(CONF_CHAT_MODEL, default=model): _model_selector(
+                    self.hass, model
+                ),
                 self._opt(CONF_IMAGE_MODEL, R): _model_selector(
-                    self.options.get(CONF_IMAGE_MODEL)
+                    self.hass, self.options.get(CONF_IMAGE_MODEL)
                 ),
                 self._opt(CONF_IMAGE_ASPECT_RATIO, R): _image_aspect_ratio_selector(),
                 self._opt(CONF_IMAGE_RESOLUTION, R): _image_resolution_selector(),
                 self._opt(CONF_VISION_MODEL, R): _model_selector(
-                    self.options.get(CONF_VISION_MODEL)
+                    self.hass, self.options.get(CONF_VISION_MODEL)
                 ),
             }
         )

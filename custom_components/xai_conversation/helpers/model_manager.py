@@ -6,6 +6,7 @@ Functions as the single source of truth for model data.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from homeassistant.core import HomeAssistant
@@ -15,8 +16,6 @@ from homeassistant.util import dt as dt_util
 from ..const import (
     LOGGER,
     DOMAIN,
-    SUPPORTED_MODELS,
-    REASONING_EFFORT_MODELS,
 )
 
 
@@ -30,6 +29,8 @@ class XAIModelManager:
     def __init__(self, hass: HomeAssistant):
         """Initialize the model manager."""
         self.hass = hass
+        self.supported_models: list[str] = []
+        self.reasoning_effort_models: list[str] = []
 
     def _build_model_data_entry(
         self,
@@ -194,14 +195,11 @@ class XAIModelManager:
         )
 
     def _populate_supported_models(self, models_data: dict[str, Any]) -> None:
-        """Populate global SUPPORTED_MODELS and REASONING_EFFORT_MODELS from fetched data.
+        """Populate supported_models and reasoning_effort_models from fetched data.
 
         Args:
             models_data: Dictionary of model data from async_get_models_data
         """
-        SUPPORTED_MODELS.clear()
-        REASONING_EFFORT_MODELS.clear()
-
         dynamic_supported = set()
         dynamic_reasoning = set()
 
@@ -209,31 +207,45 @@ class XAIModelManager:
             # Only add primary model name, not aliases
             if model_data["name"] == model_name:
                 m_type = model_data["type"]
-                # Add language and image models to SUPPORTED_MODELS
+                # Add language and image models to supported_models
                 if m_type in ["language", "image"]:
                     dynamic_supported.add(model_name)
 
-                    # Dynamic Reasoning Detection Strategy (Grok-4.3 era):
-                    # 1. grok-4.3 supports configurable reasoning_effort
-                    # 2. grok-build models support reasoning (default none)
-                    # 3. grok-4.20-multi-agent uses effort for agent count
-                    # 4. Models containing '-reasoning' (explicit reasoning)
-                    # 5. EXCLUDE models containing '-non-reasoning'
+                    # Dynamic Reasoning Detection Strategy (Automated for Grok-4+ era):
+                    # 1. Check SDK model attributes (e.g., supports_reasoning, reasoning)
+                    # 2. All Grok-4+ models (grok-4, grok-4.3, grok-4.5, grok-5, etc.) support reasoning_effort
+                    # 3. multi-agent models support reasoning_effort
+                    # 4. Models containing 'reasoning' or 'thinking'
+                    # 5. EXCLUDE models containing '-non-reasoning' or 'grok-build' (grok-build handles build internally and rejects reasoningEffort parameter)
                     name_lower = model_name.lower()
-                    if "-non-reasoning" not in name_lower and (
-                        "grok-4.3" in name_lower
-                        or "grok-build" in name_lower
-                        or "multi-agent" in name_lower
-                        or name_lower.endswith("-reasoning")
-                    ):
-                        dynamic_reasoning.add(model_name)
+                    if "-non-reasoning" not in name_lower and "grok-build" not in name_lower:
+                        sdk_supports_reasoning = getattr(
+                            model_data, "supports_reasoning", False
+                        ) or getattr(model_data, "reasoning", False)
+
+                        # Match any Grok model version >= 4 (e.g., grok-4, grok-4.3, grok-4.5, grok-5)
+                        version_match = re.search(r"grok-(\d+)", name_lower)
+                        is_grok_4_plus = False
+                        if version_match:
+                            major_version = int(version_match.group(1))
+                            if major_version >= 4:
+                                is_grok_4_plus = True
+
+                        if (
+                            sdk_supports_reasoning
+                            or is_grok_4_plus
+                            or "multi-agent" in name_lower
+                            or "reasoning" in name_lower
+                            or "thinking" in name_lower
+                        ):
+                            dynamic_reasoning.add(model_name)
 
         # Sort for consistency
-        SUPPORTED_MODELS.extend(sorted(list(dynamic_supported)))
-        REASONING_EFFORT_MODELS.extend(sorted(list(dynamic_reasoning)))
+        self.supported_models = sorted(list(dynamic_supported))
+        self.reasoning_effort_models = sorted(list(dynamic_reasoning))
 
         LOGGER.debug(
             "[models] loaded: %d supported, %d reasoning",
-            len(SUPPORTED_MODELS),
-            len(REASONING_EFFORT_MODELS),
+            len(self.supported_models),
+            len(self.reasoning_effort_models),
         )

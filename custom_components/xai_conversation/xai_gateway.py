@@ -30,6 +30,48 @@ except ImportError:
     chat_pb2 = None
     XAI_SDK_AVAILABLE = False
 
+if XAI_SDK_AVAILABLE:
+    import contextvars
+    import xai_sdk.aio.chat
+
+    grok_conv_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+        "grok_conv_id", default=None
+    )
+
+    class PatchedChatStub:
+        """Wrapper for gRPC ChatStub that injects x-grok-conv-id metadata."""
+
+        def __init__(self, stub, conv_id: str):
+            self._stub = stub
+            self._conv_id = conv_id
+
+        def __getattr__(self, name):
+            attr = getattr(self._stub, name)
+            if callable(attr):
+
+                def wrapper(*args, **kwargs):
+                    metadata = list(kwargs.get("metadata") or [])
+                    # Avoid duplicate keys
+                    if not any(k == "x-grok-conv-id" for k, _ in metadata):
+                        metadata.append(("x-grok-conv-id", self._conv_id))
+                    kwargs["metadata"] = metadata
+                    return attr(*args, **kwargs)
+
+                return wrapper
+            return attr
+
+    # Monkeypatch xai_sdk.aio.chat.Client._make_chat
+    _orig_make_chat = xai_sdk.aio.chat.Client._make_chat
+
+    def _patched_make_chat(self, conversation_id, **settings):
+        chat_obj = _orig_make_chat(self, conversation_id, **settings)
+        conv_id = grok_conv_id_var.get()
+        if conv_id and hasattr(chat_obj, "_stub"):
+            chat_obj._stub = PatchedChatStub(chat_obj._stub, conv_id)
+        return chat_obj
+
+    xai_sdk.aio.chat.Client._make_chat = _patched_make_chat
+
 from .const import (
     CONF_API_HOST,
     CONF_TIMEOUT,
@@ -270,7 +312,11 @@ class XAIGateway:
         """Fetch and sync available models from xAI."""
         # Gateway executes ModelManager logic as a helper
         client = self.create_client()
-        await XAIModelManager(self.hass).async_update_models(client)
+        model_manager = self.hass.data.get(DOMAIN, {}).get("model_manager")
+        if not model_manager:
+            model_manager = XAIModelManager(self.hass)
+            self.hass.data.setdefault(DOMAIN, {})["model_manager"] = model_manager
+        await model_manager.async_update_models(client)
 
     # ==========================================================================
     # Chat Lifecycle Factory
@@ -296,7 +342,11 @@ class XAIGateway:
         if entity and hasattr(entity, "_tools_processor"):
             orchestrator = getattr(entity._tools_processor, "_orchestrator", None)
 
-        extra_system_prompt = getattr(params.user_input, "extra_system_prompt", None) if params.user_input else None
+        extra_system_prompt = (
+            getattr(params.user_input, "extra_system_prompt", None)
+            if params.user_input
+            else None
+        )
 
         # Calculate prompt hash using gateway's prompt_manager with full context
         prompt_hash = self.prompt_manager.get_prompt_hash(
@@ -315,7 +365,10 @@ class XAIGateway:
                 "[gateway] prompt: INJECTING SYSTEM PROMPT (reason: %s)", reason
             )
             system_prompt = params.system_prompt or self.prompt_manager.get_prompt(
-                mode, params.config, orchestrator=orchestrator, extra_system_prompt=extra_system_prompt
+                mode,
+                params.config,
+                orchestrator=orchestrator,
+                extra_system_prompt=extra_system_prompt,
             )
 
             if prev_id and prompt_hash != stored_hash:
@@ -344,6 +397,7 @@ class XAIGateway:
 
         # 5. Finalize and log request
         chat_args = assemble_chat_args(
+            self.hass,
             params,
             sdk_messages,
             store_messages=params.store_messages,
@@ -354,7 +408,15 @@ class XAIGateway:
         )
 
         params.prompt_hash = prompt_hash
-        return self.create_client().chat.create(**chat_args), conv_key, model, params
+        token = None
+        if conv_key:
+            token = grok_conv_id_var.set(conv_key)
+        try:
+            chat = self.create_client().chat.create(**chat_args)
+        finally:
+            if token is not None:
+                grok_conv_id_var.reset(token)
+        return chat, conv_key, model, params
 
     @require_xai_sdk
     async def async_generate_image(
@@ -468,13 +530,19 @@ class XAIGateway:
         model = params.model
         hass = hass or self.hass
 
-        extra_system_prompt = getattr(params.user_input, "extra_system_prompt", None) if params.user_input else None
-        
+        extra_system_prompt = (
+            getattr(params.user_input, "extra_system_prompt", None)
+            if params.user_input
+            else None
+        )
+
         # System prompt: use resolved value or get from shared manager if still missing
         system_prompt = params.system_prompt
         if not system_prompt:
             system_prompt = self.prompt_manager.get_prompt(
-                params.mode or "ai_task", params.config, extra_system_prompt=extra_system_prompt
+                params.mode or "ai_task",
+                params.config,
+                extra_system_prompt=extra_system_prompt,
             )
 
         # Build SDK payload
@@ -486,7 +554,9 @@ class XAIGateway:
         )
 
         # Log and Execute
-        chat_args = assemble_chat_args(params, sdk_messages, store_messages=False)
+        chat_args = assemble_chat_args(
+            self.hass, params, sdk_messages, store_messages=False
+        )
         log_api_request(
             sdk_messages, model, service_type, params=params, is_stateless=True
         )

@@ -42,6 +42,11 @@ from .tools_custom import CUSTOM_TOOLS
 from .tools_ha_to_xai import _filter_tools_by_exposed_domains, format_tools_for_xai
 from .tools_xai_to_ha import convert_xai_to_ha_tool, _safe_parse_tool_arguments
 from .tools_extended import ExtendedToolError
+from .ha_compatibility import (
+    async_get_exposed_entities,
+    async_get_assist_tools,
+    async_call_llm_tool,
+)
 
 if TYPE_CHECKING:
     from .tools_extended import ExtendedToolsRegistry
@@ -59,54 +64,6 @@ class _MockToolCall:
         self.function = self.Function(name, args)
 
 
-def _safe_get_exposed_entities(
-    hass: HomeAssistant, assistant_id: str = "conversation", include_state: bool = False
-) -> dict:
-    get_exposed = getattr(ha_llm, "_get_exposed_entities", None)
-    if not get_exposed:
-        LOGGER.warning(
-            "[orchestrator] HA LLM API missing _get_exposed_entities; tools disabled."
-        )
-        return {"entities": {}}
-    try:
-        return get_exposed(hass, assistant_id, include_state=include_state)
-    except Exception as err:
-        LOGGER.warning(
-            "[orchestrator] failed to read exposed entities: %s", err, exc_info=True
-        )
-        return {"entities": {}}
-
-
-def _safe_get_assist_api(hass: HomeAssistant):
-    get_apis = getattr(ha_llm, "_async_get_apis", None)
-    if not get_apis:
-        LOGGER.error("[orchestrator] HA LLM API missing _async_get_apis.")
-        return None
-    try:
-        return get_apis(hass).get(ha_llm.LLM_API_ASSIST)
-    except Exception as err:
-        LOGGER.error(
-            "[orchestrator] failed to access Assist API: %s", err, exc_info=True
-        )
-        return None
-
-
-def _safe_get_assist_tools(assist_api, llm_context, exposed_result):
-    get_tools = getattr(assist_api, "_async_get_tools", None)
-    if not get_tools:
-        LOGGER.error("[orchestrator] Assist API missing _async_get_tools.")
-        raise_generic_error(
-            "Assist API tools are not available in this Home Assistant version."
-        )
-    try:
-        return get_tools(llm_context, exposed_result)
-    except Exception as err:
-        LOGGER.error(
-            "[orchestrator] failed to fetch Assist tools: %s", err, exc_info=True
-        )
-        raise_generic_error("Failed to fetch Assist tools from Home Assistant.")
-
-
 def _get_exposed_entities_with_aliases(
     hass: HomeAssistant, assistant_id: str = "conversation"
 ) -> list[dict]:
@@ -120,9 +77,7 @@ def _get_exposed_entities_with_aliases(
         List of entity data dictionaries including 'aliases' field if present.
     """
     # Get base exposed entities (no state needed for static context)
-    exposed_entities_result = _safe_get_exposed_entities(
-        hass, assistant_id, include_state=False
-    )
+    exposed_entities_result = async_get_exposed_entities(hass, assistant_id)
 
     if not exposed_entities_result or "entities" not in exposed_entities_result:
         return []
@@ -173,7 +128,9 @@ def _get_exposed_entities_with_aliases(
 
         # 2. Enrich Aliases
         if entry and entry.aliases:
-            entity_data_copy["aliases"] = sorted(str(a) for a in entry.aliases)
+            entity_data_copy["aliases"] = sorted(
+                str(a) for a in entry.aliases if "ComputedNameType" not in str(a)
+            )
 
         enriched_entities.append(entity_data_copy)
 
@@ -246,6 +203,7 @@ class ToolOrchestrator:
         self._custom_intent_names: set[str] = set()
         self._cached_intents_hash: str | None = None
         self._cached_enriched_entities: list[dict] | None = None
+        self._last_intents_check_time: float = 0.0
 
     def _clear_cache(self):
         """Clear all caches."""
@@ -258,6 +216,7 @@ class ToolOrchestrator:
         self._custom_intent_names = set()
         self._cached_intents_hash = None
         self._cached_enriched_entities = None
+        self._last_intents_check_time = 0.0
 
     async def async_refresh_tools_if_needed(
         self, user_input, config: ToolSessionConfig
@@ -275,9 +234,7 @@ class ToolOrchestrator:
             return True
 
         # 2. Get Home Assistant Exposed Entities
-        exposed_result = _safe_get_exposed_entities(
-            self.hass, "conversation", include_state=False
-        )
+        exposed_result = async_get_exposed_entities(self.hass, "conversation")
 
         # Hash the full exposed result to detect ANY change
         # (entity names, areas, aliases, additions, removals, domain changes)
@@ -288,8 +245,16 @@ class ToolOrchestrator:
             e.split(".")[0] for e in exposed_result.get("entities", [])
         }
 
-        # Lightweight check for custom_sentences changes (stat-based)
-        current_intents_hash = await self._compute_intents_hash()
+        # Lightweight check for custom_sentences changes (stat-based) with a 60-second throttling
+        now = time.time()
+        if (
+            self._cached_intents_hash is None
+            or (now - self._last_intents_check_time) > 60.0
+        ):
+            current_intents_hash = await self._compute_intents_hash()
+            self._last_intents_check_time = now
+        else:
+            current_intents_hash = self._cached_intents_hash
 
         # 3. Check Cache Validity
         should_rebuild = False
@@ -443,7 +408,9 @@ class ToolOrchestrator:
                 self._read_custom_sentences_sync
             )
         except Exception as err:
-            LOGGER.debug("[orchestrator] error reading custom_sentences: %s", err)
+            LOGGER.debug(
+                "[orchestrator] error reading custom_sentences: %s", err, exc_info=True
+            )
             self._custom_intent_names = set()
             return ""
 
@@ -520,10 +487,6 @@ class ToolOrchestrator:
         self._using_extended_mode = False
         self._cached_extended_hash = None
 
-        assist_api = _safe_get_assist_api(self.hass)
-        if not assist_api:
-            raise_generic_error("AssistAPI is not available in Home Assistant.")
-
         llm_context = ha_llm.LLMContext(
             platform=DOMAIN,
             context=user_input.context,
@@ -535,8 +498,8 @@ class ToolOrchestrator:
         # 1. Read custom_sentences intents FIRST (needed for filtering and prompt)
         self._cached_custom_intents_csv = await self._generate_custom_intents_context()
 
-        # 2. Fetch HA Tools
-        ha_tools = _safe_get_assist_tools(assist_api, llm_context, exposed_result)
+        # 2. Fetch HA Tools via compatibility helper
+        ha_tools = await async_get_assist_tools(self.hass, llm_context)
 
         # 3. Filter by Domains (Using imported helper)
         ha_tools, dropped_count = _filter_tools_by_exposed_domains(
@@ -697,12 +660,13 @@ class ToolOrchestrator:
                     device_id=extract_device_id(user_input),
                 )
 
-                result_data = await ha_tool.async_call(
-                    self.hass, ha_tool_input, llm_context
+                result_data = await async_call_llm_tool(
+                    self.hass, ha_tool, ha_tool_input, llm_context
                 )
                 return ToolExecutionResult(result=result_data)
 
         except Exception as err:
+            LOGGER.error("Error executing tool '%s': %s", tool_name, err, exc_info=True)
             return ToolExecutionResult(
                 result=f"Error executing tool '{tool_name}': {err}", is_error=True
             )

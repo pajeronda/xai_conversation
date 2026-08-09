@@ -83,7 +83,9 @@ class TokenStats:
                 if asyncio.iscoroutine(res):
                     self.hass.async_create_task(res)
             except Exception as err:
-                LOGGER.error("[stats] listener notification failed: %s", err)
+                LOGGER.error(
+                    "[stats] listener notification failed: %s", err, exc_info=True
+                )
 
     # =========================================================================
     # INTERNAL: STORAGE MANAGEMENT
@@ -134,7 +136,7 @@ class TokenStats:
 
             self._loaded = True
         except Exception as err:
-            LOGGER.warning("[stats] load failed: %s", err)
+            LOGGER.warning("[stats] load failed: %s", err, exc_info=True)
             self._data = {}
             # Ensure critical fields exist even if load failed
             self._data["known_models"] = []
@@ -151,7 +153,7 @@ class TokenStats:
             self._dirty = False
             LOGGER.debug("[stats] flushed to disk")
         except Exception as err:
-            LOGGER.error("[stats] save failed: %s", err)
+            LOGGER.error("[stats] save failed: %s", err, exc_info=True)
 
     # =========================================================================
     # PUBLIC API: USAGE TRACKING
@@ -632,6 +634,12 @@ class TokenStats:
                 "tokens_by_model": tokens_by_model.copy(),
             }
 
+    async def get_pricing_data(self) -> dict:
+        """Get all stored pricing data."""
+        async with self._lock:
+            await self._ensure_loaded()
+            return self._data.get("pricing_data", {}).copy()
+
     async def get_known_models(self) -> list[str]:
         """Get the list of models that have been previously detected and acknowledged."""
         async with self._lock:
@@ -788,10 +796,24 @@ def _get_sensors_config(entry: ConfigEntry) -> dict:
 def get_pricing_conversion_factor(entry: ConfigEntry) -> float:
     """Resolve pricing conversion factor from sensors subentry."""
     config = _get_sensors_config(entry)
-    return config.get(CONF_XAI_PRICING_CONVERSION_FACTOR)
+    factor = config.get(CONF_XAI_PRICING_CONVERSION_FACTOR)
+    if factor is None:
+        return 10000.0
+    try:
+        val = float(factor)
+        return val if val > 0 else 10000.0
+    except (ValueError, TypeError):
+        return 10000.0
 
 
 def get_tokens_per_million(entry: ConfigEntry) -> int:
     """Resolve tokens per million from sensors subentry."""
     config = _get_sensors_config(entry)
-    return config.get(CONF_TOKENS_PER_MILLION)
+    tpm = config.get(CONF_TOKENS_PER_MILLION)
+    if tpm is None:
+        return 1000000
+    try:
+        val = int(tpm)
+        return val if val > 0 else 1000000
+    except (ValueError, TypeError):
+        return 1000000

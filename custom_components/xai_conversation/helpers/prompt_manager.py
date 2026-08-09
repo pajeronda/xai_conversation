@@ -59,7 +59,13 @@ class PromptManager:
     # PUBLIC API - Gateway chiede solo MODE
     # ==========================================================================
 
-    def get_prompt(self, mode: str, config: dict, orchestrator=None, extra_system_prompt: str | None = None) -> str:
+    def get_prompt(
+        self,
+        mode: str,
+        config: dict,
+        orchestrator=None,
+        extra_system_prompt: str | None = None,
+    ) -> str:
         """Get prompt for mode. Cached.
 
         Args:
@@ -76,7 +82,13 @@ class PromptManager:
         self._cache[cache_key] = prompt
         return prompt
 
-    def get_prompt_hash(self, mode: str, config: dict, orchestrator=None, extra_system_prompt: str | None = None) -> str:
+    def get_prompt_hash(
+        self,
+        mode: str,
+        config: dict,
+        orchestrator=None,
+        extra_system_prompt: str | None = None,
+    ) -> str:
         """Get hash of prompt for memory keys. Cached."""
         cache_key = self._get_cache_key(mode, config, orchestrator, extra_system_prompt)
         if cache_key in self._hash_cache:
@@ -91,7 +103,13 @@ class PromptManager:
     # INTERNAL - Build prompts autonomously
     # ==========================================================================
 
-    def _get_cache_key(self, mode: str, config: dict, orchestrator=None, extra_system_prompt: str | None = None) -> str:
+    def _get_cache_key(
+        self,
+        mode: str,
+        config: dict,
+        orchestrator=None,
+        extra_system_prompt: str | None = None,
+    ) -> str:
         """Generate cache key based on mode and variable components."""
         components = [
             mode,
@@ -114,7 +132,13 @@ class PromptManager:
 
         return f"{mode}:{hash_text('|'.join(components))[:12]}"
 
-    def _build_prompt(self, mode: str, config: dict, orchestrator=None, extra_system_prompt: str | None = None) -> str:
+    def _build_prompt(
+        self,
+        mode: str,
+        config: dict,
+        orchestrator=None,
+        extra_system_prompt: str | None = None,
+    ) -> str:
         """Build prompt for mode."""
         if mode == "ai_task":
             return config.get(CONF_AI_TASK_PROMPT) or GROK_AI_TASK_PROMPT
@@ -123,12 +147,18 @@ class PromptManager:
             return config.get(CONF_VISION_PROMPT) or VISION_ANALYSIS_PROMPT
 
         if mode in (CHAT_MODE_TOOLS, CHAT_MODE_PIPELINE, CHAT_MODE_CHATONLY):
-            return self._build_conversation_prompt(mode, config, orchestrator, extra_system_prompt)
+            return self._build_conversation_prompt(
+                mode, config, orchestrator, extra_system_prompt
+            )
 
         return ""
 
     def _build_conversation_prompt(
-        self, mode: str, config: dict, orchestrator=None, extra_system_prompt: str | None = None
+        self,
+        mode: str,
+        config: dict,
+        orchestrator=None,
+        extra_system_prompt: str | None = None,
     ) -> str:
         """Build prompt for tools/pipeline/chatonly modes."""
         blocks = []
@@ -203,7 +233,9 @@ class PromptManager:
 
         return "\n\n".join(blocks).strip()
 
-    def _get_user_instructions(self, mode: str, config: dict, extra_system_prompt: str | None = None) -> str:
+    def _get_user_instructions(
+        self, mode: str, config: dict, extra_system_prompt: str | None = None
+    ) -> str:
         """Get user instructions from config and merge dynamic overriding if present."""
         base = ""
         if mode == CHAT_MODE_PIPELINE:
@@ -215,9 +247,13 @@ class PromptManager:
             base = config.get(
                 CONF_PROMPT_PIPELINE if use_pipeline else CONF_PROMPT_TOOLS, ""
             ).strip()
-            
+
         if extra_system_prompt:
-            return f"{base}\n{extra_system_prompt}".strip() if base else extra_system_prompt
+            return (
+                f"{base}\n{extra_system_prompt}".strip()
+                if base
+                else extra_system_prompt
+            )
         return base
 
     def _get_static_context(self, orchestrator=None) -> str:

@@ -93,7 +93,9 @@ class MemoryManager:
                 if asyncio.iscoroutine(res):
                     self.hass.async_create_task(res)
             except Exception as err:
-                LOGGER.error("[memory] listener notification failed: %s", err)
+                LOGGER.error(
+                    "[memory] listener notification failed: %s", err, exc_info=True
+                )
 
     @staticmethod
     def generate_key(
@@ -282,7 +284,7 @@ class MemoryManager:
             self._dirty = False
             LOGGER.debug("[memory] flushed to disk")
         except Exception as err:
-            LOGGER.error("[memory] save failed: %s", err)
+            LOGGER.error("[memory] save failed: %s", err, exc_info=True)
 
     async def async_delete(
         self,
@@ -321,7 +323,7 @@ class MemoryManager:
                 self._dirty = False
                 LOGGER.debug("[memory] storage file deleted")
             except Exception as err:
-                LOGGER.error("[memory] delete failed: %s", err)
+                LOGGER.error("[memory] delete failed: %s", err, exc_info=True)
                 raise
             return {"all": all_ids, "server_stored": server_ids}
 
@@ -347,7 +349,7 @@ class MemoryManager:
             data = await self._store.async_load()
             self._memory = data if isinstance(data, dict) else {}
         except Exception as err:
-            LOGGER.warning("[memory] load failed: %s", err)
+            LOGGER.warning("[memory] load failed: %s", err, exc_info=True)
             self._memory = {}
         finally:
             self._loaded = True

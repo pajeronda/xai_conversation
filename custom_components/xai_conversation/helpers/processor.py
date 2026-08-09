@@ -261,7 +261,9 @@ async def unified_delta_generator(
         if is_not_found_error(err):
             LOGGER.debug("Stream session expired (NOT_FOUND): %s", err)
         else:
-            LOGGER.error("Stream error in unified_delta_generator: %s", err)
+            LOGGER.error(
+                "Stream error in unified_delta_generator: %s", err, exc_info=True
+            )
 
         if new_message:
             yield {"role": "assistant"}

@@ -89,7 +89,7 @@ class IntelligentPipeline(BaseConversationProcessor):
                 return
         except Exception as err:
             # Gateway creation failure (no chat object available)
-            LOGGER.error("[pipeline] failed: %s", err)
+            LOGGER.error("[pipeline] failed: %s", err, exc_info=True)
             return
 
         command_buffer = parser.command_buffer
@@ -162,17 +162,15 @@ class IntelligentPipeline(BaseConversationProcessor):
             (idx, cmd) for idx, cmd in enumerate(commands, 1) if cmd.get("text")
         ]
 
-        async def _try_with_stagger(cmd, idx):
-            """Try conversation.process with staggered delay."""
-            if idx > 1:
-                await asyncio.sleep((idx - 1) * 0.1)
+        async def _try_without_delay(cmd, idx):
+            """Try conversation.process without delay."""
             command_text = str(cmd.get("text", "")).strip()
             return await self._try_conversation_process(
                 command_text, chat_log, timer, idx, total
             )
 
         results = await asyncio.gather(
-            *[_try_with_stagger(cmd, idx) for idx, cmd in valid_commands],
+            *[_try_without_delay(cmd, idx) for idx, cmd in valid_commands],
             return_exceptions=True,
         )
 
@@ -261,6 +259,7 @@ class IntelligentPipeline(BaseConversationProcessor):
                 idx_info,
                 exec_time,
                 type(err).__name__,
+                exc_info=True,
             )
             return None, True
 

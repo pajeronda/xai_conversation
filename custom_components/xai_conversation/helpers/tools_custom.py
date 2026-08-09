@@ -19,6 +19,7 @@ except Exception:  # pragma: no cover - optional dependency
     fr = None
 
 from ..const import DOMAIN, INTENT_EXECUTION_NO_INTENT_MESSAGE, LOGGER
+from .ha_compatibility import async_get_exposed_entities
 
 
 class Tool:
@@ -67,9 +68,7 @@ def _resolve_light_entity_id(hass: HomeAssistant, tool_args: dict) -> str | None
     if not name and not area and not floor:
         return None
 
-    exposed_result = ha_llm._get_exposed_entities(
-        hass, "conversation", include_state=False
-    )
+    exposed_result = async_get_exposed_entities(hass, "conversation")
     if not exposed_result or "entities" not in exposed_result:
         return None
 

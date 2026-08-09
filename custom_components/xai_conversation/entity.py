@@ -136,7 +136,9 @@ class XAIBaseLLMEntity(HA_Entity):
                         "All save tasks completed for entity %s", self.entity_id
                     )
             except Exception as err:
-                LOGGER.error("Error waiting for pending save tasks: %s", err)
+                LOGGER.error(
+                    "Error waiting for pending save tasks: %s", err, exc_info=True
+                )
 
         # Cleanup: Gateway is shared and closed by coordinator
 

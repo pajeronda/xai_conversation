@@ -105,7 +105,9 @@ async def _async_resolve_media_source(
                 "image/jpeg",
             )
         except Exception as err:
-            LOGGER.warning("Failed to fetch camera image for %s: %s", path, err)
+            LOGGER.warning(
+                "Failed to fetch camera image for %s: %s", path, err, exc_info=True
+            )
             return "", None
 
     if not path.startswith("media-source://"):
@@ -117,7 +119,9 @@ async def _async_resolve_media_source(
         resolved = str(play_info.path) if play_info.path else play_info.url
         return resolved, play_info.mime_type
     except Exception as err:
-        LOGGER.warning("Failed to resolve media-source %s: %s", path, err)
+        LOGGER.warning(
+            "Failed to resolve media-source %s: %s", path, err, exc_info=True
+        )
         return "", None
 
 
@@ -193,7 +197,9 @@ async def _async_process_single_source(
                 base_64_image = base64.b64encode(image_bytes).decode("utf-8")
                 return f"data:{final_content_type};base64,{base_64_image}", None
         except Exception as err:
-            LOGGER.warning("Error processing image URL %s: %s", processed_path, err)
+            LOGGER.warning(
+                "Error processing image URL %s: %s", processed_path, err, exc_info=True
+            )
             return None, f"{processed_path} (errore elaborazione)"
 
     # 5. Resolve (Camera proxy, Media Source, etc. for non-HTTP)
@@ -231,7 +237,9 @@ async def _async_process_single_source(
         uri = await async_read_image_to_uri(hass, resolved_path, final_mime)
         return uri, None if uri else f"{path_or_url} (errore lettura file)"
     except Exception as err:
-        LOGGER.warning("Failed to process image source %s: %s", path_or_url, err)
+        LOGGER.warning(
+            "Failed to process image source %s: %s", path_or_url, err, exc_info=True
+        )
         return None, f"{path_or_url} ({str(err)})"
 
 

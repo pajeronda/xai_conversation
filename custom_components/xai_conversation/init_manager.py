@@ -130,8 +130,11 @@ class XaiInitManager:
         self.model_manager = XAIModelManager(self.hass)
         self.hass.data[DOMAIN]["model_manager"] = self.model_manager
 
-        # Perform initial model fetch (non-blocking, will retry on startup if needed)
-        await self._async_update_models_with_retry(context="initial")
+        # Perform initial model fetch in background to avoid blocking setup
+        self.hass.async_create_background_task(
+            self._async_update_models_with_retry(context="initial"),
+            name="xai_conversation_initial_model_fetch",
+        )
 
         # Run setup tasks (idempotent, safe to run on every startup)
         await self._async_add_subentries_if_needed()
@@ -217,11 +220,11 @@ class XaiInitManager:
             model_data = xai_models_data.get(model_name)
             if not model_data:
                 return True
-                
+
             # If the model exists but its name differs (it's an alias), we don't create sensors. Thus, the old one is orphaned.
             if model_data.get("name") != model_name:
                 return True
-                
+
             return model_data.get(suffix, 0.0) <= 0
 
         self._async_remove_registered_entities(
@@ -285,7 +288,7 @@ class XaiInitManager:
         memory = self.hass.data[DOMAIN].get("conversation_memory")
         if not memory:
             return
-            
+
         try:
             turn_counts = await memory.async_get_turn_counts()
         except Exception:

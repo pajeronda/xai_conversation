@@ -338,9 +338,7 @@ RECOMMENDED_SENSORS_OPTIONS = {
 # ==============================================================================
 # SECTION 6: MODEL & PRICING CONFIGURATION
 # ==============================================================================
-# Supported models are populated dynamically at runtime via XAIModelManager
-SUPPORTED_MODELS: list[str] = []
-REASONING_EFFORT_MODELS: list[str] = []
+
 
 # Pricing Constants
 XAI_PRICING_CONVERSION_FACTOR = 10000.0

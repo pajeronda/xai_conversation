@@ -37,7 +37,6 @@ from ..const import (
     MODEL_TARGET_CHAT,
     MODEL_TARGET_IMAGE,
     MODEL_TARGET_VISION,
-    REASONING_EFFORT_MODELS,
     RECOMMENDED_CHAT_MODEL,
     RECOMMENDED_IMAGE_MODEL,
     RECOMMENDED_LIVE_SEARCH,
@@ -776,6 +775,7 @@ def _convert_dict_to_sdk_tool(tool_dict: dict) -> Any:
 
 
 def assemble_chat_args(
+    hass: HomeAssistant,
     params: ChatOptions,
     sdk_messages: list[Any],
     store_messages: bool = False,
@@ -798,7 +798,9 @@ def assemble_chat_args(
     if params.top_p is not None:
         args["top_p"] = params.top_p
     # Only send reasoning_effort for models that explicitly support it
-    is_reasoning_model = params.model in REASONING_EFFORT_MODELS
+    model_manager = hass.data.get(DOMAIN, {}).get("model_manager")
+    reasoning_models = model_manager.reasoning_effort_models if model_manager else []
+    is_reasoning_model = params.model in reasoning_models
     if params.reasoning_effort is not None and is_reasoning_model:
         args["reasoning_effort"] = params.reasoning_effort
 

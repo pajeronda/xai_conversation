@@ -273,7 +273,10 @@ async def handle_response_not_found_error(
             LOGGER.debug("[xai] memory cleared: key=%s", conv_key)
         except Exception as clear_err:
             LOGGER.warning(
-                "[xai] clear memory failed: key=%s err=%s", conv_key, clear_err
+                "[xai] clear memory failed: key=%s err=%s",
+                conv_key,
+                clear_err,
+                exc_info=True,
             )
 
     return True  # Signal to retry
