@@ -797,11 +797,15 @@ def assemble_chat_args(
         args["temperature"] = params.temperature
     if params.top_p is not None:
         args["top_p"] = params.top_p
-    # Only send reasoning_effort for models that explicitly support it
+    # Only send reasoning_effort for models that explicitly support it and when value is not 'none'
     model_manager = hass.data.get(DOMAIN, {}).get("model_manager")
     reasoning_models = model_manager.reasoning_effort_models if model_manager else []
     is_reasoning_model = params.model in reasoning_models
-    if params.reasoning_effort is not None and is_reasoning_model:
+    if (
+        params.reasoning_effort is not None
+        and params.reasoning_effort != "none"
+        and is_reasoning_model
+    ):
         args["reasoning_effort"] = params.reasoning_effort
 
     # Safety: ensure presence_penalty, frequency_penalty and stop are NOT sent for reasoning models
