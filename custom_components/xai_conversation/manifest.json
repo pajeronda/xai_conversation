@@ -24,8 +24,8 @@
   "issue_tracker": "https://github.com/pajeronda/xai_conversation/issues",
   "quality_scale": "bronze",
   "requirements": [
-    "xai_sdk>=1.6.0"
+    "xai_sdk>=1.21.0"
   ],
   "single_config_entry": true,
-  "version": "3.4.1"
+  "version": "4.0.0"
 }

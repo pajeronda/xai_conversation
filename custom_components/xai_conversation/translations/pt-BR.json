@@ -38,12 +38,14 @@
   },
   "options": {
     "error": {
-      "invalid_yaml": "Configuração YAML inválida. Verifique a sintaxe e os campos obrigatórios."
+      "invalid_yaml": "Configuração YAML inválida. Verifique a sintaxe e os campos obrigatórios.",
+      "invalid_tts_replacements": "Enter a valid YAML mapping of phrases to pronunciations.",
+      "invalid_stt_keyterms": "Enter no more than 100 keyterms, each up to 50 characters."
     },
     "step": {
       "init": {
         "title": "Configuração Global do xAI",
-        "description": "Configure os parâmetros da memória para usuários e dispositivos, além de configurar as ferramentas. A integração detecta se o pedido foi iniciado através do painel (smartphone/tablet/PC) ou através das caixinhas de voz (Assistentes via Satélites Voice) ajustando como ele grava as conversas na memória.",
+        "description": "Configure memory, extended tools, and default voice processing options. Voice and language choices remain available in Home Assistant Assist.",
         "data": {
           "api_key": "Chave de API",
           "api_host": "Endpoint da API",
@@ -52,7 +54,14 @@
           "memory_user_ttl_hours": "Memória do usuário TTL (horas)",
           "memory_device_ttl_hours": "Memória do dispositivo TTL (horas)",
           "memory_remote_delete": "Excluir dos servidores xAI na limpeza",
-          "memory_cleanup_interval_hours": "Intervalo de limpeza da memória (horas)"
+          "memory_cleanup_interval_hours": "Intervalo de limpeza da memória (horas)",
+          "tts_default_speed": "TTS default speech speed",
+          "tts_text_normalization": "Normalize TTS text",
+          "tts_replace": "TTS pronunciation replacements (YAML)",
+          "tts_optimize_streaming_latency": "TTS streaming latency optimization",
+          "stt_keyterms": "STT keyterms (one per line)",
+          "stt_filler_words": "Include filler words in STT",
+          "stt_vad_threshold": "STT voice detection threshold"
         },
         "data_description": {
           "api_key": "Sua chave de API do xAI (começa com 'xai-')",
@@ -62,7 +71,14 @@
           "memory_user_ttl_hours": "Expiração das conversas passadas pelas interações via app ou navegador web. Padrão: 672 horas (28 dias)",
           "memory_device_ttl_hours": "Tempo máximo armazenado de suas conversas captadas pelo microfone de caixa de automação inteligente em sua casa. Padrão: 672 horas (28 dias)",
           "memory_remote_delete": "Se marcada a caixa, ele exigirá permissão para limpar as conversas lá na base remota dos bancos de dados salvos através API xAI.",
-          "memory_cleanup_interval_hours": "Agendar intervalo de dias que as limpezas acima atuarão. Padrão: 24 horas"
+          "memory_cleanup_interval_hours": "Agendar intervalo de dias que as limpezas acima atuarão. Padrão: 24 horas",
+          "tts_default_speed": "Speech rate from 0.7 (slower) to 1.5 (faster). Default: 1.0. A value set in the Assist request takes precedence.",
+          "tts_text_normalization": "Ask xAI to normalize numbers, abbreviations, and symbols before speaking. Default: off.",
+          "tts_replace": "Optional YAML mapping from written phrases to pronunciations, for example: nginx: \"engine x\". Leave blank to disable.",
+          "tts_optimize_streaming_latency": "0 maximizes quality; 1 reduces initial audio delay; 2 reduces it further with a possible quality tradeoff. Applies to streaming TTS.",
+          "stt_keyterms": "Optional terms that xAI should recognize accurately, one per line (up to 100 terms, 50 characters each).",
+          "stt_filler_words": "Include spoken fillers such as “um” and “uh”. Default: off.",
+          "stt_vad_threshold": "Speech detection threshold from 0.0 to 1.0. Lower values can help with quiet or noisy audio; default: 0.5."
         }
       }
     }
@@ -148,6 +164,43 @@
       },
       "abort": {
         "reconfigure_successful": "Sensor Reconfigurado Com Sucesso!"
+      }
+    },
+    "voice": {
+      "initiate_flow": {"user": "Adicionar serviços de voz"},
+      "entry_type": "voice",
+      "step": {
+        "init": {
+          "title": "Serviços de voz xAI",
+          "data": {
+            "name": "Nome",
+            "tts_default_speed": "Velocidade de fala padrão do TTS",
+            "tts_text_normalization": "Normalizar texto do TTS",
+            "tts_replace": "Substituições de pronúncia do TTS (YAML)",
+            "tts_optimize_streaming_latency": "Otimização da latência do TTS em streaming",
+            "stt_keyterms": "Termos-chave do STT (um por linha)",
+            "stt_filler_words": "Incluir palavras de preenchimento no STT",
+            "stt_vad_threshold": "Limite de detecção de voz do STT"
+          },
+          "data_description": {
+            "name": "Nome dos serviços compartilhados de TTS/STT.",
+            "tts_default_speed": "Velocidade da fala de 0,7 (mais lenta) a 1,5 (mais rápida). Padrão: 1,0. O valor da solicitação do Assist tem prioridade.",
+            "tts_text_normalization": "Solicita ao xAI que normalize números, abreviações e símbolos antes da leitura. Desativado por padrão.",
+            "tts_replace": "Mapeamento YAML opcional entre expressões escritas e pronúncias, por exemplo: nginx: \"engine x\". Deixe em branco para desativar.",
+            "tts_optimize_streaming_latency": "0 prioriza a qualidade; 1 reduz o atraso inicial do áudio; 2 reduz ainda mais, com possível perda de qualidade. Aplica-se ao TTS em streaming.",
+            "stt_keyterms": "Termos opcionais que o xAI deve reconhecer com precisão, um por linha (até 100 termos, com no máximo 50 caracteres cada).",
+            "stt_filler_words": "Inclui palavras de preenchimento faladas, como “ahn”. Desativado por padrão.",
+            "stt_vad_threshold": "Limite de detecção de voz de 0,0 a 1,0. Valores menores podem ajudar com voz baixa ou ruído; padrão: 0,5."
+          }
+        }
+      },
+      "error": {
+        "invalid_tts_replacements": "Informe um mapeamento YAML válido de expressões para pronúncias.",
+        "invalid_stt_keyterms": "Informe no máximo 100 termos-chave, com até 50 caracteres cada."
+      },
+      "abort": {
+        "already_configured": "Os serviços de voz compartilhados já estão configurados.",
+        "no_options": "Não há configurações separadas para esta entrada de voz."
       }
     },
     "ai_task": {

@@ -77,6 +77,20 @@ Grok acts as an advanced **ASR/NLU orchestrator**, providing three distinct ways
 > * Switching between these modes starts a new conversation with a separate history.
 > * The configuration page may automatically reload when toggling certain options (like *Operational Modes*, *Zero Data Retention*, or *Memory Settings*) to correctly apply internal logic and dynamic fields. This is expected behavior.
 
+## 🎙️ Voice Services
+
+The integration can provide **speech-to-text (STT)** and **text-to-speech (TTS)** services for Home Assistant Assist. Add the **Voice services** subentry from the integration to create both services.
+
+### Speech-to-Text (STT)
+
+Use xAI Voice to transcribe Assist audio. The provider accepts mono 16-bit PCM or Opus audio in WAV or OGG containers. You can configure recognition keyterms, whether to include spoken filler words, and the voice activity detection threshold.
+
+### Text-to-Speech (TTS)
+
+Generate speech with xAI voices, including account-specific voices when available. TTS supports streaming playback and options for voice, speech speed, text normalization, and pronunciation replacements.
+
+Voice settings are shared by the STT and TTS services. The API key and endpoint configured for this integration are used for voice requests; your xAI account must have access to the Voice API. Voice API usage is billed separately; see the [xAI Voice API documentation and pricing](https://docs.x.ai/developers/model-capabilities/audio/voice).
+
 
 ## 🔧 Extra Tools
 
@@ -179,16 +193,21 @@ data:
 
 ---
 
-# ⚠️ Deprecation Notice: Grok Code Fast
-The **Grok Code Fast** service and the associated card are now **unsupported** (available up to release v2.2.1).
+## 🧩 More integrations
 
-We recommend moving to the new and much more powerful **AI Code Task** integration:
+### AI Code Task
+
+Generate and edit Home Assistant configuration and code from a Lovelace card with the [AI Code Task](https://github.com/pajeronda/ai_code_task) integration.
 
 [![GitHub](https://img.shields.io/badge/GitHub-Pajeronda%2FAI_Code_Task-blue)](https://github.com/pajeronda/ai_code_task)
 
 [![Install via your HACS instance.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Pajeronda&repository=ai_code_task&category=integration)
 
-**AI Code Task** is an agnostic simple IDE provider in a Lovelace card for code generation. It provides a superior workflow for modifying and generating YAML, Jinja2 templates, Python scripts, and more with an integrated pro editor.
+### Microsoft Text-to-Speech
+
+Use [Microsoft Text-to-Speech for Home Assistant](https://github.com/pajeronda/microsoft) as a separate Azure Speech provider for neural voices, streaming synthesis, and SSML. It requires an Azure Speech resource key and region. Azure's Free (F0) tier currently includes up to **500,000 neural TTS characters per month**, subject to Microsoft's quotas and pricing terms; see [Azure Speech pricing](https://azure.microsoft.com/pricing/details/speech/).
+
+[![Install Microsoft Text-to-Speech via HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Pajeronda&repository=microsoft&category=integration)
 
 # 🤝 Contributing & Support
 - 🐛 **Bugs**: [GitHub Issues](https://github.com/pajeronda/xai_conversation/issues)

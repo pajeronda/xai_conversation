@@ -463,34 +463,30 @@ async def async_log_completion(
                     memory.async_save_encrypted_blob(conv_key, zdr_blob)
                 )
 
-        # Build async tasks for parallel execution
-        tasks = []
-
-        # Task 1: Save response ID to conversation memory
+        # Save conversation state before returning to Home Assistant. The in-memory
+        # response ID and prompt hash are needed by the very next Assist turn; only
+        # the periodic flush to disk remains deferred.
         if response_id and conv_key and service_type == "conversation":
+            try:
+                memory = hass.data[DOMAIN]["conversation_memory"]
+                await memory.async_save_response(
+                    conv_key,
+                    response_id,
+                    store_messages,
+                    prompt_hash=options.prompt_hash if options else None,
+                )
+                LOGGER.debug(
+                    "[gateway] memory_save: mode=%s key=%s id=%s store=%s",
+                    mode,
+                    conv_key[:8],
+                    response_id[:8],
+                    store_messages,
+                )
+            except Exception as err:
+                LOGGER.error("Failed to store response_id: %s", err)
 
-            async def _save_response_id():
-                try:
-                    memory = hass.data[DOMAIN]["conversation_memory"]
-                    await memory.async_save_response(
-                        conv_key,
-                        response_id,
-                        store_messages,
-                        prompt_hash=options.prompt_hash if options else None,
-                    )
-                    LOGGER.debug(
-                        "[gateway] memory_save: mode=%s key=%s id=%s store=%s",
-                        mode,
-                        conv_key[:8],
-                        response_id[:8],
-                        store_messages,
-                    )
-                except Exception as err:
-                    LOGGER.error("Failed to store response_id: %s", err)
-
-            tasks.append(_save_response_id())
-
-        # Task 2: Update token stats (always)
+        # Token stats can still be updated asynchronously.
+        tasks = []
         if usage:
 
             async def _update_token_stats():

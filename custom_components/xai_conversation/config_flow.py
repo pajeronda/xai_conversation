@@ -7,6 +7,7 @@ from typing import Any
 
 # Third-party imports
 import voluptuous as vol
+import yaml
 
 from homeassistant.config_entries import (
     ConfigEntry,
@@ -28,6 +29,9 @@ from .const import (
     # Configuration keys
     CONF_ALLOW_SMART_HOME_CONTROL,
     CONF_API_HOST,
+    CONF_STT_FILLER_WORDS,
+    CONF_STT_KEYTERMS,
+    CONF_STT_VAD_THRESHOLD,
     CONF_ASSISTANT_NAME,
     CONF_CHAT_MODEL,
     CONF_EXTENDED_TOOLS_YAML,
@@ -53,6 +57,10 @@ from .const import (
     CONF_SHOW_CITATIONS,
     CONF_STORE_MESSAGES,
     CONF_TEMPERATURE,
+    CONF_TTS_DEFAULT_SPEED,
+    CONF_TTS_OPTIMIZE_STREAMING_LATENCY,
+    CONF_TTS_REPLACE,
+    CONF_TTS_TEXT_NORMALIZATION,
     CONF_TOKENS_PER_MILLION,
     CONF_TOP_P,
     CONF_USE_EXTENDED_TOOLS,
@@ -67,6 +75,14 @@ from .const import (
     DEFAULT_CONVERSATION_NAME,
     DEFAULT_MANUFACTURER,
     DEFAULT_SENSORS_NAME,
+    DEFAULT_VOICE_NAME,
+    DEFAULT_STT_FILLER_WORDS,
+    DEFAULT_STT_KEYTERMS,
+    DEFAULT_STT_VAD_THRESHOLD,
+    DEFAULT_TTS_OPTIMIZE_STREAMING_LATENCY,
+    DEFAULT_TTS_REPLACE,
+    DEFAULT_TTS_SPEED,
+    DEFAULT_TTS_TEXT_NORMALIZATION,
     # Other constants
     DOMAIN,
     LOGGER,
@@ -164,6 +180,11 @@ def _number_box(
             unit_of_measurement=unit,
         )
     return selector.NumberSelector(config)
+
+
+def _multiline_text_selector() -> selector.TextSelector:
+    """Multiline input for lists and YAML mappings."""
+    return selector.TextSelector(selector.TextSelectorConfig(multiline=True))
 
 
 # Commonly used selectors (immutable, safe to reuse)
@@ -336,6 +357,12 @@ class XAIConfigFlow(ConfigFlow, domain=DOMAIN):
                     "title": DEFAULT_SENSORS_NAME,
                     "unique_id": f"{DOMAIN}:sensors",
                 },
+                {
+                    "subentry_type": "voice",
+                    "data": {},
+                    "title": DEFAULT_VOICE_NAME,
+                    "unique_id": f"{DOMAIN}:voice",
+                },
             ],
         )
 
@@ -357,6 +384,7 @@ class XAIConfigFlow(ConfigFlow, domain=DOMAIN):
             "conversation": XAIConversationOptionsFlow,
             "ai_task": XAIAITaskOptionsFlow,
             "sensors": XAISensorsOptionsFlow,
+            "voice": XAIVoiceOptionsFlow,
         }
 
 
@@ -585,6 +613,121 @@ class XAIOptionsFlowBase(ConfigSubentryFlow):
             model_manager.reasoning_effort_models if model_manager else []
         )
         return (model in reasoning_models) != (new_model in reasoning_models)
+
+
+class XAIVoiceOptionsFlow(XAIOptionsFlowBase):
+    """Manage TTS and STT settings for the shared voice services."""
+
+    def _get_default_options(self) -> dict[str, Any]:
+        """Return default voice settings."""
+        return {
+            CONF_TTS_DEFAULT_SPEED: DEFAULT_TTS_SPEED,
+            CONF_TTS_TEXT_NORMALIZATION: DEFAULT_TTS_TEXT_NORMALIZATION,
+            CONF_TTS_REPLACE: DEFAULT_TTS_REPLACE.copy(),
+            CONF_TTS_OPTIMIZE_STREAMING_LATENCY: DEFAULT_TTS_OPTIMIZE_STREAMING_LATENCY,
+            CONF_STT_KEYTERMS: DEFAULT_STT_KEYTERMS.copy(),
+            CONF_STT_FILLER_WORDS: DEFAULT_STT_FILLER_WORDS,
+            CONF_STT_VAD_THRESHOLD: DEFAULT_STT_VAD_THRESHOLD,
+        }
+
+    def _get_default_name(self) -> str:
+        """Return the shared voice services name."""
+        return DEFAULT_VOICE_NAME
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """Configure the shared TTS/STT defaults."""
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            raw_keyterms = user_input.get(CONF_STT_KEYTERMS, "")
+            keyterms = [
+                line.strip() for line in raw_keyterms.splitlines() if line.strip()
+            ]
+            if len(keyterms) > 100 or any(len(term) > 50 for term in keyterms):
+                errors[CONF_STT_KEYTERMS] = "invalid_stt_keyterms"
+            else:
+                user_input[CONF_STT_KEYTERMS] = keyterms
+
+            raw_replacements = user_input.get(CONF_TTS_REPLACE, "")
+            try:
+                replacements = (
+                    yaml.safe_load(raw_replacements) if raw_replacements else {}
+                )
+            except yaml.YAMLError:
+                replacements = None
+            if (
+                not isinstance(replacements, dict)
+                or len(replacements) > 200
+                or any(
+                    not isinstance(key, str)
+                    or not isinstance(value, str)
+                    or not key
+                    or len(key) > 100
+                    or len(value) > 128
+                    for key, value in replacements.items()
+                )
+            ):
+                errors[CONF_TTS_REPLACE] = "invalid_tts_replacements"
+            else:
+                user_input[CONF_TTS_REPLACE] = replacements
+
+            if not errors:
+                return await self._async_save(user_input)
+
+        replacements = self.options.get(CONF_TTS_REPLACE, DEFAULT_TTS_REPLACE)
+        replacements_text = yaml.safe_dump(
+            replacements if isinstance(replacements, dict) else {},
+            sort_keys=False,
+            allow_unicode=True,
+        ).strip()
+        keyterms = self.options.get(CONF_STT_KEYTERMS, DEFAULT_STT_KEYTERMS)
+        keyterms_text = "\n".join(keyterms) if isinstance(keyterms, list) else ""
+
+        schema = self._get_base_schema()
+        schema.update(
+            {
+                vol.Optional(
+                    CONF_TTS_DEFAULT_SPEED,
+                    default=self.options.get(CONF_TTS_DEFAULT_SPEED, DEFAULT_TTS_SPEED),
+                ): _number_box(0.7, 1.5, 0.1),
+                vol.Optional(
+                    CONF_TTS_TEXT_NORMALIZATION,
+                    default=self.options.get(
+                        CONF_TTS_TEXT_NORMALIZATION,
+                        DEFAULT_TTS_TEXT_NORMALIZATION,
+                    ),
+                ): BOOL_SELECTOR,
+                vol.Optional(
+                    CONF_TTS_REPLACE, default=replacements_text
+                ): _multiline_text_selector(),
+                vol.Optional(
+                    CONF_TTS_OPTIMIZE_STREAMING_LATENCY,
+                    default=self.options.get(
+                        CONF_TTS_OPTIMIZE_STREAMING_LATENCY,
+                        DEFAULT_TTS_OPTIMIZE_STREAMING_LATENCY,
+                    ),
+                ): _number_box(0, 2, 1),
+                vol.Optional(
+                    CONF_STT_KEYTERMS, default=keyterms_text
+                ): _multiline_text_selector(),
+                vol.Optional(
+                    CONF_STT_FILLER_WORDS,
+                    default=self.options.get(
+                        CONF_STT_FILLER_WORDS, DEFAULT_STT_FILLER_WORDS
+                    ),
+                ): BOOL_SELECTOR,
+                vol.Optional(
+                    CONF_STT_VAD_THRESHOLD,
+                    default=self.options.get(
+                        CONF_STT_VAD_THRESHOLD, DEFAULT_STT_VAD_THRESHOLD
+                    ),
+                ): _number_box(0, 1, 0.05),
+            }
+        )
+        return self.async_show_form(
+            step_id="init", data_schema=vol.Schema(schema), errors=errors
+        )
 
 
 class XAICoreLLMOptionsFlow(XAIOptionsFlowBase):

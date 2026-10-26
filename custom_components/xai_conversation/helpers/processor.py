@@ -129,6 +129,7 @@ class BaseConversationProcessor:
                     "chat": chat,
                     "conv_key": conv_key,
                     "response_holder": response_holder,
+                    "options": params,
                 }
 
             except Exception as err:

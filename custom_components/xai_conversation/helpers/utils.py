@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
@@ -361,9 +362,10 @@ async def prepare_history_payload(
                 if hasattr(content, attr):
                     tool_result = getattr(content, attr)
                     break
+            tool_result = getattr(tool_result, "data", tool_result)
             msg = {
                 "role": "tool",
-                "content": str(tool_result),
+                "content": json.dumps(tool_result, ensure_ascii=False, default=str),
                 "tool_call_id": content.tool_call_id,
             }
 

@@ -218,7 +218,10 @@ class XAIModelManager:
                     # 4. Models containing 'reasoning' or 'thinking'
                     # 5. EXCLUDE models containing '-non-reasoning' or 'grok-build' (grok-build handles build internally and rejects reasoningEffort parameter)
                     name_lower = model_name.lower()
-                    if "-non-reasoning" not in name_lower and "grok-build" not in name_lower:
+                    if (
+                        "-non-reasoning" not in name_lower
+                        and "grok-build" not in name_lower
+                    ):
                         sdk_supports_reasoning = getattr(
                             model_data, "supports_reasoning", False
                         ) or getattr(model_data, "reasoning", False)

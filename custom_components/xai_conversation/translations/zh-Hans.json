@@ -38,12 +38,14 @@
   },
   "options": {
     "error": {
-      "invalid_yaml": "无效的 YAML 配置。请检查语法和必需字段。"
+      "invalid_yaml": "无效的 YAML 配置。请检查语法和必需字段。",
+      "invalid_tts_replacements": "Enter a valid YAML mapping of phrases to pronunciations.",
+      "invalid_stt_keyterms": "Enter no more than 100 keyterms, each up to 50 characters."
     },
     "step": {
       "init": {
         "title": "xAI 配置",
-        "description": "配置用户和语音助手设备的内存参数，以及扩展工具。",
+        "description": "Configure memory, extended tools, and default voice processing options. Voice and language choices remain available in Home Assistant Assist.",
         "data": {
           "api_key": "API 密钥",
           "api_host": "API 端点",
@@ -52,7 +54,14 @@
           "memory_user_ttl_hours": "用户内存持续时间（小时）",
           "memory_device_ttl_hours": "设备内存持续时间（小时）",
           "memory_cleanup_interval_hours": "内存清理间隔（小时）",
-          "memory_remote_delete": "清理时从 xAI 服务器删除"
+          "memory_remote_delete": "清理时从 xAI 服务器删除",
+          "tts_default_speed": "TTS default speech speed",
+          "tts_text_normalization": "Normalize TTS text",
+          "tts_replace": "TTS pronunciation replacements (YAML)",
+          "tts_optimize_streaming_latency": "TTS streaming latency optimization",
+          "stt_keyterms": "STT keyterms (one per line)",
+          "stt_filler_words": "Include filler words in STT",
+          "stt_vad_threshold": "STT voice detection threshold"
         },
         "data_description": {
           "api_key": "您的 xAI API 密钥（以 'xai-' 开头）。",
@@ -62,7 +71,14 @@
           "memory_user_ttl_hours": "用户对话的持续时间（智能手机、PC、平板电脑）。默认：672 小时（30 天）",
           "memory_device_ttl_hours": "设备对话的持续时间（语音助手卫星）。默认：672 小时（7 天）",
           "memory_cleanup_interval_hours": "清理过期内存条目的频率。默认：24 小时",
-          "memory_remote_delete": "如果启用，每当清理本地消息（定期或手动）时，它们也将从 xAI 的远程服务器中永久删除。"
+          "memory_remote_delete": "如果启用，每当清理本地消息（定期或手动）时，它们也将从 xAI 的远程服务器中永久删除。",
+          "tts_default_speed": "Speech rate from 0.7 (slower) to 1.5 (faster). Default: 1.0. A value set in the Assist request takes precedence.",
+          "tts_text_normalization": "Ask xAI to normalize numbers, abbreviations, and symbols before speaking. Default: off.",
+          "tts_replace": "Optional YAML mapping from written phrases to pronunciations, for example: nginx: \"engine x\". Leave blank to disable.",
+          "tts_optimize_streaming_latency": "0 maximizes quality; 1 reduces initial audio delay; 2 reduces it further with a possible quality tradeoff. Applies to streaming TTS.",
+          "stt_keyterms": "Optional terms that xAI should recognize accurately, one per line (up to 100 terms, 50 characters each).",
+          "stt_filler_words": "Include spoken fillers such as “um” and “uh”. Default: off.",
+          "stt_vad_threshold": "Speech detection threshold from 0.0 to 1.0. Lower values can help with quiet or noisy audio; default: 0.5."
         }
       }
     }
@@ -148,6 +164,43 @@
       },
       "abort": {
         "reconfigure_successful": "配置更新成功！"
+      }
+    },
+    "voice": {
+      "initiate_flow": {"user": "添加语音服务"},
+      "entry_type": "voice",
+      "step": {
+        "init": {
+          "title": "xAI 语音服务",
+          "data": {
+            "name": "名称",
+            "tts_default_speed": "TTS 默认语速",
+            "tts_text_normalization": "规范化 TTS 文本",
+            "tts_replace": "TTS 发音替换（YAML）",
+            "tts_optimize_streaming_latency": "优化流式 TTS 延迟",
+            "stt_keyterms": "STT 关键词（每行一个）",
+            "stt_filler_words": "在 STT 中包含填充词",
+            "stt_vad_threshold": "STT 语音检测阈值"
+          },
+          "data_description": {
+            "name": "共享 TTS/STT 服务的名称。",
+            "tts_default_speed": "语速范围为 0.7（较慢）到 1.5（较快）。默认值：1.0。Assist 请求中的值优先。",
+            "tts_text_normalization": "让 xAI 在朗读前规范化数字、缩写和符号。默认关闭。",
+            "tts_replace": "可选的 YAML 映射，用于将书面表达替换为指定读音，例如：nginx: \"engine x\"。留空则禁用。",
+            "tts_optimize_streaming_latency": "0 优先保证音质；1 减少音频开始延迟；2 进一步降低延迟，但可能影响音质。仅适用于流式 TTS。",
+            "stt_keyterms": "可选词语，帮助 xAI 准确识别，每行一个（最多 100 个，每个不超过 50 个字符）。",
+            "stt_filler_words": "包含口语填充词，例如“嗯”。默认关闭。",
+            "stt_vad_threshold": "语音检测阈值范围为 0.0 到 1.0。较低的值可能有助于识别较轻的语音或嘈杂环境；默认值：0.5。"
+          }
+        }
+      },
+      "error": {
+        "invalid_tts_replacements": "请输入有效的 YAML 表达式与发音映射。",
+        "invalid_stt_keyterms": "关键词最多 100 个，每个不超过 50 个字符。"
+      },
+      "abort": {
+        "already_configured": "共享语音服务已配置。",
+        "no_options": "此语音条目没有单独的设置项。"
       }
     },
     "ai_task": {

@@ -4,12 +4,14 @@ from __future__ import annotations
 
 # Standard library imports
 import asyncio
+import json
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 # Home Assistant imports
 from homeassistant.components import conversation as ha_conversation
+from homeassistant.helpers import llm as ha_llm
 
 # Local imports
 from .const import (
@@ -92,6 +94,7 @@ class XAIToolsProcessor(BaseConversationProcessor):
 
         last_chat = None
         last_conv_key = None
+        failed_tool_calls: set[str] = set()
         for i in range(max_iterations):
             is_primary = i == 0
             LOGGER.debug("[tools] turn %d/%d", i + 1, max_iterations)
@@ -113,6 +116,11 @@ class XAIToolsProcessor(BaseConversationProcessor):
                 chat = results["chat"]
                 last_chat = chat
                 last_conv_key = results.get("conv_key")
+                # Keep the resolved mode and prompt hash with the reused chat/key.
+                # In a Pipeline fallback, the original options still carry the
+                # Pipeline hash; saving a later Tools response with them would
+                # associate the Tools response ID with the wrong prompt hash.
+                params = results.get("options", params)
                 response_holder = results.get("response_holder", {})
 
                 if "error" in results:
@@ -136,6 +144,26 @@ class XAIToolsProcessor(BaseConversationProcessor):
                 LOGGER.debug("[tools] complete: turns=%d", i + 1)
                 break
 
+            repeated_failed_call = next(
+                (
+                    tc
+                    for tc in response.tool_calls
+                    if self._tool_call_signature(tc) in failed_tool_calls
+                ),
+                None,
+            )
+            if repeated_failed_call:
+                LOGGER.warning(
+                    "[tools] stopping after repeated failed call to '%s'",
+                    repeated_failed_call.function.name,
+                )
+                await self._entity._add_error_response_and_continue(
+                    user_input,
+                    chat_log,
+                    "A tool call failed repeatedly, so I stopped to avoid retrying it.",
+                )
+                break
+
             # --- ITERATION LIMIT CHECK ---
             if i + 1 >= max_iterations:
                 LOGGER.warning("[tools] max iterations reached (%d)", max_iterations)
@@ -156,11 +184,25 @@ class XAIToolsProcessor(BaseConversationProcessor):
 
             if tool_results:
                 for result in tool_results:
-                    tool_output_content = (
-                        str(result.tool_result)
-                        if not result.is_error
-                        else f"Error: {result.tool_result}"
-                    )
+                    if result.is_error:
+                        failed_tool_calls.add(
+                            self._tool_call_signature_from_values(
+                                result.tool_name,
+                                next(
+                                    (
+                                        tc.function.arguments
+                                        for tc in response.tool_calls
+                                        if getattr(tc, "id", "") == result.tool_call_id
+                                    ),
+                                    "",
+                                ),
+                            )
+                        )
+                        tool_output_content = (
+                            f"Error: {self._json_tool_result(result.tool_result)}"
+                        )
+                    else:
+                        tool_output_content = self._json_tool_result(result.tool_result)
                     chat.append(
                         translate_tool_message(
                             tool_output_content, tool_call_id=result.tool_call_id
@@ -169,9 +211,10 @@ class XAIToolsProcessor(BaseConversationProcessor):
                     # Sync tool result to chat_log for history consistency
                     chat_log.content.append(
                         self._build_tool_result_content(
-                            tool_output_content,
+                            result.tool_result,
                             result.tool_call_id,
                             result.tool_name,
+                            result.is_error,
                         )
                     )
             else:
@@ -259,8 +302,29 @@ class XAIToolsProcessor(BaseConversationProcessor):
 
         return tool_results
 
+    @staticmethod
+    def _json_tool_result(result: Any) -> str:
+        """Serialize a tool result for the xAI tool message."""
+        data = getattr(result, "data", result)
+        return json.dumps(data, ensure_ascii=False, default=str)
+
+    @staticmethod
+    def _tool_call_signature_from_values(tool_name: str, arguments: Any) -> str:
+        """Build a stable identity for a tool call across model turns."""
+        try:
+            normalized = json.dumps(arguments, sort_keys=True, default=str)
+        except (TypeError, ValueError):
+            normalized = str(arguments)
+        return f"{tool_name}:{normalized}"
+
+    @classmethod
+    def _tool_call_signature(cls, tool_call: Any) -> str:
+        return cls._tool_call_signature_from_values(
+            tool_call.function.name, tool_call.function.arguments
+        )
+
     def _build_tool_result_content(
-        self, content: str, tool_call_id: str, tool_name: str
+        self, content: Any, tool_call_id: str, tool_name: str, is_error: bool = False
     ) -> ha_conversation.ToolResultContent:
         """Build ToolResultContent with compatibility across HA versions."""
         fields = getattr(ha_conversation.ToolResultContent, "__dataclass_fields__", {})
@@ -274,8 +338,14 @@ class XAIToolsProcessor(BaseConversationProcessor):
             "tool_call_id": tool_call_id,
             "tool_name": tool_name,
         }
-        if result_field:
-            payload[result_field] = content
+        if result_field == "result":
+            payload[result_field] = (
+                content
+                if isinstance(content, ha_llm.ToolResult)
+                else ha_llm.ToolResult(data=content, error=is_error)
+            )
+        elif result_field:
+            payload[result_field] = getattr(content, "data", content)
         else:
             # Fallback for non-dataclass implementations
             try:

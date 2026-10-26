@@ -6,6 +6,11 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers.device_registry import async_get as async_get_device_registry
+from homeassistant.helpers.entity_registry import (
+    async_entries_for_device as async_entity_entries_for_device,
+    async_get as async_get_entity_registry,
+)
 from homeassistant.helpers.typing import ConfigType
 
 import shutil
@@ -20,6 +25,8 @@ PLATFORMS = (
     Platform.AI_TASK,
     Platform.CONVERSATION,
     Platform.SENSOR,
+    Platform.STT,
+    Platform.TTS,
 )
 
 
@@ -91,7 +98,45 @@ async def async_setup_entry(hass: HomeAssistant, entry: XAIConfigEntry) -> bool:
     # Set up platforms
     # Refresh entry to ensure any subentry modifications during setup are reflected
     updated_entry = hass.config_entries.async_get_entry(entry.entry_id) or entry
+    voice_subentry = next(
+        (
+            subentry
+            for subentry in updated_entry.subentries.values()
+            if subentry.subentry_type == "voice"
+        ),
+        None,
+    )
+    if voice_subentry:
+        device_registry = async_get_device_registry(hass)
+        voice_device = device_registry.async_get_device_by_identifier(
+            (DOMAIN, entry.entry_id), entry.entry_id
+        )
+        if voice_device and None in voice_device.config_entries_subentries.get(
+            entry.entry_id, set()
+        ):
+            device_registry.async_update_device(
+                voice_device.id,
+                add_config_entry_id=entry.entry_id,
+                add_config_subentry_id=voice_subentry.subentry_id,
+                remove_config_entry_id=entry.entry_id,
+                remove_config_subentry_id=None,
+            )
+            LOGGER.debug(
+                "Associated the existing xAI voice device with its voice subentry"
+            )
     await hass.config_entries.async_forward_entry_setups(updated_entry, PLATFORMS)
+
+    # Older versions put TTS and STT on one shared device. Remove that device
+    # after the entities have moved to their separate service devices.
+    device_registry = async_get_device_registry(hass)
+    legacy_voice_device = device_registry.async_get_device_by_identifier(
+        (DOMAIN, entry.entry_id), entry.entry_id
+    )
+    if legacy_voice_device and not async_entity_entries_for_device(
+        async_get_entity_registry(hass), legacy_voice_device.id
+    ):
+        device_registry.async_remove_device(legacy_voice_device.id)
+        LOGGER.debug("Removed the obsolete combined xAI voice services device")
 
     # Register services
     register_services(hass, entry)

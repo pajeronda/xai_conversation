@@ -18,7 +18,6 @@ from homeassistant.core import Event
 from homeassistant.helpers import (
     device_registry as ha_device_registry,
     entity_registry as ha_entity_registry,
-    restore_state,
 )
 from homeassistant.helpers.event import async_track_time_interval
 
@@ -26,9 +25,17 @@ from .const import (
     CONF_MEMORY_CLEANUP_INTERVAL_HOURS,
     CONF_MEMORY_REMOTE_DELETE,
     CONF_PRICING_UPDATE_INTERVAL_HOURS,
+    CONF_STT_FILLER_WORDS,
+    CONF_STT_KEYTERMS,
+    CONF_STT_VAD_THRESHOLD,
+    CONF_TTS_DEFAULT_SPEED,
+    CONF_TTS_OPTIMIZE_STREAMING_LATENCY,
+    CONF_TTS_REPLACE,
+    CONF_TTS_TEXT_NORMALIZATION,
     DEFAULT_AI_TASK_NAME,
     DEFAULT_CONVERSATION_NAME,
     DEFAULT_SENSORS_NAME,
+    DEFAULT_VOICE_NAME,
     DOMAIN,
     LOGGER,
     MEMORY_DEFAULTS,
@@ -327,6 +334,7 @@ class XaiInitManager:
             "conversation",
             "ai_task",
             "sensors",
+            "voice",
         )
 
         for subentry_id, subentry in list(current_entry.subentries.items()):
@@ -545,6 +553,65 @@ class XaiInitManager:
             current_entry = self.hass.config_entries.async_get_entry(
                 self.entry.entry_id
             )
+            subentries = {se.subentry_type for se in current_entry.subentries.values()}
+
+        if "voice" not in subentries:
+            LOGGER.info("Configuring shared voice services subentry")
+            self.hass.config_entries.async_add_subentry(
+                current_entry,
+                ConfigSubentry(
+                    data=MappingProxyType({}),
+                    subentry_type="voice",
+                    title=DEFAULT_VOICE_NAME,
+                    unique_id=f"{DOMAIN}:voice",
+                ),
+            )
+
+        current_entry = self.hass.config_entries.async_get_entry(self.entry.entry_id)
+        if not current_entry:
+            return
+        voice_subentry = next(
+            (
+                subentry
+                for subentry in current_entry.subentries.values()
+                if subentry.subentry_type == "voice"
+            ),
+            None,
+        )
+        if voice_subentry:
+            voice_keys = (
+                CONF_TTS_DEFAULT_SPEED,
+                CONF_TTS_TEXT_NORMALIZATION,
+                CONF_TTS_REPLACE,
+                CONF_TTS_OPTIMIZE_STREAMING_LATENCY,
+                CONF_STT_KEYTERMS,
+                CONF_STT_FILLER_WORDS,
+                CONF_STT_VAD_THRESHOLD,
+            )
+            entry_data = dict(current_entry.data)
+            voice_data = dict(voice_subentry.data)
+            entry_data_changed = False
+            voice_data_changed = False
+            for key in voice_keys:
+                if key in entry_data:
+                    if key not in voice_data:
+                        voice_data[key] = entry_data[key]
+                        voice_data_changed = True
+                    entry_data.pop(key)
+                    entry_data_changed = True
+            if voice_data_changed:
+                self.hass.config_entries.async_update_subentry(
+                    current_entry, voice_subentry, data=voice_data
+                )
+            if entry_data_changed:
+                current_entry = self.hass.config_entries.async_get_entry(
+                    self.entry.entry_id
+                )
+                self.hass.config_entries.async_update_entry(
+                    current_entry, data=entry_data
+                )
+            if entry_data_changed or voice_data_changed:
+                LOGGER.info("Moved voice settings into the voice services subentry")
 
     def _setup_listeners(self) -> None:
         """Set up listeners and periodic tasks.
@@ -747,12 +814,8 @@ class XaiInitManager:
             if entity.config_entry_id in config_entry_ids
         ]
 
-        # Clean up restored state data
-        restore_data = restore_state.async_get(self.hass)
         for entity_id in entities_to_remove:
             self.hass.states.async_remove(entity_id)
-            if entity_id in restore_data.last_states:
-                del restore_data.last_states[entity_id]
             ent_reg.async_remove(entity_id)
 
         if entities_to_remove:

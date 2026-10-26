@@ -17,6 +17,7 @@ DEFAULT_MANUFACTURER = "xAI"
 DEFAULT_AI_TASK_NAME = "xAI Task"
 DEFAULT_CONVERSATION_NAME = "xAI Conversation"
 DEFAULT_SENSORS_NAME = "xAI Token Sensors"
+DEFAULT_VOICE_NAME = "xAI Voice Services"
 
 # ==============================================================================
 # SECTION 2: CONFIGURATION KEYS (CONF_*)
@@ -24,6 +25,20 @@ DEFAULT_SENSORS_NAME = "xAI Token Sensors"
 # 1. Main Credentials & Global Settings
 CONF_API_HOST = "api_host"
 CONF_TIMEOUT = "timeout"
+CONF_TTS_DEFAULT_SPEED = "tts_default_speed"
+CONF_TTS_TEXT_NORMALIZATION = "tts_text_normalization"
+CONF_TTS_REPLACE = "tts_replace"
+CONF_TTS_OPTIMIZE_STREAMING_LATENCY = "tts_optimize_streaming_latency"
+CONF_STT_KEYTERMS = "stt_keyterms"
+CONF_STT_FILLER_WORDS = "stt_filler_words"
+CONF_STT_VAD_THRESHOLD = "stt_vad_threshold"
+DEFAULT_TTS_SPEED = 1.0
+DEFAULT_TTS_TEXT_NORMALIZATION = False
+DEFAULT_TTS_REPLACE: dict[str, str] = {}
+DEFAULT_TTS_OPTIMIZE_STREAMING_LATENCY = 0
+DEFAULT_STT_KEYTERMS: list[str] = []
+DEFAULT_STT_FILLER_WORDS = False
+DEFAULT_STT_VAD_THRESHOLD = 0.5
 
 # 2. Model Selection
 CONF_CHAT_MODEL = "chat_model"

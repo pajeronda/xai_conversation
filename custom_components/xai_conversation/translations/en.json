@@ -38,12 +38,13 @@
   },
   "options": {
     "error": {
+      "invalid_yaml": "Invalid YAML configuration. Please check the syntax and required fields.",
       "invalid_yaml": "Invalid YAML configuration. Please check the syntax and required fields."
     },
     "step": {
       "init": {
         "title": "xAI Configuration",
-        "description": "Configure memory parameters for users and devices, and set up extended custom tools. The integration automatically detects if a request comes from a user (smartphone/PC/tablet) or a device (voice satellite) and applies the appropriate memory settings.",
+        "description": "Configure memory parameters and extended custom tools.",
         "data": {
           "api_key": "API Key",
           "api_host": "API Endpoint",
@@ -147,6 +148,45 @@
         }
       },
       "abort": {
+        "reconfigure_successful": "Configuration updated successfully!"
+      }
+    },
+    "voice": {
+      "initiate_flow": {
+        "user": "Add voice services"
+      },
+      "entry_type": "voice",
+      "step": {
+        "init": {
+          "title": "xAI Voice Services",
+          "data": {
+            "name": "Name",
+            "tts_default_speed": "TTS default speech speed",
+            "tts_text_normalization": "Normalize TTS text",
+            "tts_replace": "TTS pronunciation replacements (YAML)",
+            "tts_optimize_streaming_latency": "TTS streaming latency optimization",
+            "stt_keyterms": "STT keyterms (one per line)",
+            "stt_filler_words": "Include filler words in STT",
+            "stt_vad_threshold": "STT voice detection threshold"
+          },
+          "data_description": {
+            "name": "Name of the shared TTS/STT services.",
+            "tts_default_speed": "Speech rate from 0.7 (slower) to 1.5 (faster). Default: 1.0. A value set in the Assist request takes precedence.",
+            "tts_text_normalization": "Ask xAI to normalize numbers, abbreviations, and symbols before speaking. Default: off.",
+            "tts_replace": "Optional YAML mapping from written phrases to pronunciations, for example: nginx: \"engine x\". Leave blank to disable.",
+            "tts_optimize_streaming_latency": "0 maximizes quality; 1 reduces initial audio delay; 2 reduces it further with a possible quality tradeoff. Applies to streaming TTS.",
+            "stt_keyterms": "Optional terms that xAI should recognize accurately, one per line (up to 100 terms, 50 characters each).",
+            "stt_filler_words": "Include spoken fillers such as ‘um’ and ‘uh’. Default: off.",
+            "stt_vad_threshold": "Speech detection threshold from 0.0 to 1.0. Lower values can help with quiet or noisy audio; default: 0.5."
+          }
+        }
+      },
+      "error": {
+        "invalid_tts_replacements": "Enter a valid YAML mapping of phrases to pronunciations.",
+        "invalid_stt_keyterms": "Enter no more than 100 keyterms, each up to 50 characters."
+      },
+      "abort": {
+        "already_configured": "The shared voice services are already configured.",
         "reconfigure_successful": "Configuration updated successfully!"
       }
     },

@@ -43,7 +43,7 @@
     "step": {
       "init": {
         "title": "Configurazione xAI",
-        "description": "Configura i parametri di memoria per utenti e dispositivi, e imposta i tools personalizzati estesi. L'integrazione rileva automaticamente se una richiesta proviene da un utente (smartphone/PC/tablet) o da un dispositivo (satellite vocale) e applica le impostazioni di memoria appropriate.",
+        "description": "Configura i parametri della memoria e gli strumenti personalizzati estesi.",
         "data": {
           "api_key": "Chiave API",
           "api_host": "Endpoint API",
@@ -147,6 +147,45 @@
         }
       },
       "abort": {
+        "reconfigure_successful": "Configurazione aggiornata correttamente!"
+      }
+    },
+    "voice": {
+      "initiate_flow": {
+        "user": "Aggiungi servizi vocali"
+      },
+      "entry_type": "servizi vocali",
+      "step": {
+        "init": {
+          "title": "Servizi vocali xAI",
+          "data": {
+            "name": "Nome",
+            "tts_default_speed": "Velocità predefinita TTS",
+            "tts_text_normalization": "Normalizza il testo TTS",
+            "tts_replace": "Sostituzioni di pronuncia TTS (YAML)",
+            "tts_optimize_streaming_latency": "Ottimizzazione latenza streaming TTS",
+            "stt_keyterms": "Termini chiave STT (uno per riga)",
+            "stt_filler_words": "Includi intercalari nella trascrizione STT",
+            "stt_vad_threshold": "Soglia di rilevamento della voce STT"
+          },
+          "data_description": {
+            "name": "Nome dei servizi TTS/STT condivisi.",
+            "tts_default_speed": "Velocità da 0,7 (più lenta) a 1,5 (più rapida). Predefinita: 1,0. Un valore impostato nella richiesta Assist ha la precedenza.",
+            "tts_text_normalization": "Chiede a xAI di normalizzare numeri, abbreviazioni e simboli prima della sintesi. Predefinito: disattivato.",
+            "tts_replace": "Mappa YAML facoltativa tra frasi scritte e pronunce, per esempio: nginx: \"engine x\". Lascia vuoto per disattivare.",
+            "tts_optimize_streaming_latency": "0 privilegia la qualità; 1 riduce l’attesa iniziale; 2 la riduce ulteriormente con un possibile compromesso sulla qualità. Vale per lo streaming TTS.",
+            "stt_keyterms": "Termini facoltativi che xAI dovrebbe riconoscere con precisione, uno per riga (massimo 100 termini, 50 caratteri ciascuno).",
+            "stt_filler_words": "Include intercalari pronunciati come “ehm”. Predefinito: disattivato.",
+            "stt_vad_threshold": "Soglia da 0,0 a 1,0 per rilevare la voce. Valori inferiori possono aiutare con audio basso o rumoroso; predefinita: 0,5."
+          }
+        }
+      },
+      "error": {
+        "invalid_tts_replacements": "Inserisci una mappa YAML valida di frasi e pronunce.",
+        "invalid_stt_keyterms": "Inserisci al massimo 100 termini chiave, ciascuno di massimo 50 caratteri."
+      },
+      "abort": {
+        "already_configured": "I servizi vocali condivisi sono già configurati.",
         "reconfigure_successful": "Configurazione aggiornata correttamente!"
       }
     },

@@ -34,22 +34,41 @@ def _normalize_json_dict(data: Any) -> Any:
         return data
 
 
-def convert_ha_schema_to_xai(schema, tool_name: str = "unknown") -> dict:
+def convert_ha_schema_to_xai(schema, tool_name: str = "unknown") -> dict | None:
     """Convert HA schema to xAI function parameters format with robust voluptuous handling."""
     if not schema:
         return {"type": "object", "properties": {}, "required": []}
 
+    errors = []
+    converter = getattr(ha_llm, "convert", None)
+    if converter:
+        try:
+            return converter(schema, custom_serializer=ha_llm.selector_serializer)
+        except Exception as err:
+            errors.append(err)
+
+    # HA 2026.9+ uses probatio schemas and no longer exports llm.convert.
     try:
-        # Use the standard Home Assistant voluptuous to OpenAPI converter
-        # This is the same method used by the official OpenAI integration
-        result: dict[str, Any] = ha_llm.convert(
-            schema,
-            custom_serializer=ha_llm.selector_serializer,
-        )
-        return result
+        import probatio
+
+        return probatio.to_openapi(schema, custom_serializer=ha_llm.selector_serializer)
     except Exception as err:
-        LOGGER.warning("[ha-to-xai] schema convert failed '%s': %s", tool_name, err)
-        return {"type": "object", "properties": {}, "required": []}
+        errors.append(err)
+
+    # Keep compatibility with HA versions where the input is a voluptuous schema.
+    try:
+        from voluptuous_openapi import convert
+
+        return convert(schema, custom_serializer=ha_llm.selector_serializer)
+    except Exception as err:
+        errors.append(err)
+
+    LOGGER.warning(
+        "[ha-to-xai] schema convert failed '%s': %s",
+        tool_name,
+        "; ".join(str(err) for err in errors),
+    )
+    return None
 
 
 def _build_common_schema(
@@ -586,7 +605,34 @@ def format_tools_for_xai(ha_tools: list[ha_llm.Tool]) -> tuple[list[dict], dict]
         # Convert parameters to xAI JSON schema
         try:
             schema_stats["total"] += 1
-            parameters = convert_ha_schema_to_xai(ha_tool.parameters, str(ha_tool.name))
+            tool_name = str(ha_tool.name)
+            parameters = convert_ha_schema_to_xai(ha_tool.parameters, tool_name)
+
+            # Namespaced HA tools can still have a known fallback schema under
+            # their underlying tool name (for example todo__get_items).
+            fallback_names = [tool_name]
+            if "__" in tool_name:
+                namespace, fallback_name = tool_name.split("__", 1)
+                fallback_names.extend((fallback_name, f"{namespace}_{fallback_name}"))
+            fallback = next(
+                (
+                    candidate
+                    for name in fallback_names
+                    if (candidate := _get_fallback_tool_schema(name))
+                ),
+                None,
+            )
+            if parameters is None:
+                if fallback:
+                    parameters = fallback
+                    schema_stats["fallback_used"] += 1
+                else:
+                    schema_stats["failed"] += 1
+                    LOGGER.warning(
+                        "[ha-to-xai] skipping tool '%s': schema conversion failed and no fallback is available",
+                        tool_name,
+                    )
+                    continue
 
             # If schema lacks properties, provide a minimal known schema for common HA tools
             try:
@@ -598,7 +644,6 @@ def format_tools_for_xai(ha_tools: list[ha_llm.Tool]) -> tuple[list[dict], dict]
             except Exception:
                 props = {}
             if not props:
-                fallback = _get_fallback_tool_schema(str(ha_tool.name))
                 if fallback:
                     parameters = fallback
                     schema_stats["fallback_used"] += 1

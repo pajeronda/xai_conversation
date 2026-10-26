@@ -38,12 +38,14 @@
   },
   "options": {
     "error": {
-      "invalid_yaml": "Неверная конфигурация YAML. Пожалуйста, проверьте синтаксис и обязательные поля."
+      "invalid_yaml": "Неверная конфигурация YAML. Пожалуйста, проверьте синтаксис и обязательные поля.",
+      "invalid_tts_replacements": "Enter a valid YAML mapping of phrases to pronunciations.",
+      "invalid_stt_keyterms": "Enter no more than 100 keyterms, each up to 50 characters."
     },
     "step": {
       "init": {
         "title": "Настройка xAI",
-        "description": "Настройте параметры памяти для пользователей и устройств голосового ассистента, а также расширенные инструменты.",
+        "description": "Configure memory, extended tools, and default voice processing options. Voice and language choices remain available in Home Assistant Assist.",
         "data": {
           "api_key": "Ключ API",
           "api_host": "Конечная точка API",
@@ -52,7 +54,14 @@
           "memory_user_ttl_hours": "Память пользователя: Длительность (часы)",
           "memory_device_ttl_hours": "Память устройства: Длительность (часы)",
           "memory_cleanup_interval_hours": "Интервал очистки памяти (часы)",
-          "memory_remote_delete": "Удалять с серверов xAI при очистке"
+          "memory_remote_delete": "Удалять с серверов xAI при очистке",
+          "tts_default_speed": "TTS default speech speed",
+          "tts_text_normalization": "Normalize TTS text",
+          "tts_replace": "TTS pronunciation replacements (YAML)",
+          "tts_optimize_streaming_latency": "TTS streaming latency optimization",
+          "stt_keyterms": "STT keyterms (one per line)",
+          "stt_filler_words": "Include filler words in STT",
+          "stt_vad_threshold": "STT voice detection threshold"
         },
         "data_description": {
           "api_key": "Ваш ключ API xAI (начинается с 'xai-').",
@@ -62,7 +71,14 @@
           "memory_user_ttl_hours": "Длительность разговоров пользователей (смартфон, ПК, планшет). По умолчанию: 672 часов (30 дней)",
           "memory_device_ttl_hours": "Длительность разговоров устройств (спутники голосового ассистента). По умолчанию: 672 часов (7 дней)",
           "memory_cleanup_interval_hours": "Частота очистки устаревших записей памяти. По умолчанию: 24 часа",
-          "memory_remote_delete": "Если включено, при каждой очистке локальных сообщений (периодической или ручной) они также будут безвозвратно удалены с удаленных серверов xAI."
+          "memory_remote_delete": "Если включено, при каждой очистке локальных сообщений (периодической или ручной) они также будут безвозвратно удалены с удаленных серверов xAI.",
+          "tts_default_speed": "Speech rate from 0.7 (slower) to 1.5 (faster). Default: 1.0. A value set in the Assist request takes precedence.",
+          "tts_text_normalization": "Ask xAI to normalize numbers, abbreviations, and symbols before speaking. Default: off.",
+          "tts_replace": "Optional YAML mapping from written phrases to pronunciations, for example: nginx: \"engine x\". Leave blank to disable.",
+          "tts_optimize_streaming_latency": "0 maximizes quality; 1 reduces initial audio delay; 2 reduces it further with a possible quality tradeoff. Applies to streaming TTS.",
+          "stt_keyterms": "Optional terms that xAI should recognize accurately, one per line (up to 100 terms, 50 characters each).",
+          "stt_filler_words": "Include spoken fillers such as “um” and “uh”. Default: off.",
+          "stt_vad_threshold": "Speech detection threshold from 0.0 to 1.0. Lower values can help with quiet or noisy audio; default: 0.5."
         }
       }
     }
@@ -148,6 +164,43 @@
       },
       "abort": {
         "reconfigure_successful": "Конфигурация успешно обновлена!"
+      }
+    },
+    "voice": {
+      "initiate_flow": {"user": "Добавить голосовые сервисы"},
+      "entry_type": "voice",
+      "step": {
+        "init": {
+          "title": "Голосовые сервисы xAI",
+          "data": {
+            "name": "Название",
+            "tts_default_speed": "Скорость речи TTS по умолчанию",
+            "tts_text_normalization": "Нормализовать текст TTS",
+            "tts_replace": "Замены произношения TTS (YAML)",
+            "tts_optimize_streaming_latency": "Оптимизация задержки потокового TTS",
+            "stt_keyterms": "Ключевые слова STT (по одному в строке)",
+            "stt_filler_words": "Учитывать слова-паразиты в STT",
+            "stt_vad_threshold": "Порог обнаружения речи STT"
+          },
+          "data_description": {
+            "name": "Название общих сервисов TTS/STT.",
+            "tts_default_speed": "Скорость речи от 0,7 (медленнее) до 1,5 (быстрее). По умолчанию: 1,0. Значение из запроса Assist имеет приоритет.",
+            "tts_text_normalization": "Просит xAI нормализовать числа, сокращения и символы перед озвучиванием. По умолчанию выключено.",
+            "tts_replace": "Необязательное сопоставление написаний и произношений в YAML, например: nginx: \"engine x\". Оставьте пустым, чтобы отключить.",
+            "tts_optimize_streaming_latency": "0 обеспечивает максимальное качество; 1 уменьшает начальную задержку аудио; 2 уменьшает её ещё сильнее с возможным снижением качества. Для потокового TTS.",
+            "stt_keyterms": "Необязательные термины, которые xAI должен распознавать точно, по одному в строке (до 100 терминов, не более 50 символов каждый).",
+            "stt_filler_words": "Учитывать произнесённые слова-паразиты, например «э-э». По умолчанию выключено.",
+            "stt_vad_threshold": "Порог обнаружения речи от 0,0 до 1,0. Более низкое значение может помочь при тихой речи или шуме. По умолчанию: 0,5."
+          }
+        }
+      },
+      "error": {
+        "invalid_tts_replacements": "Укажите корректное сопоставление написаний и произношений в YAML.",
+        "invalid_stt_keyterms": "Укажите не более 100 ключевых слов длиной до 50 символов каждое."
+      },
+      "abort": {
+        "already_configured": "Общие голосовые сервисы уже настроены.",
+        "no_options": "Для этой записи голосовых сервисов нет отдельных настроек."
       }
     },
     "ai_task": {

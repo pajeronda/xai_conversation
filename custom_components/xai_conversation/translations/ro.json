@@ -38,12 +38,14 @@
   },
   "options": {
     "error": {
-      "invalid_yaml": "Configurație YAML invalidă. Te rog verifică sintaxa și câmpurile obligatorii."
+      "invalid_yaml": "Configurație YAML invalidă. Te rog verifică sintaxa și câmpurile obligatorii.",
+      "invalid_tts_replacements": "Enter a valid YAML mapping of phrases to pronunciations.",
+      "invalid_stt_keyterms": "Enter no more than 100 keyterms, each up to 50 characters."
     },
     "step": {
       "init": {
         "title": "Configurare xAI",
-        "description": "Configurează parametrii de memorie pentru utilizatori și dispozitive de asistență vocală, precum și instrumente extinse.",
+        "description": "Configure memory, extended tools, and default voice processing options. Voice and language choices remain available in Home Assistant Assist.",
         "data": {
           "api_key": "Cheie API",
           "api_host": "Endpoint API",
@@ -52,7 +54,14 @@
           "memory_user_ttl_hours": "Memorie Utilizator: Durată (ore)",
           "memory_device_ttl_hours": "Memorie Dispozitiv: Durată (ore)",
           "memory_cleanup_interval_hours": "Interval Curățare Memorie (ore)",
-          "memory_remote_delete": "Șterge de pe serverele xAI la curățare"
+          "memory_remote_delete": "Șterge de pe serverele xAI la curățare",
+          "tts_default_speed": "TTS default speech speed",
+          "tts_text_normalization": "Normalize TTS text",
+          "tts_replace": "TTS pronunciation replacements (YAML)",
+          "tts_optimize_streaming_latency": "TTS streaming latency optimization",
+          "stt_keyterms": "STT keyterms (one per line)",
+          "stt_filler_words": "Include filler words in STT",
+          "stt_vad_threshold": "STT voice detection threshold"
         },
         "data_description": {
           "api_key": "Cheia ta API xAI (începe cu 'xai-').",
@@ -62,7 +71,14 @@
           "memory_user_ttl_hours": "Durata conversațiilor pentru utilizatori (smartphone, PC, tabletă). Implicit: 672 ore (30 zile)",
           "memory_device_ttl_hours": "Durata conversațiilor pentru dispozitive (sateliți asistență vocală). Implicit: 672 ore (7 zile)",
           "memory_cleanup_interval_hours": "Frecvența cu care intrările de memorie expirate sunt curățate. Implicit: 24 ore",
-          "memory_remote_delete": "Dacă este activat, oricând mesajele locale sunt curățate (periodic sau manual), acestea vor fi șterse permanent și de pe serverele xAI."
+          "memory_remote_delete": "Dacă este activat, oricând mesajele locale sunt curățate (periodic sau manual), acestea vor fi șterse permanent și de pe serverele xAI.",
+          "tts_default_speed": "Speech rate from 0.7 (slower) to 1.5 (faster). Default: 1.0. A value set in the Assist request takes precedence.",
+          "tts_text_normalization": "Ask xAI to normalize numbers, abbreviations, and symbols before speaking. Default: off.",
+          "tts_replace": "Optional YAML mapping from written phrases to pronunciations, for example: nginx: \"engine x\". Leave blank to disable.",
+          "tts_optimize_streaming_latency": "0 maximizes quality; 1 reduces initial audio delay; 2 reduces it further with a possible quality tradeoff. Applies to streaming TTS.",
+          "stt_keyterms": "Optional terms that xAI should recognize accurately, one per line (up to 100 terms, 50 characters each).",
+          "stt_filler_words": "Include spoken fillers such as “um” and “uh”. Default: off.",
+          "stt_vad_threshold": "Speech detection threshold from 0.0 to 1.0. Lower values can help with quiet or noisy audio; default: 0.5."
         }
       }
     }
@@ -148,6 +164,43 @@
       },
       "abort": {
         "reconfigure_successful": "Configurare actualizată cu succes!"
+      }
+    },
+    "voice": {
+      "initiate_flow": {"user": "Adaugă serviciile vocale"},
+      "entry_type": "voice",
+      "step": {
+        "init": {
+          "title": "Servicii vocale xAI",
+          "data": {
+            "name": "Nume",
+            "tts_default_speed": "Viteza implicită a vorbirii TTS",
+            "tts_text_normalization": "Normalizează textul TTS",
+            "tts_replace": "Înlocuiri de pronunție TTS (YAML)",
+            "tts_optimize_streaming_latency": "Optimizarea latenței TTS în streaming",
+            "stt_keyterms": "Termeni-cheie STT (unul pe rând)",
+            "stt_filler_words": "Include cuvintele de umplutură în STT",
+            "stt_vad_threshold": "Pragul de detectare a vorbirii STT"
+          },
+          "data_description": {
+            "name": "Numele serviciilor TTS/STT partajate.",
+            "tts_default_speed": "Viteza vorbirii între 0,7 (mai lent) și 1,5 (mai rapid). Implicit: 1,0. Valoarea din solicitarea Assist are prioritate.",
+            "tts_text_normalization": "Solicită xAI să normalizeze numerele, abrevierile și simbolurile înainte de redare. Dezactivat implicit.",
+            "tts_replace": "Asociere YAML opțională între expresii scrise și pronunții, de exemplu: nginx: \"engine x\". Lasă necompletat pentru dezactivare.",
+            "tts_optimize_streaming_latency": "0 maximizează calitatea; 1 reduce întârzierea inițială a sunetului; 2 o reduce și mai mult, cu posibile compromisuri de calitate. Pentru TTS în streaming.",
+            "stt_keyterms": "Termeni opționali pe care xAI trebuie să îi recunoască precis, câte unul pe rând (maximum 100 de termeni, fiecare de cel mult 50 de caractere).",
+            "stt_filler_words": "Include ezitările rostite, precum „ăă”. Dezactivat implicit.",
+            "stt_vad_threshold": "Prag de detectare a vorbirii între 0,0 și 1,0. Valorile mai mici pot ajuta pentru voce slabă sau zgomot; implicit: 0,5."
+          }
+        }
+      },
+      "error": {
+        "invalid_tts_replacements": "Introdu o asociere YAML validă între expresii și pronunții.",
+        "invalid_stt_keyterms": "Introdu cel mult 100 de termeni-cheie, fiecare de maximum 50 de caractere."
+      },
+      "abort": {
+        "already_configured": "Serviciile vocale partajate sunt deja configurate.",
+        "no_options": "Nu există setări separate pentru această intrare vocală."
       }
     },
     "ai_task": {
