@@ -9,6 +9,10 @@
   [![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2025.10%2B-green)](https://www.home-assistant.io/blog/categories/core/)
   [![hacs](https://img.shields.io/badge/HACS-Default-blue.svg?style=flat-square)](https://my.home-assistant.io/redirect/config_flow_start/?domain=xai_conversation)
   [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg?style=flat-square)](LICENSE)
+  
+  [![GitHub stars](https://img.shields.io/github/stars/pajeronda/xai_conversation?label=%E2%AD%90%20Stars&style=for-the-badge)](https://github.com/pajeronda/xai_conversation/stargazers)  
+  
+  [![XERJ Corpus Hub contributor](https://hub.xerj.org/contributors/pajeronda/badge.svg)](https://hub.xerj.org/contributors/pajeronda)
 </div>
 
 ---
@@ -218,7 +222,6 @@ Use [Microsoft Text-to-Speech for Home Assistant](https://github.com/pajeronda/m
 
 - ⭐ **Love this project? Give it a star to show your support!**
 
-  [![GitHub stars](https://img.shields.io/github/stars/pajeronda/xai_conversation?label=%E2%AD%90%20Stars&style=for-the-badge)](https://github.com/pajeronda/xai_conversation/stargazers)
 
 
 # Legal Notes
@@ -232,3 +235,4 @@ Use [Microsoft Text-to-Speech for Home Assistant](https://github.com/pajeronda/m
 - **API Usage**: This custom component requires an active xAI account and a valid API key. Use of the xAI API is subject to [xAI's terms of service](https://x.ai/legal/).
 
 - **Trademarks**: xAI, Grok, and related logos are registered trademarks of xAI Corp. This custom component is an **unofficial** integration for **Home Assistant** and is not affiliated with, sponsored by, or endorsed by xAI Corp.
+
